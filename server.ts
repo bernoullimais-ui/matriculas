@@ -1,9 +1,9 @@
 import express from "express";
-import path from "path";
+import * as path from "path";
 import { fileURLToPath } from "url";
-import { createClient } from "@supabase/supabase-js";
-import dotenv from "dotenv";
-import util from "util";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import * as dotenv from "dotenv";
+import * as util from "util";
 import PDFDocument from 'pdfkit';
 import axios from "axios";
 
@@ -19,7 +19,7 @@ dotenv.config();
 const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || "";
 
-let supabase: ReturnType<typeof createClient>;
+let supabase: SupabaseClient<any, "public", any>;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error("CRITICAL: Supabase URL or Anon Key is missing in environment variables!");
@@ -2309,19 +2309,14 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   });
 
   // Pagar.me Webhook
-  app.post(['/api/webhooks/pagarme', '/api/webhooks/pagarme/'], async (req, res) => {
+  app.post('/api/webhooks/pagarme', async (req, res) => {
     const event = req.body || {};
     const signature = req.headers['x-pagarme-signature'] as string;
     const secretKey = getPagarmeSecretKey();
 
     console.log(`[Webhook Pagar.me] Evento recebido: ${event.type}`);
 
-    // Respond immediately to prevent Pagar.me timeouts
-    res.status(200).json({ received: true });
-
-    // Process asynchronously
-    setTimeout(async () => {
-      // Verificação de assinatura (opcional mas recomendado para produção)
+    // Verificação de assinatura (opcional mas recomendado para produção)
     if (signature && secretKey) {
       try {
         const crypto = await import('crypto');
@@ -2479,7 +2474,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
           
           if (!isPaid && !isFailed) {
             console.log(`[Webhook Pagar.me] Evento ignorado (não é pago nem falha). Status: ${data.status}`);
-            return;
+            return res.status(200).json({ received: true });
           }
 
           const status = isPaid ? 'pago' : 'falha';
@@ -2671,8 +2666,10 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       }
     } catch (error) {
       console.error('[Webhook Pagar.me] Erro ao processar webhook:', error);
+      return res.status(500).json({ error: 'Internal server error' });
     }
-    }, 0);
+    
+    return res.status(200).json({ received: true });
   });
 
   // Vite middleware for development
