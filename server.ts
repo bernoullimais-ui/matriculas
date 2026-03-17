@@ -1,10 +1,10 @@
-import * as express from "express";
-import * as path from "path";
+import express from "express";
+import path from "path";
 import { fileURLToPath } from "url";
 import { createClient } from "@supabase/supabase-js";
-import * as dotenv from "dotenv";
-import * as util from "util";
-import * as PDFDocument from 'pdfkit';
+import dotenv from "dotenv";
+import util from "util";
+import PDFDocument from 'pdfkit';
 import axios from "axios";
 
 // Handle __dirname and __filename for both ESM and CJS environments
@@ -19,11 +19,15 @@ dotenv.config();
 const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || "";
 
+let supabase: ReturnType<typeof createClient>;
+
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error("CRITICAL: Supabase URL or Anon Key is missing in environment variables!");
+  // Initialize with dummy values to prevent crash, but warn the user
+  supabase = createClient("https://dummy.supabase.co", "dummy-key");
+} else {
+  supabase = createClient(supabaseUrl, supabaseAnonKey);
 }
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 async function generatePDFBuffer(text: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -2673,7 +2677,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // Vite middleware for development
   async function startServer() {
-    const PORT = process.env.PORT || 3000;
+    const PORT = 3000;
     if (process.env.NODE_ENV !== "production") {
       const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({

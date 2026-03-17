@@ -48,6 +48,7 @@ interface Enrollment {
       turma: string;
       unidade: string;
       turma_id?: string;
+      status?: string;
     }[];
   }[];
   pagamentos: { status: string; metodo_pagamento: string }[];
@@ -128,8 +129,11 @@ export default function App() {
     unidades: string[], 
     turmas: { 
       nome: string, 
-      unidade_nome: string, 
-      series_permitidas: string[],
+      unidade_nome?: string, 
+      unidade?: string,
+      unidade_atendimento?: string,
+      series_permitidas?: string[] | string,
+      series?: string[] | string,
       idade_minima?: number,
       idade_maxima?: number,
       dias_horarios?: string,
@@ -137,7 +141,8 @@ export default function App() {
       capacidade?: number,
       ocupacao_atual?: number,
       local_aula?: string,
-      data_inicio?: string
+      data_inicio?: string,
+      professor?: string
     }[]
   }>({
     series: [],
@@ -2235,8 +2240,8 @@ export default function App() {
                                 </div>
 
                                 <div className="flex flex-wrap gap-1 mt-1">
-                                  {t.series_permitidas?.map(s => (
-                                    <span key={s} className="text-[9px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium">{s}</span>
+                                  {(Array.isArray(t.series_permitidas) ? t.series_permitidas : (typeof t.series_permitidas === 'string' ? t.series_permitidas.split(',') : [])).map(s => (
+                                    <span key={s} className="text-[9px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium">{s.trim()}</span>
                                   ))}
                                 </div>
                               </li>
