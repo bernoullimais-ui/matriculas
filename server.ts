@@ -2218,36 +2218,78 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       // 2. Fetch order from Pagar.me
       const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
       
-      console.log(`[Sync] Buscando pedido na Pagar.me com code=${paymentId}`);
-      // Tenta buscar pelo código exato primeiro
-      let response = await axios.get(`https://api.pagar.me/core/v5/orders?code=${paymentId}`, {
-        headers: {
-          'Authorization': `Basic ${authHeader}`,
-          'Content-Type': 'application/json'
-        }
-      });
+      let order: any = null;
 
-      let orders = response.data.data;
-      console.log(`[Sync] Pedidos encontrados por código exato: ${orders?.length || 0}`);
-      
-      // Se não encontrar, busca nos últimos 100 pedidos e filtra manualmente
-      if (!orders || orders.length === 0) {
-        console.log(`[Sync] Pedido não encontrado por código exato. Buscando nos últimos 100 pedidos...`);
-        response = await axios.get(`https://api.pagar.me/core/v5/orders?size=100`, {
+      if (payment.pagarme) {
+        console.log(`[Sync] Buscando transação Pagar.me pelo ID salvo: ${payment.pagarme}`);
+        try {
+          const endpoint = payment.pagarme.startsWith('sub_') ? 'subscriptions' : 'orders';
+          const response = await axios.get(`https://api.pagar.me/core/v5/${endpoint}/${payment.pagarme}`, {
+            headers: {
+              'Authorization': `Basic ${authHeader}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          order = response.data;
+          console.log(`[Sync] Transação encontrada pelo ID! Status: ${order.status}`);
+        } catch (err: any) {
+          console.warn(`[Sync] Erro ao buscar pelo ID ${payment.pagarme}:`, err.message);
+        }
+      }
+
+      if (!order) {
+        console.log(`[Sync] Buscando pedido na Pagar.me com code=${paymentId}`);
+        // Tenta buscar pelo código exato primeiro
+        let response = await axios.get(`https://api.pagar.me/core/v5/orders?code=${paymentId}`, {
           headers: {
             'Authorization': `Basic ${authHeader}`,
             'Content-Type': 'application/json'
           }
         });
-        orders = response.data.data;
-        console.log(`[Sync] Total de pedidos recuperados para busca manual: ${orders?.length || 0}`);
-      }
 
-      const order = orders?.find((o: any) => {
-        const match = o.code === paymentId || o.code.startsWith(`${paymentId}_`);
-        if (match) console.log(`[Sync] Match encontrado! Order ID: ${o.id}, Code: ${o.code}, Status: ${o.status}`);
-        return match;
-      });
+        let orders = response.data.data;
+        console.log(`[Sync] Pedidos encontrados por código exato: ${orders?.length || 0}`);
+        
+        // Se não encontrar, busca nos últimos 100 pedidos e filtra manualmente
+        if (!orders || orders.length === 0) {
+          console.log(`[Sync] Pedido não encontrado por código exato. Buscando nos últimos 100 pedidos...`);
+          response = await axios.get(`https://api.pagar.me/core/v5/orders?size=100`, {
+            headers: {
+              'Authorization': `Basic ${authHeader}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          orders = response.data.data;
+          console.log(`[Sync] Total de pedidos recuperados para busca manual: ${orders?.length || 0}`);
+        }
+
+        order = orders?.find((o: any) => {
+          const match = o.code === paymentId || o.code.startsWith(`${paymentId}_`);
+          if (match) console.log(`[Sync] Match encontrado! Order ID: ${o.id}, Code: ${o.code}, Status: ${o.status}`);
+          return match;
+        });
+
+        // Se ainda não encontrou, busca nas assinaturas
+        if (!order) {
+          console.log(`[Sync] Pedido não encontrado. Buscando nas últimas 100 assinaturas...`);
+          try {
+            const subResponse = await axios.get(`https://api.pagar.me/core/v5/subscriptions?size=100`, {
+              headers: {
+                'Authorization': `Basic ${authHeader}`,
+                'Content-Type': 'application/json'
+              }
+            });
+            const subscriptions = subResponse.data.data;
+            order = subscriptions?.find((s: any) => {
+              const match = s.code === paymentId || s.code.startsWith(`${paymentId}_`);
+              if (match) console.log(`[Sync] Match encontrado em assinaturas! Sub ID: ${s.id}, Code: ${s.code}, Status: ${s.status}`);
+              return match;
+            });
+          } catch (err: any) {
+            console.warn(`[Sync] Erro ao buscar assinaturas:`, err.message);
+          }
+        }
+      }
 
       if (!order) {
         console.warn(`[Sync] Pedido com código ${paymentId} não encontrado na Pagar.me`);
