@@ -1597,19 +1597,25 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   });
 
   app.post("/api/enrollment/cancel", async (req, res) => {
-    const { enrollmentId, cancellationDate } = req.body;
+    const { enrollmentId, cancellationDate, justificativa } = req.body;
     try {
       const today = new Date().toISOString().split('T')[0];
       if (cancellationDate < today) {
         return res.status(400).json({ error: "A data de cancelamento não pode ser anterior à data de hoje." });
       }
 
+      const updateData: any = {
+        data_cancelamento: cancellationDate,
+        status: 'cancelado'
+      };
+
+      if (justificativa) {
+        updateData.justificativa_cancelamento = justificativa;
+      }
+
       const { error } = await supabase
         .from('matriculas')
-        .update({ 
-          data_cancelamento: cancellationDate,
-          status: 'cancelado'
-        })
+        .update(updateData)
         .eq('id', enrollmentId);
 
       if (error) throw error;
@@ -1680,6 +1686,54 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                  }
                }
              }
+          }
+        }
+      }
+
+      // 3. Cancelar assinatura no Pagar.me (se existir)
+      const { data: pagamentos } = await supabase
+        .from('pagamentos')
+        .select('pagarme')
+        .eq('matricula_id', enrollmentId)
+        .not('pagarme', 'is', null)
+        .ilike('pagarme', 'sub_%');
+
+      if (pagamentos && pagamentos.length > 0) {
+        const subscriptionId = pagamentos[0].pagarme;
+        try {
+          const secretKey = getPagarmeSecretKey();
+          const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+          await axios.delete(`https://api.pagar.me/core/v5/subscriptions/${subscriptionId}`, {
+            headers: {
+              'Authorization': `Basic ${authHeader}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          console.log(`[Cancelamento] Assinatura ${subscriptionId} cancelada no Pagar.me com sucesso.`);
+        } catch (err: any) {
+          console.error(`[Cancelamento] Erro ao cancelar assinatura no Pagar.me:`, err.response?.data || err.message);
+        }
+      }
+
+      // 4. Enviar WhatsApp para o responsável
+      if (enrollmentData) {
+        const { data: studentData } = await supabase
+          .from('alunos')
+          .select('nome_completo, responsavel_id')
+          .eq('id', enrollmentData.aluno_id)
+          .single();
+        
+        if (studentData) {
+          const { data: guardianData } = await supabase
+            .from('responsaveis')
+            .select('nome_completo, telefone')
+            .eq('id', studentData.responsavel_id)
+            .single();
+
+          if (guardianData && guardianData.telefone) {
+            const msg = `Olá ${guardianData.nome_completo}! Confirmamos o cancelamento da matrícula de ${studentData.nome_completo}. Os débitos mensais referentes a esta matrícula foram cessados. Agradecemos o tempo que estiveram conosco!`;
+            await sendWhatsAppMessage(guardianData.telefone, guardianData.nome_completo, msg)
+              .catch(e => console.error("Erro ao enviar WhatsApp de cancelamento:", e));
           }
         }
       }

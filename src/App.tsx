@@ -70,6 +70,7 @@ export default function App() {
   const [isCancelingEnrollment, setIsCancelingEnrollment] = useState(false);
   const [cancelingEnrollmentId, setCancelingEnrollmentId] = useState<string | null>(null);
   const [cancellationDate, setCancellationDate] = useState(new Date().toISOString().split('T')[0]);
+  const [cancellationReason, setCancellationReason] = useState('');
   const [dependents, setDependents] = useState<any[]>([]);
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [adminTab, setAdminTab] = useState<'enrollments' | 'settings' | 'waitlist' | 'finance' | 'coupons'>('enrollments');
@@ -372,6 +373,11 @@ export default function App() {
       alert('A data de cancelamento não pode ser anterior à data de hoje.');
       return;
     }
+
+    if (!cancellationReason.trim()) {
+      alert('Por favor, informe uma justificativa para o cancelamento.');
+      return;
+    }
     
     setLoading(true);
     try {
@@ -380,7 +386,8 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           enrollmentId: cancelingEnrollmentId,
-          cancellationDate: cancellationDate
+          cancellationDate: cancellationDate,
+          justificativa: cancellationReason
         })
       });
       if (response.ok) {
@@ -388,6 +395,7 @@ export default function App() {
         alert('Matrícula cancelada com sucesso');
         setIsCancelingEnrollment(false);
         setCancelingEnrollmentId(null);
+        setCancellationReason('');
       } else {
         const data = await response.json();
         alert(data.error || 'Erro ao cancelar matrícula');
@@ -3263,6 +3271,11 @@ export default function App() {
                                                 </span>
                                               )}
                                             </div>
+                                            {mat.justificativa_cancelamento && (
+                                              <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-100 italic">
+                                                <strong>Motivo:</strong> {mat.justificativa_cancelamento}
+                                              </div>
+                                            )}
                                           </div>
                                         </div>
                                       ))}
@@ -3982,21 +3995,34 @@ export default function App() {
                       onChange={e => setCancellationDate(e.target.value)}
                     />
                   </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Justificativa do Cancelamento</label>
+                    <textarea 
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-red-500 outline-none transition-all resize-none"
+                      rows={3}
+                      placeholder="Por favor, nos conte o motivo do cancelamento..."
+                      value={cancellationReason}
+                      onChange={e => setCancellationReason(e.target.value)}
+                    />
+                  </div>
                   <p className="text-xs text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                    <strong>Atenção:</strong> Esta ação irá remover o aluno da turma selecionada a partir da data informada.
+                    <strong>Atenção:</strong> Esta ação irá remover o aluno da turma selecionada a partir da data informada e cancelar as cobranças recorrentes.
                   </p>
                 </div>
 
                 <div className="flex gap-3">
                   <button 
-                    onClick={() => setIsCancelingEnrollment(false)}
+                    onClick={() => {
+                      setIsCancelingEnrollment(false);
+                      setCancellationReason('');
+                    }}
                     className="flex-1 px-6 py-3 rounded-xl font-bold text-slate-600 hover:bg-slate-100 transition-all"
                   >
                     Voltar
                   </button>
                   <button 
                     onClick={confirmCancelEnrollment}
-                    disabled={loading || !cancellationDate}
+                    disabled={loading || !cancellationDate || !cancellationReason.trim()}
                     className="flex-1 bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-200 disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {loading ? <RefreshCw size={18} className="animate-spin" /> : 'Confirmar'}
