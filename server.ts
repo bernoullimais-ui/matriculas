@@ -1371,7 +1371,26 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
               code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}_${Math.floor(Math.random() * 1000)}`
             });
             paymentInfo = subscription;
-            console.log("Pagar.me subscription created successfully");
+            console.log("Pagar.me subscription created successfully:", subscription.id);
+            
+            // Salva o ID da assinatura imediatamente no primeiro pagamento para garantir que o cancelamento funcione
+            if (subscription && subscription.id && firstPaymentId) {
+              await supabase
+                .from('pagamentos')
+                .update({ pagarme: subscription.id })
+                .eq('id', firstPaymentId);
+            }
+            
+            // Também salva na matrícula se a coluna existir (tentativa silenciosa)
+            if (subscription && subscription.id && matriculaId) {
+              await supabase
+                .from('matriculas')
+                .update({ pagarme_subscription_id: subscription.id })
+                .eq('id', matriculaId)
+                .then(({ error }) => {
+                  if (error) console.log("Nota: Coluna pagarme_subscription_id não existe na tabela matriculas.");
+                });
+            }
           } else {
             console.log(`Creating Pagar.me order for ${guardian.name}, amount: ${valorCobrado}`);
             const order = await createPagarmeOrder({
@@ -1691,15 +1710,54 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       }
 
       // 3. Cancelar assinatura no Pagar.me (se existir)
-      const { data: pagamentos } = await supabase
+      const { data: allPayments } = await supabase
         .from('pagamentos')
         .select('pagarme')
         .eq('matricula_id', enrollmentId)
-        .not('pagarme', 'is', null)
-        .ilike('pagarme', 'sub_%');
+        .not('pagarme', 'is', null);
 
-      if (pagamentos && pagamentos.length > 0) {
-        const subscriptionId = pagamentos[0].pagarme;
+      let subscriptionId = null;
+      
+      // Tenta buscar primeiro na própria matrícula (caso a coluna tenha sido adicionada)
+      const { data: matData } = await supabase
+        .from('matriculas')
+        .select('pagarme_subscription_id')
+        .eq('id', enrollmentId)
+        .maybeSingle();
+      
+      if (matData && matData.pagarme_subscription_id) {
+        subscriptionId = matData.pagarme_subscription_id;
+      } else if (allPayments && allPayments.length > 0) {
+        // Tenta encontrar um ID que comece com sub_ nos pagamentos
+        const subPayment = allPayments.find(p => p.pagarme && p.pagarme.startsWith('sub_'));
+        if (subPayment) {
+          subscriptionId = subPayment.pagarme;
+        } else {
+          // Se não achou sub_, tenta resolver a partir de uma fatura (in_) ou pedido (or_)
+          const otherPayment = allPayments.find(p => p.pagarme && (p.pagarme.startsWith('in_') || p.pagarme.startsWith('or_')));
+          if (otherPayment) {
+            try {
+              const secretKey = getPagarmeSecretKey();
+              const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+              const id = otherPayment.pagarme;
+              const endpoint = id.startsWith('in_') ? 'invoices' : 'orders';
+              
+              const resSub = await axios.get(`https://api.pagar.me/core/v5/${endpoint}/${id}`, {
+                headers: { 'Authorization': `Basic ${authHeader}` }
+              });
+              
+              subscriptionId = resSub.data.subscription_id || (resSub.data.subscription && resSub.data.subscription.id);
+              if (subscriptionId) {
+                console.log(`[Cancelamento] Subscription ID ${subscriptionId} recuperado a partir de ${id}`);
+              }
+            } catch (err: any) {
+              console.error(`[Cancelamento] Erro ao tentar recuperar subscription_id:`, err.message);
+            }
+          }
+        }
+      }
+
+      if (subscriptionId) {
         try {
           const secretKey = getPagarmeSecretKey();
           const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
@@ -1710,9 +1768,18 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
             }
           });
           console.log(`[Cancelamento] Assinatura ${subscriptionId} cancelada no Pagar.me com sucesso.`);
+          
+          // Se recuperamos o ID agora, salvamos na matrícula para histórico
+          await supabase
+            .from('matriculas')
+            .update({ pagarme_subscription_id: subscriptionId })
+            .eq('id', enrollmentId)
+            .catch(() => {});
         } catch (err: any) {
           console.error(`[Cancelamento] Erro ao cancelar assinatura no Pagar.me:`, err.response?.data || err.message);
         }
+      } else {
+        console.warn(`[Cancelamento] Nenhuma assinatura Pagar.me encontrada para a matrícula ${enrollmentId}`);
       }
 
       // 4. Enviar WhatsApp para o responsável
@@ -2582,7 +2649,13 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
           
           if (isPaid) {
             updatePayload.data_pagamento = new Date().toISOString();
-            updatePayload.pagarme = data.id;
+            
+            // Se for uma fatura de assinatura, preferimos salvar o ID da assinatura para facilitar cancelamentos
+            if (isSubscription && invoice && invoice.subscription_id) {
+              updatePayload.pagarme = invoice.subscription_id;
+            } else {
+              updatePayload.pagarme = data.id;
+            }
           }
 
           // Check if it's a recurring payment (cycle > 1)
