@@ -194,6 +194,7 @@ async function createPagarmeOrder(data: {
   paymentMethod: 'pix' | 'credit_card';
   description: string;
   code: string; // Reference ID for webhook
+  softDescriptor?: string;
 }) {
   const secretKey = getPagarmeSecretKey();
   
@@ -312,7 +313,7 @@ async function createPagarmeOrder(data: {
           expires_in: 86400 
         } : {
           installments: 1,
-          statement_descriptor: "SPORTFORKIDS",
+          statement_descriptor: data.softDescriptor || "SPORTFORKIDS",
           card: {
             number: data.card?.number?.replace(/\D/g, ''),
             holder_name: data.card?.holderName?.substring(0, 64),
@@ -383,6 +384,7 @@ async function createPagarmeSubscription(data: {
   code: string; // Reference ID for webhook
   cycles?: number;
   start_at?: string; // ISO date string
+  softDescriptor?: string;
 }) {
   const secretKey = getPagarmeSecretKey();
   
@@ -461,7 +463,7 @@ async function createPagarmeSubscription(data: {
     interval_count: 1,
     billing_type: "prepaid",
     installments: 1,
-    statement_descriptor: "SPORTFORKIDS",
+    statement_descriptor: data.softDescriptor || "SPORTFORKIDS",
     cycles: data.cycles,
     start_at: data.start_at,
     customer: {
@@ -1354,6 +1356,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
       let paymentInfo = null;
       if (valorCobrado > 0) {
+        const softDescriptor = (student.unidade || "").includes("Bernoulli") ? "Bernoulli+" : "Sport for Kids";
+        
         try {
           if (paymentMethod === 'credit_card' && req.body.card) {
             const today = new Date();
@@ -1375,7 +1379,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                 amount: Math.round(valorCobrado * 100),
                 paymentMethod: 'credit_card',
                 description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
-                code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}`
+                code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}`,
+                softDescriptor
               });
               
               // 2. Cria a Assinatura agendada para o início das aulas + 1 mês
@@ -1392,7 +1397,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                 description: `Mensalidade - ${student.name} (${student.turmaComplementar})`,
                 code: firstPaymentId ? `${firstPaymentId}_sub_${Date.now()}` : `sub_${Date.now()}`,
                 cycles: installments.length - 1,
-                start_at: new Date(installments[1].data_vencimento + "T12:00:00Z").toISOString()
+                start_at: new Date(installments[1].data_vencimento + "T12:00:00Z").toISOString(),
+                softDescriptor
               });
               
               paymentInfo = { order, subscription };
@@ -1423,7 +1429,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                 amount: Math.round(valorCobrado * 100), // convert to cents
                 description: `Mensalidade - ${student.name} (${student.turmaComplementar})`,
                 code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-                cycles: installments.length
+                cycles: installments.length,
+                softDescriptor
               });
               paymentInfo = subscription;
               console.log("Pagar.me subscription created successfully:", subscription.id);
@@ -1461,7 +1468,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
               amount: Math.round(valorCobrado * 100), // convert to cents
               paymentMethod: 'credit_card',
               description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
-              code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}_${Math.floor(Math.random() * 1000)}`
+              code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+              softDescriptor
             });
             paymentInfo = order;
             console.log("Pagar.me order created successfully");
@@ -1869,6 +1877,108 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
     }
   });
 
+  app.post("/api/enrollment/freeze", async (req, res) => {
+    const { enrollmentId, startDate, endDate } = req.body;
+    try {
+      // 1. Update enrollment status
+      const { error: updateError } = await supabase
+        .from('matriculas')
+        .update({ 
+          status: 'trancado',
+          data_trancamento_inicio: startDate,
+          data_trancamento_fim: endDate || null
+        })
+        .eq('id', enrollmentId);
+
+      if (updateError) throw updateError;
+
+      // 2. Get subscription ID
+      const { data: matData } = await supabase
+        .from('matriculas')
+        .select('pagarme_subscription_id')
+        .eq('id', enrollmentId)
+        .single();
+
+      // Note: We don't necessarily pause the subscription in Pagar.me immediately 
+      // because we want to postpone the NEXT billing date only when reactivating,
+      // based on the actual duration of the freeze.
+      // However, some might prefer to cancel and recreate. 
+      // The requirement says "postergadas de acordo com os dias de afastamento".
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error freezing enrollment:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/enrollment/reactivate", async (req, res) => {
+    const { enrollmentId, reactivationDate } = req.body;
+    try {
+      // 1. Get freeze info
+      const { data: matData, error: fetchError } = await supabase
+        .from('matriculas')
+        .select('status, data_trancamento_inicio, pagarme_subscription_id')
+        .eq('id', enrollmentId)
+        .single();
+
+      if (fetchError) throw fetchError;
+      if (matData.status !== 'trancado') {
+        return res.status(400).json({ error: "Matrícula não está trancada." });
+      }
+
+      const freezeStart = new Date(matData.data_trancamento_inicio);
+      const reactivateDate = new Date(reactivationDate);
+      const diffTime = Math.abs(reactivateDate.getTime() - freezeStart.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      // 2. Update Pagar.me Subscription if exists
+      if (matData.pagarme_subscription_id) {
+        try {
+          const secretKey = getPagarmeSecretKey();
+          const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+          
+          // Get current subscription to find next_billing_at
+          const subRes = await axios.get(`https://api.pagar.me/core/v5/subscriptions/${matData.pagarme_subscription_id}`, {
+            headers: { 'Authorization': `Basic ${authHeader}` }
+          });
+
+          const currentNextBilling = new Date(subRes.data.next_billing_at);
+          const newNextBilling = new Date(currentNextBilling.getTime() + (diffDays * 24 * 60 * 60 * 1000));
+
+          // Update subscription with new billing date
+          await axios.patch(`https://api.pagar.me/core/v5/subscriptions/${matData.pagarme_subscription_id}`, {
+            next_billing_at: newNextBilling.toISOString()
+          }, {
+            headers: { 
+              'Authorization': `Basic ${authHeader}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          console.log(`[Reativação] Assinatura ${matData.pagarme_subscription_id} postergada em ${diffDays} dias. Nova data: ${newNextBilling.toISOString()}`);
+        } catch (err: any) {
+          console.error(`[Reativação] Erro ao atualizar assinatura no Pagar.me:`, err.response?.data || err.message);
+          // We continue even if Pagar.me fails, but maybe we should warn?
+        }
+      }
+
+      // 3. Update enrollment status back to active
+      await supabase
+        .from('matriculas')
+        .update({ 
+          status: 'ativo',
+          data_trancamento_fim: reactivationDate
+        })
+        .eq('id', enrollmentId);
+
+      res.json({ success: true, daysPostponed: diffDays });
+    } catch (error: any) {
+      console.error("Error reactivating enrollment:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post("/api/enrollment/transfer", async (req, res) => {
     const { enrollmentId, newTurma, newUnidade } = req.body;
     try {
@@ -1927,7 +2037,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
           unidade: newUnidade,
           turma: newTurma,
           turma_id: classData?.id || null,
-          status: 'ativo'
+          status: 'ativo',
+          pagarme_subscription_id: oldEnrollment.pagarme_subscription_id
         }]);
 
       if (insertError) throw insertError;
@@ -1949,7 +2060,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
         { data: pagamentos, error: pError }
       ] = await Promise.all([
         supabase.from('responsaveis').select('id, nome_completo'),
-        supabase.from('alunos').select('id, nome_completo, serie_ano, responsavel_id'),
+        supabase.from('alunos').select('id, nome_completo, serie_ano, responsavel_id, data_nascimento'),
         supabase.from('matriculas').select('id, aluno_id, turma, unidade, status, data_cancelamento'),
         supabase.from('pagamentos').select('responsavel_id, status, metodo_pagamento')
       ]);

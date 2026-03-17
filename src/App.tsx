@@ -44,11 +44,16 @@ interface Enrollment {
   alunos: { 
     nome_completo: string; 
     serie_ano: string;
+    data_nascimento: string;
+    id: string;
     matriculas: {
+      id: string;
       turma: string;
       unidade: string;
       turma_id?: string;
       status?: string;
+      data_trancamento_inicio?: string;
+      data_trancamento_fim?: string;
     }[];
   }[];
   pagamentos: { status: string; metodo_pagamento: string }[];
@@ -71,6 +76,20 @@ export default function App() {
   const [cancelingEnrollmentId, setCancelingEnrollmentId] = useState<string | null>(null);
   const [cancellationDate, setCancellationDate] = useState(new Date().toISOString().split('T')[0]);
   const [cancellationReason, setCancellationReason] = useState('');
+
+  const [isFreezingEnrollment, setIsFreezingEnrollment] = useState(false);
+  const [freezingEnrollmentId, setFreezingEnrollmentId] = useState<string | null>(null);
+  const [freezeStartDate, setFreezeStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [freezeEndDate, setFreezeEndDate] = useState('');
+
+  const [isReactivatingEnrollment, setIsReactivatingEnrollment] = useState(false);
+  const [reactivatingEnrollmentId, setReactivatingEnrollmentId] = useState<string | null>(null);
+  const [reactivationDate, setReactivationDate] = useState(new Date().toISOString().split('T')[0]);
+
+  const [isTransferringEnrollment, setIsTransferringEnrollment] = useState(false);
+  const [transferTarget, setTransferTarget] = useState({ turma: '', unidade: '' });
+  const [transferringStudent, setTransferringStudent] = useState<{ id: string, nome_completo: string, serie_ano: string, data_nascimento: string } | null>(null);
+
   const [dependents, setDependents] = useState<any[]>([]);
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [adminTab, setAdminTab] = useState<'enrollments' | 'settings' | 'waitlist' | 'finance' | 'coupons'>('enrollments');
@@ -189,7 +208,7 @@ export default function App() {
     }
   });
 
-  const [transferringEnrollmentId, setTransferringEnrollmentId] = useState<number | null>(null);
+  const [transferringEnrollmentId, setTransferringEnrollmentId] = useState<string | null>(null);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   
   const passwordInputRef = useRef<HTMLInputElement>(null);
@@ -391,7 +410,7 @@ export default function App() {
         })
       });
       if (response.ok) {
-        await refreshGuardianData();
+        await fetchEnrollments();
         alert('Matrícula cancelada com sucesso');
         setIsCancelingEnrollment(false);
         setCancelingEnrollmentId(null);
@@ -402,6 +421,96 @@ export default function App() {
       }
     } catch (error) {
       console.error('Error canceling enrollment:', error);
+      alert('Erro de conexão');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmFreezeEnrollment = async () => {
+    if (!freezingEnrollmentId) return;
+    setLoading(true);
+    try {
+      const response = await fetch('/api/enrollment/freeze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          enrollmentId: freezingEnrollmentId,
+          startDate: freezeStartDate,
+          endDate: freezeEndDate
+        })
+      });
+      if (response.ok) {
+        await fetchEnrollments();
+        alert('Matrícula trancada com sucesso');
+        setIsFreezingEnrollment(false);
+        setFreezingEnrollmentId(null);
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Erro ao trancar matrícula');
+      }
+    } catch (error) {
+      console.error('Error freezing enrollment:', error);
+      alert('Erro de conexão');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmReactivateEnrollment = async () => {
+    if (!reactivatingEnrollmentId) return;
+    setLoading(true);
+    try {
+      const response = await fetch('/api/enrollment/reactivate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          enrollmentId: reactivatingEnrollmentId,
+          reactivationDate: reactivationDate
+        })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        await fetchEnrollments();
+        alert(`Matrícula reativada com sucesso! As próximas cobranças foram postergadas em ${data.daysPostponed} dias.`);
+        setIsReactivatingEnrollment(false);
+        setReactivatingEnrollmentId(null);
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Erro ao reativar matrícula');
+      }
+    } catch (error) {
+      console.error('Error reactivating enrollment:', error);
+      alert('Erro de conexão');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmTransferEnrollment = async () => {
+    if (!transferringEnrollmentId || !transferTarget.turma) return;
+    setLoading(true);
+    try {
+      const response = await fetch('/api/enrollment/transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          enrollmentId: transferringEnrollmentId,
+          newTurma: transferTarget.turma,
+          newUnidade: transferTarget.unidade
+        })
+      });
+      if (response.ok) {
+        await fetchEnrollments();
+        alert('Transferência realizada com sucesso');
+        setIsTransferringEnrollment(false);
+        setTransferringEnrollmentId(null);
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Erro ao transferir matrícula');
+      }
+    } catch (error) {
+      console.error('Error transferring enrollment:', error);
       alert('Erro de conexão');
     } finally {
       setLoading(false);
@@ -1574,9 +1683,63 @@ export default function App() {
                                         </span>
                                       </td>
                                       <td className="px-6 py-4 text-right">
-                                        <button className="text-slate-400 hover:text-emerald-600 transition-colors">
-                                          <ExternalLink size={16} />
-                                        </button>
+                                        <div className="flex items-center justify-end gap-2">
+                                          {mat.status === 'trancado' ? (
+                                            <button 
+                                              onClick={() => {
+                                                setReactivatingEnrollmentId(mat.id);
+                                                setIsReactivatingEnrollment(true);
+                                              }}
+                                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                              title="Reativar Matrícula"
+                                            >
+                                              <RefreshCw size={16} />
+                                            </button>
+                                          ) : mat.status !== 'cancelado' && (
+                                            <>
+                                              <button 
+                                                onClick={() => {
+                                                  setFreezingEnrollmentId(mat.id);
+                                                  setIsFreezingEnrollment(true);
+                                                }}
+                                                className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                                title="Trancar Matrícula"
+                                              >
+                                                <Lock size={16} />
+                                              </button>
+                                              <button 
+                                                onClick={() => {
+                                                  setTransferringEnrollmentId(mat.id);
+                                                  setTransferringStudent({
+                                                    id: aluno.id,
+                                                    nome_completo: aluno.nome_completo,
+                                                    serie_ano: aluno.serie_ano,
+                                                    data_nascimento: aluno.data_nascimento
+                                                  });
+                                                  setIsTransferringEnrollment(true);
+                                                  setTransferTarget({ turma: mat.turma, unidade: mat.unidade });
+                                                }}
+                                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                title="Transferir Turma"
+                                              >
+                                                <Truck size={16} />
+                                              </button>
+                                              <button 
+                                                onClick={() => {
+                                                  setCancelingEnrollmentId(mat.id);
+                                                  setIsCancelingEnrollment(true);
+                                                }}
+                                                className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                title="Cancelar Matrícula"
+                                              >
+                                                <XCircle size={16} />
+                                              </button>
+                                            </>
+                                          )}
+                                          <button className="p-1.5 text-slate-400 hover:text-emerald-600 transition-colors">
+                                            <ExternalLink size={16} />
+                                          </button>
+                                        </div>
                                       </td>
                                     </tr>
                                   ))
@@ -3967,7 +4130,7 @@ export default function App() {
 
         <AnimatePresence>
           {isCancelingEnrollment && (
-            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -4026,6 +4189,282 @@ export default function App() {
                     className="flex-1 bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-200 disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {loading ? <RefreshCw size={18} className="animate-spin" /> : 'Confirmar'}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {isFreezingEnrollment && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-white rounded-3xl shadow-2xl border border-slate-200 p-8 w-full max-w-md"
+              >
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-3 bg-amber-50 rounded-xl">
+                    <Lock className="text-amber-600" size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold">Trancar Matrícula</h2>
+                    <p className="text-slate-500 text-sm">Suspenda temporariamente a matrícula.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4 mb-8">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Data de Início</label>
+                    <input 
+                      type="date" 
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-amber-500 outline-none transition-all"
+                      value={freezeStartDate}
+                      onChange={e => setFreezeStartDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Data de Fim (Opcional)</label>
+                    <input 
+                      type="date" 
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-amber-500 outline-none transition-all"
+                      value={freezeEndDate}
+                      onChange={e => setFreezeEndDate(e.target.value)}
+                    />
+                    <p className="text-[10px] text-slate-400">Se não preenchido, a reativação será manual.</p>
+                  </div>
+                  <p className="text-xs text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                    <strong>Nota:</strong> As cobranças futuras serão postergadas proporcionalmente ao tempo de afastamento no momento da reativação.
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setIsFreezingEnrollment(false)}
+                    className="flex-1 px-6 py-3 rounded-xl font-bold text-slate-600 hover:bg-slate-100 transition-all"
+                  >
+                    Voltar
+                  </button>
+                  <button 
+                    onClick={confirmFreezeEnrollment}
+                    disabled={loading || !freezeStartDate}
+                    className="flex-1 bg-amber-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-amber-700 transition-all shadow-lg shadow-amber-200 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {loading ? <RefreshCw size={18} className="animate-spin" /> : 'Confirmar'}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {isReactivatingEnrollment && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-white rounded-3xl shadow-2xl border border-slate-200 p-8 w-full max-w-md"
+              >
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-3 bg-emerald-50 rounded-xl">
+                    <RefreshCw className="text-emerald-600" size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold">Reativar Matrícula</h2>
+                    <p className="text-slate-500 text-sm">Retome as atividades do aluno.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4 mb-8">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Data de Reativação</label>
+                    <input 
+                      type="date" 
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                      value={reactivationDate}
+                      onChange={e => setReactivationDate(e.target.value)}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                    <strong>Atenção:</strong> O sistema calculará os dias de afastamento e postergará as próximas faturas no Pagar.me automaticamente.
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setIsReactivatingEnrollment(false)}
+                    className="flex-1 px-6 py-3 rounded-xl font-bold text-slate-600 hover:bg-slate-100 transition-all"
+                  >
+                    Voltar
+                  </button>
+                  <button 
+                    onClick={confirmReactivateEnrollment}
+                    disabled={loading || !reactivationDate}
+                    className="flex-1 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {loading ? <RefreshCw size={18} className="animate-spin" /> : 'Reativar'}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {isTransferringEnrollment && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-white rounded-3xl shadow-2xl border border-slate-200 p-8 w-full max-w-md"
+              >
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-3 bg-blue-50 rounded-xl">
+                    <Truck className="text-blue-600" size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold">Transferir Turma</h2>
+                    <p className="text-slate-500 text-sm">Mude o aluno de turma ou unidade.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4 mb-8">
+                  {transferringStudent && (
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs">
+                      <p className="font-bold text-slate-700">{transferringStudent.nome_completo}</p>
+                      <p className="text-slate-500">{transferringStudent.serie_ano.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}</p>
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Nova Unidade</label>
+                    <select 
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                      value={transferTarget.unidade}
+                      onChange={e => setTransferTarget({ ...transferTarget, unidade: e.target.value, turma: '' })}
+                    >
+                      <option value="">Selecione a unidade...</option>
+                      {options.unidades.map(u => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Nova Turma</label>
+                    <select 
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                      value={transferTarget.turma}
+                      onChange={e => setTransferTarget({ ...transferTarget, turma: e.target.value })}
+                      disabled={!transferTarget.unidade}
+                    >
+                      <option value="">Selecione a turma...</option>
+                      {options.turmas
+                        .filter(t => {
+                          const normalizeUnit = (s: string) => s?.toLowerCase().trim() || '';
+                          const unitMatch = normalizeUnit(t.unidade) === normalizeUnit(transferTarget.unidade) || 
+                                           normalizeUnit(t.unidade_atendimento) === normalizeUnit(transferTarget.unidade) ||
+                                           normalizeUnit(t.unidade_nome) === normalizeUnit(transferTarget.unidade) ||
+                                           normalizeUnit(t.local_aula) === normalizeUnit(transferTarget.unidade);
+                          
+                          if (!unitMatch) return false;
+                          
+                          if (!transferringStudent) return true;
+
+                          // Filter by Grade
+                          let seriesPermitidas: string[] = [];
+                          try {
+                            if (Array.isArray(t.series_permitidas)) {
+                              seriesPermitidas = t.series_permitidas;
+                            } else if (typeof t.series_permitidas === 'string' && t.series_permitidas.trim() !== '') {
+                              if (t.series_permitidas.trim().startsWith('[') && t.series_permitidas.trim().endsWith(']')) {
+                                seriesPermitidas = JSON.parse(t.series_permitidas);
+                              } else {
+                                seriesPermitidas = t.series_permitidas.split(',').map((s: string) => s.trim());
+                              }
+                            }
+                          } catch (e) {
+                            console.error('Error parsing series_permitidas:', e);
+                            seriesPermitidas = [];
+                          }
+                          
+                          const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+                          
+                          const gradeMatch = seriesPermitidas.length === 0 || 
+                                           seriesPermitidas.some(s => normalize(s) === normalize(transferringStudent.serie_ano));
+                          
+                          // Filter by Age
+                          const birthDate = new Date(transferringStudent.data_nascimento);
+                          const today = new Date();
+                          let age = today.getFullYear() - birthDate.getFullYear();
+                          const m = today.getMonth() - birthDate.getMonth();
+                          if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+                            age--;
+                          }
+
+                          const ageMatch = isNaN(age) || (
+                            (!t.idade_minima || age >= t.idade_minima) && 
+                            (!t.idade_maxima || age <= t.idade_maxima)
+                          );
+
+                          return gradeMatch && ageMatch;
+                        })
+                        .map(t => (
+                          <option key={t.nome} value={t.nome}>{t.nome}</option>
+                        ))
+                      }
+                    </select>
+                    {transferTarget.unidade && options.turmas.filter(t => {
+                      const normalizeUnit = (s: string) => s?.toLowerCase().trim() || '';
+                      const unitMatch = normalizeUnit(t.unidade) === normalizeUnit(transferTarget.unidade) || 
+                                       normalizeUnit(t.unidade_atendimento) === normalizeUnit(transferTarget.unidade) ||
+                                       normalizeUnit(t.unidade_nome) === normalizeUnit(transferTarget.unidade) ||
+                                       normalizeUnit(t.local_aula) === normalizeUnit(transferTarget.unidade);
+                      return unitMatch;
+                    }).filter(t => {
+                      if (!transferringStudent) return true;
+                      let seriesPermitidas: string[] = [];
+                      try {
+                        if (Array.isArray(t.series_permitidas)) {
+                          seriesPermitidas = t.series_permitidas;
+                        } else if (typeof t.series_permitidas === 'string' && t.series_permitidas.trim() !== '') {
+                          if (t.series_permitidas.trim().startsWith('[') && t.series_permitidas.trim().endsWith(']')) {
+                            seriesPermitidas = JSON.parse(t.series_permitidas);
+                          } else {
+                            seriesPermitidas = t.series_permitidas.split(',').map((s: string) => s.trim());
+                          }
+                        }
+                      } catch (e) { seriesPermitidas = []; }
+                      const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+                      const gradeMatch = seriesPermitidas.length === 0 || 
+                                       seriesPermitidas.some(s => normalize(s) === normalize(transferringStudent.serie_ano));
+                      const birthDate = new Date(transferringStudent.data_nascimento);
+                      const today = new Date();
+                      let age = today.getFullYear() - birthDate.getFullYear();
+                      const m = today.getMonth() - birthDate.getMonth();
+                      if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+                      const ageMatch = isNaN(age) || ((!t.idade_minima || age >= t.idade_minima) && (!t.idade_maxima || age <= t.idade_maxima));
+                      return gradeMatch && ageMatch;
+                    }).length === 0 && (
+                      <p className="text-[10px] text-red-500 mt-1">Nenhuma turma compatível com a idade/série do aluno nesta unidade.</p>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                    <strong>Nota:</strong> A matrícula atual será marcada como transferida e uma nova matrícula será criada na turma de destino.
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => {
+                      setIsTransferringEnrollment(false);
+                      setTransferringStudent(null);
+                    }}
+                    className="flex-1 px-6 py-3 rounded-xl font-bold text-slate-600 hover:bg-slate-100 transition-all"
+                  >
+                    Voltar
+                  </button>
+                  <button 
+                    onClick={confirmTransferEnrollment}
+                    disabled={loading || !transferTarget.turma}
+                    className="flex-1 bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {loading ? <RefreshCw size={18} className="animate-spin" /> : 'Transferir'}
                   </button>
                 </div>
               </motion.div>
