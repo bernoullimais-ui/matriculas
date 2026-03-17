@@ -1,14 +1,14 @@
-import express from "express";
-import path from "path";
+import * as express from "express";
+import * as path from "path";
 import { fileURLToPath } from "url";
 import { createClient } from "@supabase/supabase-js";
-import dotenv from "dotenv";
-import util from "util";
-import PDFDocument from 'pdfkit';
+import * as dotenv from "dotenv";
+import * as util from "util";
+import * as PDFDocument from 'pdfkit';
 import axios from "axios";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Handle __dirname and __filename for both ESM and CJS environments
+const currentDirname = process.cwd();
 
 dotenv.config();
 
@@ -2682,9 +2682,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       });
       app.use(vite.middlewares);
     } else {
-      app.use(express.static(path.join(__dirname, "dist")));
+      app.use(express.static(path.join(currentDirname, "dist")));
       app.get("*", (req, res) => {
-        res.sendFile(path.join(__dirname, "dist", "index.html"));
+        res.sendFile(path.join(currentDirname, "dist", "index.html"));
       });
     }
 
@@ -2697,4 +2697,4 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
     startServer();
   }
 
-  export default app;
+export default app;
