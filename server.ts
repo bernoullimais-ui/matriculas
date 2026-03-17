@@ -1682,6 +1682,16 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.post("/api/enrollment/cancel", async (req, res) => {
     const { enrollmentId, cancellationDate, justificativa } = req.body;
     try {
+      const { data: currentEnrollment } = await supabase
+        .from('matriculas')
+        .select('status')
+        .eq('id', enrollmentId)
+        .single();
+
+      if (currentEnrollment?.status === 'transferido' || currentEnrollment?.status === 'cancelado') {
+        return res.status(400).json({ error: "Não é possível realizar movimentações em uma matrícula transferida ou cancelada." });
+      }
+
       const today = new Date().toISOString().split('T')[0];
       if (cancellationDate < today) {
         return res.status(400).json({ error: "A data de cancelamento não pode ser anterior à data de hoje." });
@@ -1880,6 +1890,16 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.post("/api/enrollment/freeze", async (req, res) => {
     const { enrollmentId, startDate, endDate } = req.body;
     try {
+      const { data: currentEnrollment } = await supabase
+        .from('matriculas')
+        .select('status')
+        .eq('id', enrollmentId)
+        .single();
+
+      if (currentEnrollment?.status === 'transferido' || currentEnrollment?.status === 'cancelado') {
+        return res.status(400).json({ error: "Não é possível realizar movimentações em uma matrícula transferida ou cancelada." });
+      }
+
       // 1. Update enrollment status
       const { error: updateError } = await supabase
         .from('matriculas')
@@ -1982,6 +2002,16 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.post("/api/enrollment/transfer", async (req, res) => {
     const { enrollmentId, newTurma, newUnidade } = req.body;
     try {
+      const { data: currentEnrollment } = await supabase
+        .from('matriculas')
+        .select('status')
+        .eq('id', enrollmentId)
+        .single();
+
+      if (currentEnrollment?.status === 'transferido' || currentEnrollment?.status === 'cancelado') {
+        return res.status(400).json({ error: "Não é possível realizar movimentações em uma matrícula transferida ou cancelada." });
+      }
+
       // 1. Get current enrollment data to preserve history
       const { data: oldEnrollment, error: fetchError } = await supabase
         .from('matriculas')

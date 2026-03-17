@@ -1695,7 +1695,7 @@ export default function App() {
                                             >
                                               <RefreshCw size={16} />
                                             </button>
-                                          ) : mat.status !== 'cancelado' && (
+                                          ) : (mat.status !== 'cancelado' && mat.status !== 'transferido') && (
                                             <>
                                               <button 
                                                 onClick={() => {
@@ -3359,41 +3359,43 @@ export default function App() {
                                               )}
                                             </div>
                                           </div>
-                                          <div className="flex gap-2 ml-4">
-                                            <button 
-                                              onClick={() => {
-                                                setFormData({
-                                                  ...formData,
-                                                  student: {
-                                                    ...formData.student,
-                                                    name: dep.nome_completo || '',
-                                                    birthDate: dep.data_nascimento || '',
-                                                    grade: dep.serie_ano || '',
-                                                    turmaEscolar: dep.turma_escolar || '',
-                                                    responsavel1: dep.responsavel_1 || '',
-                                                    whatsapp1: dep.whatsapp_1 || '',
-                                                    responsavel2: dep.responsavel_2 || '',
-                                                    whatsapp2: dep.whatsapp_2 || '',
-                                                    unidade: mat.unidade,
-                                                    turmaComplementar: mat.turma
-                                                  }
-                                                });
-                                                setTransferringEnrollmentId(mat.id);
-                                                setStep('enrollment');
-                                              }}
-                                              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                              title="Transferir Turma"
-                                            >
-                                              <RefreshCw size={14} />
-                                            </button>
-                                            <button 
-                                              onClick={() => handleCancelEnrollment(mat.id)}
-                                              className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                              title="Cancelar Matrícula"
-                                            >
-                                              <Trash2 size={14} />
-                                            </button>
-                                          </div>
+                                          {(mat.status !== 'cancelado' && mat.status !== 'transferido') && (
+                                            <div className="flex gap-2 ml-4">
+                                              <button 
+                                                onClick={() => {
+                                                  setFormData({
+                                                    ...formData,
+                                                    student: {
+                                                      ...formData.student,
+                                                      name: dep.nome_completo || '',
+                                                      birthDate: dep.data_nascimento || '',
+                                                      grade: dep.serie_ano || '',
+                                                      turmaEscolar: dep.turma_escolar || '',
+                                                      responsavel1: dep.responsavel_1 || '',
+                                                      whatsapp1: dep.whatsapp_1 || '',
+                                                      responsavel2: dep.responsavel_2 || '',
+                                                      whatsapp2: dep.whatsapp_2 || '',
+                                                      unidade: mat.unidade,
+                                                      turmaComplementar: mat.turma
+                                                    }
+                                                  });
+                                                  setTransferringEnrollmentId(mat.id);
+                                                  setStep('enrollment');
+                                                }}
+                                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                title="Transferir Turma"
+                                              >
+                                                <RefreshCw size={14} />
+                                              </button>
+                                              <button 
+                                                onClick={() => handleCancelEnrollment(mat.id)}
+                                                className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                title="Cancelar Matrícula"
+                                              >
+                                                <Trash2 size={14} />
+                                              </button>
+                                            </div>
+                                          )}
                                         </div>
                                       ))}
                                     </div>
