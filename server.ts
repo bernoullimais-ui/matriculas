@@ -1774,7 +1774,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
             .from('matriculas')
             .update({ pagarme_subscription_id: subscriptionId })
             .eq('id', enrollmentId)
-            .catch(() => {});
+            .then(({ error }) => {
+              if (error) console.log("Nota: Erro ao salvar ID da assinatura na matrícula (provavelmente coluna não existe).");
+            });
         } catch (err: any) {
           console.error(`[Cancelamento] Erro ao cancelar assinatura no Pagar.me:`, err.response?.data || err.message);
         }
@@ -2642,6 +2644,12 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
           const status = isPaid ? 'pago' : 'falha';
 
+          // Check if it's a recurring payment (cycle > 1)
+          const invoice = data.invoice || (data.charges && data.charges[0] && data.charges[0].invoice) || (event.type === 'invoice.paid' ? data : null);
+          const isSubscription = (invoice && invoice.subscription_id) || event.type.startsWith('subscription.');
+          const cycle = invoice ? invoice.cycle : (data.current_cycle || 1);
+          let targetPaymentId = paymentId;
+
           // 1. Tenta atualização completa
           const updatePayload: any = { 
             status: status
@@ -2657,12 +2665,6 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
               updatePayload.pagarme = data.id;
             }
           }
-
-          // Check if it's a recurring payment (cycle > 1)
-          let targetPaymentId = paymentId;
-          const invoice = data.invoice || (data.charges && data.charges[0] && data.charges[0].invoice) || (event.type === 'invoice.paid' ? data : null);
-          const isSubscription = (invoice && invoice.subscription_id) || event.type.startsWith('subscription.');
-          const cycle = invoice ? invoice.cycle : (data.current_cycle || 1);
 
           if (isSubscription && cycle > 1) {
             console.log(`[Webhook Pagar.me] Pagamento recorrente detectado. Ciclo: ${cycle}`);
