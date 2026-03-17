@@ -381,6 +381,8 @@ async function createPagarmeSubscription(data: {
   amount: number; // in cents
   description: string;
   code: string; // Reference ID for webhook
+  cycles?: number;
+  start_at?: string; // ISO date string
 }) {
   const secretKey = getPagarmeSecretKey();
   
@@ -460,6 +462,8 @@ async function createPagarmeSubscription(data: {
     billing_type: "prepaid",
     installments: 1,
     statement_descriptor: "SPORTFORKIDS",
+    cycles: data.cycles,
+    start_at: data.start_at,
     customer: {
       name: cleanName.substring(0, 64),
       email: cleanEmail,
@@ -1027,58 +1031,56 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       const matriculaId = newMatricula?.id;
 
       // 4. Generate Installments based on Unit Mapping
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       let inicioAulas: Date | null = null;
       let fimAulas: Date | null = null;
       let unitMapping: any = null;
 
       try {
         const unidadeNome = (student.unidade || '').trim();
-        // Try 'nome' first as it seems to be the correct column
-        const { data: mapping, error: mappingError } = await supabase
+        
+        // Busca todas as configurações para a unidade, ordenadas por data de início
+        // Filtramos para pegar apenas as que ainda não terminaram (fim_aulas >= hoje)
+        const { data: mappings, error: mappingError } = await supabase
           .from('unidades_mapping')
-          .select('inicio_aulas, fim_aulas, identidade')
+          .select('inicio_aulas, fim_aulas, identidade, ano_letivo')
           .eq('nome', unidadeNome)
-          .maybeSingle();
+          .gte('fim_aulas', todayStr)
+          .order('inicio_aulas', { ascending: true });
         
         if (mappingError) {
           console.warn("Error fetching mapping with 'nome':", mappingError.message);
-          // Fallback to 'nome_unidade' only if the error wasn't about missing column 'nome'
-          if (!mappingError.message?.includes('nome')) {
-            const { data: fallbackMapping } = await supabase
-              .from('unidades_mapping')
-              .select('inicio_aulas, fim_aulas, identidade')
-              .eq('nome_unidade', unidadeNome)
-              .maybeSingle();
-            unitMapping = fallbackMapping;
-          }
-        } else {
-          unitMapping = mapping;
-        }
-        
-        console.log(`Unit mapping result for "${unidadeNome}":`, JSON.stringify(unitMapping));
-        
-        // If still not found, try without 'identidade' and be careful with column names
-        if (!unitMapping && unidadeNome) {
-          console.log(`Triggering unitMapping fallback for "${unidadeNome}"`);
-          // Try 'nome' first
-          const { data: noIdentMapping, error: noIdentError } = await supabase
+          // Fallback para 'nome_unidade'
+          const { data: fallbackMappings } = await supabase
             .from('unidades_mapping')
-            .select('inicio_aulas, fim_aulas, identidade')
-            .eq('nome', unidadeNome)
-            .maybeSingle();
+            .select('inicio_aulas, fim_aulas, identidade, ano_letivo')
+            .eq('nome_unidade', unidadeNome)
+            .gte('fim_aulas', todayStr)
+            .order('inicio_aulas', { ascending: true });
           
-          if (noIdentError && noIdentError.message?.includes('nome')) {
-            // Try 'nome_unidade' if 'nome' failed
-            const { data: altMapping } = await supabase
-              .from('unidades_mapping')
-              .select('inicio_aulas, fim_aulas, identidade')
-              .eq('nome_unidade', unidadeNome)
-              .maybeSingle();
-            unitMapping = altMapping;
-          } else {
-            unitMapping = noIdentMapping;
+          if (fallbackMappings && fallbackMappings.length > 0) {
+            unitMapping = fallbackMappings[0];
+          }
+        } else if (mappings && mappings.length > 0) {
+          unitMapping = mappings[0];
+        }
+        
+        // Se ainda não encontrou (talvez todas as datas já passaram), pega a mais recente de todas
+        if (!unitMapping && unidadeNome) {
+          const { data: latestMappings } = await supabase
+            .from('unidades_mapping')
+            .select('inicio_aulas, fim_aulas, identidade, ano_letivo')
+            .or(`nome.eq."${unidadeNome}",nome_unidade.eq."${unidadeNome}"`)
+            .order('inicio_aulas', { ascending: false })
+            .limit(1);
+          
+          if (latestMappings && latestMappings.length > 0) {
+            unitMapping = latestMappings[0];
           }
         }
+        
+        console.log(`Unit mapping selecionado para "${unidadeNome}":`, JSON.stringify(unitMapping));
         
         if (unitMapping) {
           if (unitMapping.inicio_aulas) {
@@ -1091,12 +1093,10 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
           }
         }
       } catch (err) {
-        console.warn("Table 'unidades_mapping' not found or error fetching mapping:", err);
+        console.warn("Erro ao processar unidades_mapping:", err);
       }
 
       const installments = [];
-      const today = new Date();
-      const todayStr = today.toISOString().split('T')[0];
       
       // First payment (Registration/Enrollment) - Always today
       const firstPayment: any = {
@@ -1356,40 +1356,96 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       if (valorCobrado > 0) {
         try {
           if (paymentMethod === 'credit_card' && req.body.card) {
-            console.log(`Creating Pagar.me subscription for ${guardian.name}, amount: ${valorCobrado}`);
-            const subscription = await createPagarmeSubscription({
-              customer: {
-                name: guardian.name,
-                email: guardian.email,
-                cpf: guardian.cpf,
-                phone: guardian.phone,
-                address: guardian.address
-              },
-              card: req.body.card,
-              amount: Math.round(valorCobrado * 100), // convert to cents
-              description: `Mensalidade - ${student.name} (${student.turmaComplementar})`,
-              code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}_${Math.floor(Math.random() * 1000)}`
-            });
-            paymentInfo = subscription;
-            console.log("Pagar.me subscription created successfully:", subscription.id);
+            const today = new Date();
+            const isBeforeStart = inicioAulas && today < inicioAulas;
             
-            // Salva o ID da assinatura imediatamente no primeiro pagamento para garantir que o cancelamento funcione
-            if (subscription && subscription.id && firstPaymentId) {
-              await supabase
-                .from('pagamentos')
-                .update({ pagarme: subscription.id })
-                .eq('id', firstPaymentId);
-            }
-            
-            // Também salva na matrícula se a coluna existir (tentativa silenciosa)
-            if (subscription && subscription.id && matriculaId) {
-              await supabase
-                .from('matriculas')
-                .update({ pagarme_subscription_id: subscription.id })
-                .eq('id', matriculaId)
-                .then(({ error }) => {
-                  if (error) console.log("Nota: Coluna pagarme_subscription_id não existe na tabela matriculas.");
-                });
+            if (isBeforeStart && installments.length > 1) {
+              console.log(`[Pagar.me] Matrícula antecipada detectada. Cobrando matrícula hoje e agendando assinatura para ${installments[1].data_vencimento}`);
+              
+              // 1. Cobra a Matrícula como um Pedido Avulso (Order)
+              const order = await createPagarmeOrder({
+                customer: {
+                  name: guardian.name,
+                  email: guardian.email,
+                  cpf: guardian.cpf,
+                  phone: guardian.phone,
+                  address: guardian.address
+                },
+                card: req.body.card,
+                amount: Math.round(valorCobrado * 100),
+                paymentMethod: 'credit_card',
+                description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
+                code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}`
+              });
+              
+              // 2. Cria a Assinatura agendada para o início das aulas + 1 mês
+              const subscription = await createPagarmeSubscription({
+                customer: {
+                  name: guardian.name,
+                  email: guardian.email,
+                  cpf: guardian.cpf,
+                  phone: guardian.phone,
+                  address: guardian.address
+                },
+                card: req.body.card,
+                amount: Math.round(valorCobrado * 100),
+                description: `Mensalidade - ${student.name} (${student.turmaComplementar})`,
+                code: firstPaymentId ? `${firstPaymentId}_sub_${Date.now()}` : `sub_${Date.now()}`,
+                cycles: installments.length - 1,
+                start_at: new Date(installments[1].data_vencimento + "T12:00:00Z").toISOString()
+              });
+              
+              paymentInfo = { order, subscription };
+              console.log("Pagar.me order and scheduled subscription created successfully");
+              
+              // Salva o ID da assinatura na matrícula
+              if (subscription && subscription.id && matriculaId) {
+                await supabase
+                  .from('matriculas')
+                  .update({ pagarme_subscription_id: subscription.id })
+                  .eq('id', matriculaId)
+                  .then(({ error }) => {
+                    if (error) console.log("Nota: Erro ao salvar ID da assinatura na matrícula.");
+                  });
+              }
+            } else {
+              // Fluxo padrão: Assinatura começa hoje
+              console.log(`Creating Pagar.me subscription for ${guardian.name}, amount: ${valorCobrado}`);
+              const subscription = await createPagarmeSubscription({
+                customer: {
+                  name: guardian.name,
+                  email: guardian.email,
+                  cpf: guardian.cpf,
+                  phone: guardian.phone,
+                  address: guardian.address
+                },
+                card: req.body.card,
+                amount: Math.round(valorCobrado * 100), // convert to cents
+                description: `Mensalidade - ${student.name} (${student.turmaComplementar})`,
+                code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+                cycles: installments.length
+              });
+              paymentInfo = subscription;
+              console.log("Pagar.me subscription created successfully:", subscription.id);
+              
+              // Salva o ID da assinatura imediatamente no primeiro pagamento
+              if (subscription && subscription.id && firstPaymentId) {
+                await supabase
+                  .from('pagamentos')
+                  .update({ pagarme: subscription.id })
+                  .eq('id', firstPaymentId);
+              }
+              
+              // Também salva na matrícula
+              if (subscription && subscription.id && matriculaId) {
+                await supabase
+                  .from('matriculas')
+                  .update({ pagarme_subscription_id: subscription.id })
+                  .eq('id', matriculaId)
+                  .then(({ error }) => {
+                    if (error) console.log("Nota: Erro ao salvar ID da assinatura na matrícula.");
+                  });
+              }
             }
           } else {
             console.log(`Creating Pagar.me order for ${guardian.name}, amount: ${valorCobrado}`);
