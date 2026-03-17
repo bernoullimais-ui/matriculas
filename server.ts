@@ -1356,7 +1356,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
       let paymentInfo = null;
       if (valorCobrado > 0) {
-        const softDescriptor = (student.unidade || "").includes("Bernoulli") ? "Bernoulli+" : "Sport for Kids";
+        const softDescriptor = (student.unidade || "").includes("Bernoulli") ? "BernoulliMais" : "Sport for Kids";
         
         try {
           if (paymentMethod === 'credit_card' && req.body.card) {
