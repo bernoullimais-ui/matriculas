@@ -28,16 +28,25 @@ import {
   DollarSign,
   Percent,
   Tag,
+  Users,
   X,
+  Mail,
+  Phone,
+  Download,
   Truck,
   Gift,
   Info,
   Star,
   Check,
-  AlertCircle
+  AlertCircle,
+  Upload,
+  FileSpreadsheet,
+  Hash,
+  Sparkles
 } from 'lucide-react';
+import Papa from 'papaparse';
 
-type Step = 'guardian' | 'student' | 'enrollment' | 'payment' | 'success' | 'waitlist_success' | 'admin' | 'portal';
+type Step = 'guardian' | 'student' | 'enrollment' | 'payment' | 'success' | 'waitlist_success' | 'admin' | 'portal' | 'complete_profile';
 
 interface Enrollment {
   nome_completo: string;
@@ -52,6 +61,9 @@ interface Enrollment {
       unidade: string;
       turma_id?: string;
       status?: string;
+      plano?: string;
+      data_matricula?: string;
+      data_cancelamento?: string;
       data_trancamento_inicio?: string;
       data_trancamento_fim?: string;
     }[];
@@ -61,7 +73,16 @@ interface Enrollment {
 
 export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [step, setStep] = useState<Step>('guardian');
+  const [showWelcomeModal, setShowWelcomeModal] = useState(() => {
+    const expirationDate = new Date('2026-04-22T00:00:00Z');
+    const now = new Date();
+    return now < expirationDate;
+  });
+  const [loginIdentifier, setLoginIdentifier] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [isCompletingProfile, setIsCompletingProfile] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searchingGuardian, setSearchingGuardian] = useState(false);
   const [guardianExists, setGuardianExists] = useState<boolean | null>(null);
@@ -70,9 +91,15 @@ export default function App() {
   const [recoveringPassword, setRecoveringPassword] = useState(false);
   const [isEditingGuardian, setIsEditingGuardian] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [isFetchingAddress, setIsFetchingAddress] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [isFetchingAddress, setIsFetchingAddress] = useState(false);
+  const [isTemporaryCpf, setIsTemporaryCpf] = useState(false);
+  const [isFirstAccess, setIsFirstAccess] = useState(false);
+  const [isAccessingPanel, setIsAccessingPanel] = useState(true);
+  const [accessError, setAccessError] = useState<string | null>(null);
   const [isCancelingEnrollment, setIsCancelingEnrollment] = useState(false);
+  const [isViewingEnrollmentDetails, setIsViewingEnrollmentDetails] = useState(false);
+  const [selectedEnrollmentDetails, setSelectedEnrollmentDetails] = useState<any>(null);
   const [cancelingEnrollmentId, setCancelingEnrollmentId] = useState<string | null>(null);
   const [cancellationDate, setCancellationDate] = useState(new Date().toISOString().split('T')[0]);
   const [cancellationReason, setCancellationReason] = useState('');
@@ -92,11 +119,296 @@ export default function App() {
 
   const [dependents, setDependents] = useState<any[]>([]);
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
-  const [adminTab, setAdminTab] = useState<'enrollments' | 'settings' | 'waitlist' | 'finance' | 'coupons'>('enrollments');
+  const [importData, setImportData] = useState<any[]>([]);
+  const [importResults, setImportResults] = useState<any>(null);
+  const [importPreviewResults, setImportPreviewResults] = useState<any>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importEncoding, setImportEncoding] = useState('UTF-8');
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importType, setImportType] = useState<'matriculas' | 'aulas_experimentais' | 'ocorrencias' | 'presencas' | 'pagamentos_wix'>('matriculas');
+  const [wixMapping, setWixMapping] = useState<{
+    email: string;
+    responsavel_nome: string;
+    plano: string;
+    aluno: string;
+    data: string;
+    valor: string;
+    status: string;
+    transacao_id: string;
+  } | null>(null);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [showMappingModal, setShowMappingModal] = useState(false);
+  const [tempWixData, setTempWixData] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (importFile) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        let content = event.target?.result as string;
+        
+        // If WIX payments, check if we need to skip the first line (group headers)
+        if (importType === 'pagamentos_wix') {
+          const lines = content.split(/\r?\n/);
+          if (lines.length > 1 && lines[0].includes('"Pagamento"') && lines[0].includes('"Informações de pagamento"')) {
+            console.log('Detected WIX group headers. Skipping first line.');
+            content = lines.slice(1).join('\n');
+          }
+        }
+
+        Papa.parse(content, {
+          header: true,
+          skipEmptyLines: 'greedy',
+          transformHeader: (header) => {
+            // Remove BOM and trim
+            return header.replace(/^\ufeff/i, '').trim();
+          },
+          complete: (results) => {
+            console.log('PapaParse Results:', results);
+            
+            if (importType === 'pagamentos_wix' && results.meta.fields) {
+              setCsvHeaders(results.meta.fields);
+              setTempWixData(results.data);
+              setShowMappingModal(true);
+              return;
+            }
+
+            // If PapaParse failed to detect the delimiter
+            // and we have only one column that looks like it should be multiple
+            let data = results.data;
+            if (results.meta.fields && results.meta.fields.length === 1) {
+              const firstField = results.meta.fields[0];
+              let detectedDelimiter = null;
+              if (firstField.includes(';')) detectedDelimiter = ';';
+              else if (firstField.includes('\t')) detectedDelimiter = '\t';
+              else if (firstField.includes('|')) detectedDelimiter = '|';
+
+              if (detectedDelimiter) {
+                console.warn(`Delimiter '${detectedDelimiter}' detected but not used by PapaParse. Re-parsing...`);
+                Papa.parse(content, {
+                  header: true,
+                  skipEmptyLines: 'greedy',
+                  delimiter: detectedDelimiter,
+                  transformHeader: (header) => header.replace(/^\ufeff/i, '').trim(),
+                  complete: (res) => {
+                    processMappedData(res.data);
+                  }
+                });
+                return;
+              }
+            }
+
+            processMappedData(data);
+          },
+          error: (error) => {
+            console.error(`Erro ao processar arquivo: ${error.message}`);
+          }
+        });
+      };
+      reader.readAsText(importFile, importEncoding);
+    }
+  }, [importEncoding, importFile, importType]);
+
+  const runPreview = async (dataToPreview: any[], type: string) => {
+    if (dataToPreview.length === 0) return;
+    setIsPreviewing(true);
+    setImportPreviewResults(null);
+    try {
+      let endpoint = '/api/admin/import';
+      if (type === 'aulas_experimentais') {
+        endpoint = '/api/admin/import-aulas-experimentais';
+      } else if (type === 'ocorrencias') {
+        endpoint = '/api/admin/import-ocorrencias';
+      } else if (type === 'presencas') {
+        endpoint = '/api/admin/import-presencas';
+      } else if (type === 'pagamentos_wix') {
+        endpoint = '/api/admin/import-wix-payments';
+      }
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: type === 'pagamentos_wix' 
+          ? JSON.stringify({ payments: dataToPreview, preview: true, mapping: wixMapping })
+          : JSON.stringify({ rows: dataToPreview, preview: true })
+      });
+      
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        if (!response.ok) {
+          throw new Error(text || `Erro no servidor (${response.status})`);
+        }
+        throw new Error('Resposta do servidor inválida (não é JSON)');
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro desconhecido no servidor');
+      }
+      setImportPreviewResults(data);
+    } catch (error: any) {
+      console.error('Preview error:', error);
+      setErrorMessage(`Erro na pré-visualização: ${error.message || error}`);
+    } finally {
+      setIsPreviewing(false);
+    }
+  };
+
+  const processMappedData = (rawData: any[]) => {
+    if (importType === 'aulas_experimentais' || importType === 'ocorrencias' || importType === 'presencas' || importType === 'pagamentos_wix') {
+      // For these types, just keep the raw data as the server handles the mapping
+      setImportData(rawData);
+      setImportResults(null);
+      runPreview(rawData, importType);
+      return;
+    }
+
+    // Helper to find value by multiple possible header names (case-insensitive)
+    const getVal = (row: any, keys: string[]) => {
+      const entry = Object.entries(row).find(([k]) => {
+        const cleanK = k.replace(/^\uFEFF/i, '').trim().toLowerCase();
+        return keys.some(key => {
+          const cleanKey = key.toLowerCase();
+          return cleanK === cleanKey || cleanK.includes(cleanKey);
+        });
+      });
+      return entry ? String(entry[1]).trim() : '';
+    };
+
+    // Map Portuguese headers to backend keys for matriculas
+    const mappedData = rawData.map((row: any) => ({
+      responsavel_nome: getVal(row, ['Nome do Responsável', 'responsavel_nome', 'Responsavel']),
+      responsavel_cpf: getVal(row, ['CPF do Responsável', 'responsavel_cpf', 'CPF']),
+      responsavel_email: getVal(row, ['Email do Responsável', 'responsavel_email', 'Email']),
+      responsavel_telefone: getVal(row, ['Telefone do Responsável', 'responsavel_telefone', 'Telefone']),
+      responsavel_endereco: getVal(row, ['Endereço', 'responsavel_endereco', 'Endereco']),
+      aluno_nome: getVal(row, ['Nome do Aluno', 'aluno_nome', 'Estudante', 'Aluno']),
+      aluno_data_nascimento: getVal(row, ['Data de Nascimento', 'aluno_data_nascimento', 'Nascimento']),
+      aluno_serie: getVal(row, ['Série', 'aluno_serie', 'Serie']),
+      aluno_turma_escolar: getVal(row, ['Turma Escolar', 'aluno_turma_escolar']),
+      responsavel_1: getVal(row, ['Responsável 1', 'responsavel_1']),
+      whatsapp_1: getVal(row, ['WhatsApp 1', 'whatsapp_1']),
+      responsavel_2: getVal(row, ['Responsável 2', 'responsavel_2']),
+      whatsapp_2: getVal(row, ['WhatsApp 2', 'whatsapp_2']),
+      turma_complementar: getVal(row, ['Turma Sport for Kids', 'turma_complementar', 'Turma']),
+      unidade: getVal(row, ['Unidade', 'unidade']),
+      status: getVal(row, ['Status da Matrícula', 'status', 'Status da Matricula']),
+      data_matricula: getVal(row, ['Data da Matrícula', 'data_matricula', 'Data da Matricula']),
+      plano: getVal(row, ['Plano', 'plano']),
+      data_cancelamento: getVal(row, ['Data de Cancelamento', 'data_cancelamento'])
+    }));
+    setImportData(mappedData);
+    setImportResults(null);
+    runPreview(mappedData, importType);
+  };
+
+  const handleConfirmMapping = (mapping: any) => {
+    setWixMapping(mapping);
+    setShowMappingModal(false);
+    setImportData(tempWixData);
+    runPreview(tempWixData, 'pagamentos_wix');
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportFile(file);
+  };
+
+  const processImport = async () => {
+    if (importData.length === 0) return;
+    setIsImporting(true);
+    try {
+      let endpoint = '/api/admin/import';
+      if (importType === 'aulas_experimentais') {
+        endpoint = '/api/admin/import-aulas-experimentais';
+      } else if (importType === 'ocorrencias') {
+        endpoint = '/api/admin/import-ocorrencias';
+      } else if (importType === 'presencas') {
+        endpoint = '/api/admin/import-presencas';
+      } else if (importType === 'pagamentos_wix') {
+        endpoint = '/api/admin/import-wix-payments';
+      }
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: importType === 'pagamentos_wix' 
+          ? JSON.stringify({ payments: importData, mapping: wixMapping }) 
+          : JSON.stringify({ rows: importData })
+      });
+      
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        if (!response.ok) {
+          throw new Error(text || `Erro no servidor (${response.status})`);
+        }
+        throw new Error('Resposta do servidor inválida (não é JSON)');
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro desconhecido no servidor');
+      }
+      setImportResults(data);
+      if (data.success > 0 && importType === 'matriculas') {
+        await fetchEnrollments();
+      }
+    } catch (error: any) {
+      alert(`Erro na importação: ${error.message || error}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const downloadImportTemplate = () => {
+    let headers: string[] = [];
+    if (importType === 'matriculas') {
+      headers = [
+        'Nome do Responsável', 'CPF do Responsável', 'Email do Responsável', 'Telefone do Responsável', 'Endereço',
+        'Nome do Aluno', 'Data de Nascimento', 'Série', 'Turma Escolar',
+        'Responsável 1', 'WhatsApp 1', 'Responsável 2', 'WhatsApp 2',
+        'Turma Sport for Kids', 'Unidade', 'Status da Matrícula', 'Data da Matrícula', 'Plano', 'Data de Cancelamento'
+      ];
+    } else if (importType === 'aulas_experimentais') {
+      headers = [
+        'Estudante', 'Unidade', 'Curso', 'Aula', 'Horário', 'Responsável 1', 'WhatsApp1', 'Status',
+        'Observação Professor', 'Follow-up', 'Lembrete', 'Convertido', 'Etapa', 'Ano Escolar', 'Turma Escolar'
+      ];
+    } else if (importType === 'ocorrencias') {
+      headers = [
+        'Data', 'Unidade', 'Estudante', 'Observação', 'Usuário'
+      ];
+    } else if (importType === 'presencas') {
+      headers = [
+        'Data', 'Unidade', 'Turma', 'Estudante', 'Status', 'Observação', 'Alarme', 'Timestamp Inclusão'
+      ];
+    }
+    const csvContent = headers.join(';') + '\n'; // Use semicolon as delimiter
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute('download', `template_importacao_${importType}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+  const [adminTab, setAdminTab] = useState<'tasks' | 'enrollments' | 'settings' | 'waitlist' | 'finance' | 'coupons' | 'import'>('tasks');
+  const [tasks, setTasks] = useState<any>([]);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [enrollmentSearch, setEnrollmentSearch] = useState('');
   const [termsTemplate, setTermsTemplate] = useState('');
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+  const [showNotifyModal, setShowNotifyModal] = useState<{ isOpen: boolean, item: any | null }>({ isOpen: false, item: null });
   const [isSavingTerms, setIsSavingTerms] = useState(false);
+  const [pagarmeSoftDescriptor, setPagarmeSoftDescriptor] = useState('SportForKids');
+  const [pagarmeSoftDescriptorBernoulli, setPagarmeSoftDescriptorBernoulli] = useState('BernoulliMais');
+  const [isSavingPagarme, setIsSavingPagarme] = useState(false);
   const [coupons, setCoupons] = useState<any[]>([]);
   const [isAddingCoupon, setIsAddingCoupon] = useState(false);
   const [newCoupon, setNewCoupon] = useState({
@@ -112,16 +424,28 @@ export default function App() {
     sem_expiracao: true,
     tem_limite_uso: false
   });
+  const [editingCouponId, setEditingCouponId] = useState<string | null>(null);
+  const [couponToDelete, setCouponToDelete] = useState<string | null>(null);
   const [appliedCoupon, setAppliedCoupon] = useState<any>(null);
   const [couponCode, setCouponCode] = useState('');
   const [couponError, setCouponError] = useState('');
   const isSubmittingRef = useRef(false);
-  const [portalTab, setPortalTab] = useState<'dashboard' | 'payments' | 'profile'>('dashboard');
+  const [portalTab, setPortalTab] = useState<'dashboard' | 'payments' | 'profile' | 'documents'>('dashboard');
+  const [isUpdatingCard, setIsUpdatingCard] = useState(false);
+  const [selectedEnrollmentForCard, setSelectedEnrollmentForCard] = useState<string | null>(null);
+  const [newCardData, setNewCardData] = useState({
+    number: '',
+    holder_name: '',
+    exp_month: '',
+    exp_year: '',
+    cvv: ''
+  });
   const [payments, setPayments] = useState<any[]>([]);
   const [waitlist, setWaitlist] = useState<any[]>([]);
   const [settingsSearch, setSettingsSearch] = useState('');
   const [financialData, setFinancialData] = useState<{ pagamentos: any[], turmas: any[] } | null>(null);
   const [paymentInfo, setPaymentInfo] = useState<any>(null);
+  const [waitlistPosition, setWaitlistPosition] = useState<number | null>(null);
   const [financeFilters, setFinanceFilters] = useState({
     unidade: '',
     professor: '',
@@ -141,13 +465,15 @@ export default function App() {
     capacidade: 0,
     local_aula: '',
     data_inicio: '',
-    professor: ''
+    professor: '',
+    status: 'ativo'
   });
   const [editingOption, setEditingOption] = useState<{ type: string, oldNome: string } | null>(null);
   const [options, setOptions] = useState<{
     series: string[], 
     unidades: string[], 
     turmas: { 
+      id?: string,
       nome: string, 
       unidade_nome?: string, 
       unidade?: string,
@@ -162,13 +488,41 @@ export default function App() {
       ocupacao_atual?: number,
       local_aula?: string,
       data_inicio?: string,
-      professor?: string
+      professor?: string,
+      status?: string
     }[]
   }>({
     series: [],
     unidades: [],
     turmas: []
   });
+
+  const mergedTasks = React.useMemo(() => {
+    if (!Array.isArray(tasks)) return tasks;
+    
+    const waitlistTasks = waitlist
+      .filter(item => {
+        if (item.status === 'chamado') return false;
+        const turma = options.turmas.find(t => t.nome === item.turma);
+        return turma && (turma.ocupacao_atual || 0) < (turma.capacidade || 0);
+      })
+      .map(item => ({
+        id: `waitlist-${item.id}`,
+        tipo: 'vaga_disponivel',
+        status: 'pendente',
+        created_at: item.created_at,
+        alunos: { nome_completo: item.estudante },
+        responsaveis: { nome_completo: item.responsavel1 },
+        detalhes: {
+          turma: item.turma,
+          unidade: item.unidade,
+          waitlistItem: item
+        }
+      }));
+
+    return [...waitlistTasks, ...tasks];
+  }, [tasks, waitlist, options.turmas]);
+
   const [formData, setFormData] = useState({
     guardian: { 
       id: '', 
@@ -249,6 +603,7 @@ export default function App() {
           unidade: dep.unidade,
           status: dep.status,
           data_matricula: dep.data_matricula,
+          pagarme_subscription_id: dep.pagarme_subscription_id,
           horario: dep.horario,
           data_cancelamento: dep.data_cancelamento
         };
@@ -262,6 +617,42 @@ export default function App() {
     });
     return Object.values(groups);
   }, [dependents]);
+
+  const formatDateShort = (dateStr: string | undefined) => {
+    if (!dateStr) return 'N/A';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return 'N/A';
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = String(d.getFullYear()).slice(-2);
+    return `${day}/${month}/${year}`;
+  };
+
+  const filteredFlattenedEnrollments = React.useMemo(() => {
+    const list: any[] = [];
+    enrollments.forEach(enrollment => {
+      enrollment.alunos.forEach(aluno => {
+        aluno.matriculas.forEach(mat => {
+          const search = enrollmentSearch.toLowerCase();
+          const matches = enrollment.nome_completo?.toLowerCase().includes(search) ||
+                          aluno.nome_completo?.toLowerCase().includes(search);
+          if (matches) {
+            list.push({
+              ...enrollment,
+              aluno: { ...aluno, matriculas: undefined },
+              matricula: mat
+            });
+          }
+        });
+      });
+    });
+    
+    return list.sort((a, b) => {
+      const dateA = a.matricula.data_matricula ? new Date(a.matricula.data_matricula).getTime() : 0;
+      const dateB = b.matricula.data_matricula ? new Date(b.matricula.data_matricula).getTime() : 0;
+      return dateB - dateA;
+    });
+  }, [enrollments, enrollmentSearch]);
 
   const refreshGuardianData = async () => {
     if (!formData.guardian.cpf || !formData.guardian.password) return;
@@ -308,12 +699,61 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetch('/api/settings/terms_template')
-      .then(res => res.json())
-      .then(data => setTermsTemplate(data.valor || ''))
-      .catch(err => console.error("Error fetching terms:", err));
+    const fetchSettings = async () => {
+      try {
+        const keys = [
+          'terms_template',
+          'pagarme_soft_descriptor',
+          'pagarme_soft_descriptor_bernoulli'
+        ];
+        const res = await fetch(`/api/settings/bulk?keys=${keys.join(',')}`);
+        
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text.substring(0, 100)}`);
+        }
+        
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          const text = await res.text();
+          throw new Error(`Expected JSON but got: ${text.substring(0, 100)}`);
+        }
+        
+        const data = await res.json();
+        if (data.terms_template) setTermsTemplate(data.terms_template);
+        if (data.pagarme_soft_descriptor) setPagarmeSoftDescriptor(data.pagarme_soft_descriptor);
+        if (data.pagarme_soft_descriptor_bernoulli) setPagarmeSoftDescriptorBernoulli(data.pagarme_soft_descriptor_bernoulli);
+      } catch (err) {
+        console.error("Error fetching settings:", err);
+      }
+    };
+    
+    fetchSettings();
   }, []);
 
+  const handleSavePagarmeSettings = async () => {
+    setIsSavingPagarme(true);
+    try {
+      await Promise.all([
+        fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'pagarme_soft_descriptor', value: pagarmeSoftDescriptor })
+        }),
+        fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'pagarme_soft_descriptor_bernoulli', value: pagarmeSoftDescriptorBernoulli })
+        })
+      ]);
+      alert('Configurações do Pagar.me salvas com sucesso!');
+    } catch (error) {
+      console.error('Error saving Pagar.me settings:', error);
+      alert('Erro ao salvar configurações do Pagar.me');
+    } finally {
+      setIsSavingPagarme(false);
+    }
+  };
   const handleSaveTerms = async () => {
     setIsSavingTerms(true);
     try {
@@ -379,6 +819,45 @@ export default function App() {
     return populated;
   };
 
+  const handleUpdateCard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEnrollmentForCard) return;
+
+    setLoading(true);
+    try {
+      const response = await fetch('/api/portal/subscription/card', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enrollmentId: selectedEnrollmentForCard,
+          card: newCardData
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        alert('Cartão atualizado com sucesso!');
+        setIsUpdatingCard(false);
+        setNewCardData({ number: '', holder_name: '', exp_month: '', exp_year: '', cvv: '' });
+      } else {
+        alert(data.error || 'Erro ao atualizar cartão.');
+      }
+    } catch (error) {
+      console.error('Error updating card:', error);
+      alert('Erro de conexão ao atualizar cartão.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDownloadContract = (enrollmentId: string) => {
+    window.open(`/api/portal/documents/contract/${enrollmentId}`, '_blank');
+  };
+
+  const handleDownloadReceipt = (paymentId: string) => {
+    window.open(`/api/portal/documents/receipt/${paymentId}`, '_blank');
+  };
+
   const handleCancelEnrollment = (id: string) => {
     setCancelingEnrollmentId(id);
     setIsCancelingEnrollment(true);
@@ -389,39 +868,67 @@ export default function App() {
 
     const today = new Date().toISOString().split('T')[0];
     if (cancellationDate < today) {
-      alert('A data de cancelamento não pode ser anterior à data de hoje.');
+      setErrorMessage('A data de cancelamento não pode ser anterior à data de hoje.');
       return;
     }
 
     if (!cancellationReason.trim()) {
-      alert('Por favor, informe uma justificativa para o cancelamento.');
+      setErrorMessage('Por favor, informe uma justificativa para o cancelamento.');
       return;
     }
     
     setLoading(true);
     try {
-      const response = await fetch('/api/enrollment/cancel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          enrollmentId: cancelingEnrollmentId,
-          cancellationDate: cancellationDate,
-          justificativa: cancellationReason
-        })
-      });
-      if (response.ok) {
-        await fetchEnrollments();
-        alert('Matrícula cancelada com sucesso');
-        setIsCancelingEnrollment(false);
-        setCancelingEnrollmentId(null);
-        setCancellationReason('');
+      if (step === 'portal') {
+        // Create a task instead of direct cancellation
+        const response = await fetch('/api/tasks/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            tipo: 'cancelamento',
+            responsavel_id: formData.guardian.id,
+            aluno_id: enrollments.find(e => e.alunos.some(a => a.matriculas.some(m => m.id === cancelingEnrollmentId)))?.alunos.find(a => a.matriculas.some(m => m.id === cancelingEnrollmentId))?.id,
+            matricula_id: cancelingEnrollmentId,
+            detalhes: {
+              data_cancelamento: cancellationDate,
+              justificativa: cancellationReason
+            }
+          })
+        });
+        if (response.ok) {
+          setSuccessMessage('Sua solicitação de cancelamento foi enviada para análise da equipe administrativa.');
+          setIsCancelingEnrollment(false);
+          setCancelingEnrollmentId(null);
+          setCancellationReason('');
+        } else {
+          const data = await response.json();
+          setErrorMessage(data.error || 'Erro ao enviar solicitação');
+        }
       } else {
-        const data = await response.json();
-        alert(data.error || 'Erro ao cancelar matrícula');
+        const response = await fetch('/api/enrollment/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            enrollmentId: cancelingEnrollmentId,
+            cancellationDate: cancellationDate,
+            justificativa: cancellationReason
+          })
+        });
+        if (response.ok) {
+          await fetchEnrollments();
+          await fetchFinancialData();
+          setSuccessMessage('Matrícula cancelada com sucesso');
+          setIsCancelingEnrollment(false);
+          setCancelingEnrollmentId(null);
+          setCancellationReason('');
+        } else {
+          const data = await response.json();
+          setErrorMessage(data.error || 'Erro ao cancelar matrícula');
+        }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error canceling enrollment:', error);
-      alert('Erro de conexão');
+      setErrorMessage(`Erro de conexão: ${error.message || 'Erro desconhecido'}`);
     } finally {
       setLoading(false);
     }
@@ -442,6 +949,7 @@ export default function App() {
       });
       if (response.ok) {
         await fetchEnrollments();
+        await fetchFinancialData();
         alert('Matrícula trancada com sucesso');
         setIsFreezingEnrollment(false);
         setFreezingEnrollmentId(null);
@@ -472,6 +980,7 @@ export default function App() {
       if (response.ok) {
         const data = await response.json();
         await fetchEnrollments();
+        await fetchFinancialData();
         alert(`Matrícula reativada com sucesso! As próximas cobranças foram postergadas em ${data.daysPostponed} dias.`);
         setIsReactivatingEnrollment(false);
         setReactivatingEnrollmentId(null);
@@ -491,29 +1000,141 @@ export default function App() {
     if (!transferringEnrollmentId || !transferTarget.turma) return;
     setLoading(true);
     try {
-      const response = await fetch('/api/enrollment/transfer', {
+      if (step === 'portal') {
+        // Create a task instead of direct transfer
+        const response = await fetch('/api/tasks/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            tipo: 'transferencia',
+            responsavel_id: formData.guardian.id,
+            aluno_id: transferringStudent?.id,
+            matricula_id: transferringEnrollmentId,
+            detalhes: {
+              nova_turma: transferTarget.turma,
+              nova_unidade: transferTarget.unidade
+            }
+          })
+        });
+        if (response.ok) {
+          setSuccessMessage('Sua solicitação de transferência foi enviada para análise da equipe administrativa.');
+          setIsTransferringEnrollment(false);
+          setTransferringEnrollmentId(null);
+        } else {
+          const data = await response.json();
+          setErrorMessage(data.error || 'Erro ao enviar solicitação');
+        }
+      } else {
+        const response = await fetch('/api/enrollment/transfer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            enrollmentId: transferringEnrollmentId,
+            newTurma: transferTarget.turma,
+            newUnidade: transferTarget.unidade
+          })
+        });
+        if (response.ok) {
+          await fetchEnrollments();
+          await fetchFinancialData();
+          setSuccessMessage('Transferência realizada com sucesso');
+          setIsTransferringEnrollment(false);
+          setTransferringEnrollmentId(null);
+        } else {
+          const data = await response.json();
+          setErrorMessage(data.error || 'Erro ao transferir matrícula');
+        }
+      }
+    } catch (error: any) {
+      console.error('Error transferring enrollment:', error);
+      setErrorMessage(`Erro de conexão: ${error.message || 'Erro desconhecido'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchTasks = async () => {
+    setLoadingTasks(true);
+    try {
+      const response = await fetch('/api/tasks');
+      const data = await response.json();
+      if (response.ok) {
+        setTasks(data);
+      } else {
+        setTasks({ error: data.error || 'Erro desconhecido' });
+        console.error('Error fetching tasks (server):', data.error);
+      }
+    } catch (error: any) {
+      setTasks({ error: error.message || 'Erro de conexão' });
+      console.error('Error fetching tasks (network/json):', error.message || error);
+    } finally {
+      setLoadingTasks(false);
+    }
+  };
+
+  const handleApproveTask = async (task: any) => {
+    if (!window.confirm('Deseja realmente aprovar esta solicitação?')) return;
+    setLoading(true);
+    try {
+      let endpoint = '';
+      let body = {};
+      if (task.tipo === 'cancelamento') {
+        endpoint = '/api/enrollment/cancel';
+        body = {
+          enrollmentId: task.matricula_id,
+          cancellationDate: task.detalhes.data_cancelamento,
+          justificativa: task.detalhes.justificativa
+        };
+      } else if (task.tipo === 'transferencia') {
+        endpoint = '/api/enrollment/transfer';
+        body = {
+          enrollmentId: task.matricula_id,
+          newTurma: task.detalhes.nova_turma,
+          newUnidade: task.detalhes.nova_unidade
+        };
+      }
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          enrollmentId: transferringEnrollmentId,
-          newTurma: transferTarget.turma,
-          newUnidade: transferTarget.unidade
-        })
+        body: JSON.stringify(body)
       });
+
       if (response.ok) {
-        await fetchEnrollments();
-        alert('Transferência realizada com sucesso');
-        setIsTransferringEnrollment(false);
-        setTransferringEnrollmentId(null);
+        await fetch('/api/tasks/update-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId: task.id, status: 'concluido' })
+        });
+        alert('Solicitação aprovada e processada com sucesso!');
+        fetchTasks();
+        fetchEnrollments();
       } else {
         const data = await response.json();
-        alert(data.error || 'Erro ao transferir matrícula');
+        alert(data.error || 'Erro ao processar solicitação');
       }
     } catch (error) {
-      console.error('Error transferring enrollment:', error);
+      console.error('Error approving task:', error);
       alert('Erro de conexão');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRejectTask = async (taskId: string) => {
+    if (!window.confirm('Deseja realmente rejeitar esta solicitação?')) return;
+    try {
+      const response = await fetch('/api/tasks/update-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId, status: 'rejeitado' })
+      });
+      if (response.ok) {
+        alert('Solicitação rejeitada.');
+        fetchTasks();
+      }
+    } catch (error) {
+      console.error('Error rejecting task:', error);
     }
   };
 
@@ -647,6 +1268,159 @@ export default function App() {
     }
   };
 
+  const handleAccess = async () => {
+    if (!loginIdentifier) return;
+    
+    setSearchingGuardian(true);
+    try {
+      const response = await fetch('/api/guardian/access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: loginIdentifier, password: loginPassword })
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        setAccessError(null);
+        if (data.needsProfileCompletion) {
+          setIsTemporaryCpf(!!data.isTemporaryCpf);
+          setIsFirstAccess(!!data.isFirstAccess);
+          setFormData(prev => ({
+            ...prev,
+            guardian: {
+              ...prev.guardian,
+              id: data.guardian.id,
+              name: data.guardian.nome_completo || '',
+              email: data.guardian.email || '',
+              phone: data.guardian.telefone || '',
+              address: data.guardian.endereco || '',
+              cpf: data.isTemporaryCpf ? '' : (data.guardian.cpf || '')
+            }
+          }));
+          setStep('complete_profile');
+        } else {
+          let parsedAddress = { zipCode: '', street: '', number: '', complement: '', neighborhood: '', city: '', state: '' };
+          try {
+            if (data.endereco && data.endereco.startsWith('{')) {
+              parsedAddress = JSON.parse(data.endereco);
+            } else {
+              parsedAddress.street = data.endereco || '';
+            }
+          } catch (e) {
+            parsedAddress.street = data.endereco || '';
+          }
+
+          setFormData(prev => ({
+            ...prev,
+            guardian: {
+              ...prev.guardian,
+              id: data.id,
+              name: data.nome_completo || '',
+              cpf: data.cpf || '',
+              email: data.email || '',
+              phone: data.telefone || '',
+              address: data.endereco || '',
+              ...parsedAddress
+            }
+          }));
+          setDependents(data.alunos || []);
+          setHasFidelityDiscount(data.hasActiveEnrollments || false);
+          fetchPayments(data.id);
+          setStep('portal');
+        }
+      } else {
+        setAccessError(data.error || "Cadastro não localizado.");
+      }
+    } catch (error) {
+      console.error('Error accessing guardian panel:', error);
+      alert('Erro ao acessar o painel');
+    } finally {
+      setSearchingGuardian(false);
+    }
+  };
+
+  const handleCompleteProfile = async () => {
+    if (!formData.guardian.cpf || !formData.guardian.password) {
+      alert('CPF e Senha são obrigatórios');
+      return;
+    }
+
+    setIsCompletingProfile(true);
+    try {
+      const response = await fetch('/api/guardian/complete-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: formData.guardian.id,
+          cpf: formData.guardian.cpf,
+          name: formData.guardian.name,
+          email: formData.guardian.email,
+          phone: formData.guardian.phone,
+          address: JSON.stringify({
+            zipCode: formData.guardian.zipCode,
+            street: formData.guardian.street,
+            number: formData.guardian.number,
+            complement: formData.guardian.complement,
+            neighborhood: formData.guardian.neighborhood,
+            city: formData.guardian.city,
+            state: formData.guardian.state
+          }),
+          password: formData.guardian.password
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setFormData(prev => ({
+          ...prev,
+          guardian: {
+            ...prev.guardian,
+            ...data.guardian
+          }
+        }));
+        setDependents(data.guardian.alunos || []);
+        setStep('portal');
+      } else {
+        alert(data.error || 'Erro ao completar perfil');
+      }
+    } catch (error) {
+      console.error('Error completing profile:', error);
+      alert('Erro de conexão');
+    } finally {
+      setIsCompletingProfile(false);
+    }
+  };
+
+  const recoverLoginPassword = async () => {
+    if (!loginIdentifier) {
+      setAccessError('Por favor, informe seu CPF ou E-mail primeiro.');
+      return;
+    }
+    
+    setRecoveringPassword(true);
+    try {
+      const response = await fetch('/api/guardian/recover-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: loginIdentifier })
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        setSuccessMessage('Sua senha de acesso foi enviada por WhatsApp ao contato cadastrado.');
+      } else {
+        setAccessError(data.error || 'Erro ao recuperar senha');
+      }
+    } catch (error: any) {
+      console.error('Error recovering password:', error);
+      setErrorMessage(`Erro de conexão ao recuperar senha: ${error.message || 'Erro desconhecido'}`);
+    } finally {
+      setRecoveringPassword(false);
+    }
+  };
+
   const recoverPassword = async () => {
     if (!formData.guardian.cpf) return;
     
@@ -661,13 +1435,13 @@ export default function App() {
       const data = await response.json();
       
       if (response.ok) {
-        alert('Senha enviada para o WhatsApp cadastrado');
+        setSuccessMessage('Sua senha de acesso foi enviada por WhatsApp ao contato cadastrado.');
       } else {
-        alert(data.error || 'Erro ao recuperar senha');
+        setErrorMessage(data.error || 'Erro ao recuperar senha');
       }
     } catch (error: any) {
       console.error('Error recovering password:', error);
-      alert(`Erro de conexão ao recuperar senha: ${error.message || 'Erro desconhecido'}`);
+      setErrorMessage(`Erro de conexão ao recuperar senha: ${error.message || 'Erro desconhecido'}`);
     } finally {
       setRecoveringPassword(false);
     }
@@ -769,7 +1543,8 @@ export default function App() {
           capacidade: newOption.type === 'turmas' ? Number(newOption.capacidade) : undefined,
           local_aula: newOption.type === 'turmas' ? newOption.local_aula : undefined,
           data_inicio: newOption.type === 'turmas' ? newOption.data_inicio : undefined,
-          professor: newOption.type === 'turmas' ? newOption.professor : undefined
+          professor: newOption.type === 'turmas' ? newOption.professor : undefined,
+          status: newOption.type === 'turmas' ? newOption.status : undefined
         })
       });
 
@@ -787,7 +1562,8 @@ export default function App() {
           capacidade: 0,
           local_aula: '',
           data_inicio: '',
-          professor: ''
+          professor: '',
+          status: 'ativo'
         });
         setEditingOption(null);
         fetchOptions();
@@ -820,6 +1596,7 @@ export default function App() {
         local_aula: item.local_aula || '',
         data_inicio: item.data_inicio || '',
         professor: item.professor || '',
+        status: item.status || 'ativo',
         ordem: 0
       });
       setEditingOption({ type: 'turmas', oldNome: item.nome });
@@ -893,6 +1670,37 @@ export default function App() {
     }
   };
 
+  const handleSyncPayments = async () => {
+    if (!window.confirm('Deseja sincronizar os últimos 50 pagamentos pendentes com o Pagar.me? Isso pode levar alguns segundos.')) return;
+    
+    setLoading(true);
+    try {
+      const response = await fetch('/api/admin/sync-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        alert(data.message || 'Sincronização concluída com sucesso!');
+        // Refresh financial data
+        const finResponse = await fetch('/api/admin/financial-report');
+        if (finResponse.ok) {
+          const finData = await finResponse.json();
+          setFinancialData(finData);
+        }
+      } else {
+        alert('Erro ao sincronizar: ' + (data.error || 'Erro desconhecido'));
+      }
+    } catch (error) {
+      console.error('Error syncing payments:', error);
+      alert('Erro de conexão ao sincronizar pagamentos.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleCreateCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -919,8 +1727,11 @@ export default function App() {
       // Remove UI-only fields
       const { sem_expiracao, tem_limite_uso, ...dbPayload } = payload as any;
 
-      const response = await fetch('/api/coupons', {
-        method: 'POST',
+      const url = editingCouponId ? `/api/coupons/${editingCouponId}` : '/api/coupons';
+      const method = editingCouponId ? 'PUT' : 'POST';
+
+      const response = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(dbPayload)
       });
@@ -928,6 +1739,7 @@ export default function App() {
       if (response.ok) {
         await fetchCoupons();
         setIsAddingCoupon(false);
+        setEditingCouponId(null);
         setNewCoupon({
           codigo: '',
           nome: '',
@@ -954,12 +1766,38 @@ export default function App() {
   };
 
   const handleDeleteCoupon = async (id: string) => {
-    if (!confirm('Tem certeza que deseja excluir este cupom?')) return;
     try {
       const response = await fetch(`/api/coupons/${id}`, { method: 'DELETE' });
-      if (response.ok) await fetchCoupons();
+      if (response.ok) {
+        await fetchCoupons();
+        setCouponToDelete(null);
+      }
     } catch (error) {
       console.error('Error deleting coupon:', error);
+    }
+  };
+
+  const handleNotifyVacancy = (item: any) => {
+    setShowNotifyModal({ isOpen: true, item });
+  };
+
+  const confirmNotifyVacancy = async () => {
+    if (!showNotifyModal.item) return;
+    try {
+      const response = await fetch('/api/waitlist/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ waitlistId: showNotifyModal.item.id, whatsapp: showNotifyModal.item.whatsapp1 })
+      });
+      if (response.ok) {
+        await fetchWaitlist();
+        setShowNotifyModal({ isOpen: false, item: null });
+      } else {
+        alert('Erro ao notificar vaga.');
+      }
+    } catch (error) {
+      console.error('Error notifying vacancy:', error);
+      alert('Erro ao notificar vaga.');
     }
   };
 
@@ -994,6 +1832,10 @@ export default function App() {
       fetchFinancialData();
     } else if (adminTab === 'coupons') {
       fetchCoupons();
+    } else if (adminTab === 'tasks') {
+      fetchTasks();
+      fetchWaitlist();
+      fetchOptions();
     }
   }, [adminTab]);
 
@@ -1002,17 +1844,17 @@ export default function App() {
       // Validation for guardian step
       const g = formData.guardian;
       if (!g.cpf || g.cpf.replace(/\D/g, '').length !== 11) {
-        alert('Por favor, insira um CPF válido.');
+        setErrorMessage('Por favor, insira um CPF válido.');
         return;
       }
       
       if (guardianExists === true && !g.name) {
-        alert('Por favor, insira sua senha e clique em "Acessar" para carregar seus dados.');
+        setErrorMessage('Por favor, insira sua senha e clique em "Acessar" para carregar seus dados.');
         return;
       }
 
       if (!g.name || !g.email || !g.phone || !g.zipCode || !g.street || !g.number || !g.neighborhood || !g.city || !g.state || !g.password) {
-        alert('Por favor, preencha todos os campos obrigatórios, incluindo a senha e o endereço completo.');
+        setErrorMessage('Por favor, preencha todos os campos obrigatórios, incluindo a senha e o endereço completo.');
         return;
       }
 
@@ -1051,7 +1893,7 @@ export default function App() {
           setGuardianExists(true); // Agora ele existe no banco
         } catch (error: any) {
           console.error('Error registering guardian:', error);
-          alert(`Erro ao salvar dados do responsável: ${error.message}`);
+          setErrorMessage(`Erro ao salvar dados do responsável: ${error.message}`);
           setLoading(false);
           return;
         } finally {
@@ -1064,19 +1906,19 @@ export default function App() {
     else if (step === 'student') {
       const s = formData.student;
       if (!s.name || !s.birthDate || !s.grade || !s.turmaEscolar || !s.responsavel1 || !s.whatsapp1 || !s.responsavel2 || !s.whatsapp2) {
-        alert('Por favor, preencha todos os campos obrigatórios do aluno (incluindo os dois contatos).');
+        setErrorMessage('Por favor, preencha todos os campos obrigatórios do aluno (incluindo os dois contatos).');
         return;
       }
       setStep('enrollment');
     }
     else if (step === 'enrollment') {
       if (!acceptedTerms) {
-        alert('Você precisa aceitar os termos e condições para prosseguir.');
+        setErrorMessage('Você precisa aceitar os termos e condições para prosseguir.');
         return;
       }
       const s = formData.student;
       if (!s.unidade || !s.turmaComplementar) {
-        alert('Por favor, selecione a unidade e a turma complementar.');
+        setErrorMessage('Por favor, selecione a unidade e a turma complementar.');
         return;
       }
       
@@ -1156,24 +1998,29 @@ export default function App() {
   const handleSubmit = async () => {
     if (isSubmittingRef.current) return;
     
-    // Validate credit card if selected
+    // Validate credit card if selected and not waitlist
     if (formData.paymentMethod === 'credit_card') {
-      const { number, holderName, expMonth, expYear, cvv } = formData.card;
-      if (!number || number.replace(/\s/g, '').length < 13) {
-        alert('Por favor, informe um número de cartão válido.');
-        return;
-      }
-      if (!holderName) {
-        alert('Por favor, informe o nome impresso no cartão.');
-        return;
-      }
-      if (!expMonth || !expYear) {
-        alert('Por favor, informe a validade do cartão.');
-        return;
-      }
-      if (!cvv || cvv.length < 3) {
-        alert('Por favor, informe um CVV válido.');
-        return;
+      const selectedTurma = options.turmas.find(t => t.nome === formData.student.turmaComplementar);
+      const isFull = selectedTurma && selectedTurma.capacidade && (selectedTurma.ocupacao_atual || 0) >= selectedTurma.capacidade;
+      
+      if (!isFull) {
+        const { number, holderName, expMonth, expYear, cvv } = formData.card;
+        if (!number || number.replace(/\s/g, '').length < 13) {
+          setErrorMessage('Por favor, informe um número de cartão válido.');
+          return;
+        }
+        if (!holderName) {
+          setErrorMessage('Por favor, informe o nome impresso no cartão.');
+          return;
+        }
+        if (!expMonth || !expYear) {
+          setErrorMessage('Por favor, informe a validade do cartão.');
+          return;
+        }
+        if (!cvv || cvv.length < 3) {
+          setErrorMessage('Por favor, informe um CVV válido.');
+          return;
+        }
       }
     }
 
@@ -1206,6 +2053,9 @@ export default function App() {
       
       if (response.ok) {
         setPaymentInfo(data.paymentInfo);
+        if (isFull && data.position) {
+          setWaitlistPosition(data.position);
+        }
         setStep(isFull ? 'waitlist_success' : 'success');
       } else {
         const errorMsg = data.error || 'Erro desconhecido';
@@ -1250,7 +2100,7 @@ export default function App() {
       }
     }
 
-    const result = matchesUnit && matchesGrade && matchesAge;
+    const result = matchesUnit && matchesGrade && matchesAge && (t.status === 'ativo' || !t.status);
     
     if (formData.student.unidade && formData.student.grade) {
       console.log(`Checking Turma: ${t.nome}`, { 
@@ -1388,6 +2238,17 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <div className="flex gap-2 bg-white p-1 rounded-xl shadow-sm border border-slate-200">
                     <button 
+                      onClick={() => setAdminTab('tasks')}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${adminTab === 'tasks' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      <Clock size={16} /> Tarefas
+                      {Array.isArray(mergedTasks) && mergedTasks.filter((t: any) => t.status === 'pendente').length > 0 && (
+                        <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+                          {mergedTasks.filter((t: any) => t.status === 'pendente').length}
+                        </span>
+                      )}
+                    </button>
+                    <button 
                       onClick={() => setAdminTab('enrollments')}
                       className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${adminTab === 'enrollments' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
                     >
@@ -1417,6 +2278,12 @@ export default function App() {
                     >
                       Cupons
                     </button>
+                    <button 
+                      onClick={() => setAdminTab('import')}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${adminTab === 'import' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      Importação
+                    </button>
                   </div>
                   <button 
                     onClick={() => {
@@ -1431,7 +2298,143 @@ export default function App() {
                 </div>
               </div>
 
-              {adminTab === 'waitlist' ? (
+              {adminTab === 'tasks' ? (
+                <div className="space-y-6">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900">Tarefas e Solicitações</h3>
+                      <p className="text-slate-500 text-sm">Ações solicitadas pelos responsáveis que aguardam aprovação.</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        fetchTasks();
+                        fetchWaitlist();
+                        fetchOptions();
+                      }}
+                      className="p-2 text-slate-400 hover:text-slate-900 transition-colors"
+                    >
+                      <RefreshCw size={20} className={loadingTasks ? 'animate-spin' : ''} />
+                    </button>
+                  </div>
+
+                  <div className="grid gap-4">
+                    {loadingTasks ? (
+                      <div className="bg-white rounded-2xl p-12 text-center border border-slate-100">
+                        <RefreshCw size={32} className="animate-spin text-slate-300 mx-auto mb-4" />
+                        <p className="text-slate-400">Carregando tarefas...</p>
+                      </div>
+                    ) : mergedTasks.length === 0 ? (
+                      <div className="bg-white rounded-2xl p-12 text-center border border-slate-100 shadow-sm">
+                        <CheckCircle2 size={32} className="text-emerald-500 mx-auto mb-4" />
+                        <p className="text-slate-500 font-medium">Tudo em dia! Nenhuma tarefa pendente.</p>
+                      </div>
+                    ) : mergedTasks.error ? (
+                      <div className="bg-white rounded-2xl p-12 text-center border border-red-100 shadow-sm">
+                        <XCircle size={32} className="text-red-500 mx-auto mb-4" />
+                        <p className="text-red-500 font-medium">Erro ao carregar tarefas.</p>
+                        <p className="text-slate-500 text-sm mt-2">{mergedTasks.error}</p>
+                      </div>
+                    ) : Array.isArray(mergedTasks) ? (
+                      mergedTasks.map((task: any) => (
+                        <motion.div 
+                          key={task.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className={`bg-white rounded-2xl p-6 border ${task.status === 'pendente' ? 'border-amber-200 bg-amber-50/10' : 'border-slate-100'} shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6`}
+                        >
+                          <div className="flex items-start gap-4">
+                            <div className={`p-3 rounded-xl ${
+                              task.tipo === 'cancelamento' ? 'bg-red-50 text-red-600' : 
+                              task.tipo === 'vaga_disponivel' ? 'bg-emerald-50 text-emerald-600' :
+                              'bg-blue-50 text-blue-600'
+                            }`}>
+                              {task.tipo === 'cancelamento' ? <Trash2 size={24} /> : 
+                               task.tipo === 'vaga_disponivel' ? <CheckCircle2 size={24} /> :
+                               <RefreshCw size={24} />}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${
+                                  task.tipo === 'cancelamento' ? 'bg-red-100 text-red-700' : 
+                                  task.tipo === 'vaga_disponivel' ? 'bg-emerald-100 text-emerald-700' :
+                                  'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {task.tipo === 'cancelamento' ? 'Cancelamento' : 
+                                   task.tipo === 'vaga_disponivel' ? 'Vaga Disponível' :
+                                   'Transferência'}
+                                </span>
+                                <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${
+                                  task.status === 'pendente' ? 'bg-amber-100 text-amber-700' : 
+                                  task.status === 'concluido' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'
+                                }`}>
+                                  {task.status === 'pendente' ? 'Pendente' : 
+                                   task.status === 'concluido' ? 'Concluído' : 'Rejeitado'}
+                                </span>
+                              </div>
+                              <h3 className="font-bold text-slate-900">
+                                {task.alunos?.nome_completo || 'Aluno não identificado'}
+                              </h3>
+                              <p className="text-sm text-slate-500">
+                                Responsável: {task.responsaveis?.nome_completo || 'N/A'}
+                              </p>
+                              <div className="mt-3 text-sm bg-white/50 p-3 rounded-xl border border-slate-100">
+                                {task.tipo === 'cancelamento' ? (
+                                  <>
+                                    <p><strong>Data:</strong> {task.detalhes?.data_cancelamento}</p>
+                                    <p><strong>Justificativa:</strong> {task.detalhes?.justificativa}</p>
+                                  </>
+                                ) : task.tipo === 'vaga_disponivel' ? (
+                                  <>
+                                    <p><strong>Turma:</strong> {task.detalhes?.turma}</p>
+                                    <p><strong>Unidade:</strong> {task.detalhes?.unidade}</p>
+                                    <p className="text-emerald-600 font-medium mt-1 italic">Uma vaga surgiu nesta turma!</p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p><strong>De:</strong> {task.matriculas?.turma} ({task.matriculas?.unidade})</p>
+                                    <p><strong>Para:</strong> {task.detalhes?.nova_turma} ({task.detalhes?.nova_unidade})</p>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {task.status === 'pendente' && (
+                            <div className="flex gap-2">
+                              {task.tipo === 'vaga_disponivel' ? (
+                                <button 
+                                  onClick={() => handleNotifyVacancy(task.detalhes.waitlistItem)}
+                                  className="px-6 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2"
+                                >
+                                  <Mail size={16} /> Notificar Vaga
+                                </button>
+                              ) : (
+                                <>
+                                  <button 
+                                    onClick={() => handleRejectTask(task.id)}
+                                    className="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-100 transition-all"
+                                  >
+                                    Rejeitar
+                                  </button>
+                                  <button 
+                                    onClick={() => handleApproveTask(task)}
+                                    className="px-6 py-2 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"
+                                  >
+                                    Aprovar e Processar
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                          <div className="text-[10px] text-slate-400">
+                            Solicitado em: {new Date(task.created_at).toLocaleString('pt-BR')}
+                          </div>
+                        </motion.div>
+                      ))
+                    ) : null}
+                  </div>
+                </div>
+              ) : adminTab === 'waitlist' ? (
                 <div className="space-y-6">
                   <div className="flex justify-between items-center">
                     <h3 className="text-xl font-bold text-slate-900">Lista de Espera</h3>
@@ -1448,48 +2451,351 @@ export default function App() {
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-slate-50 border-b border-slate-200">
+                            <th className="px-6 py-4 text-sm font-bold text-slate-700">Ordem</th>
                             <th className="px-6 py-4 text-sm font-bold text-slate-700">Data</th>
                             <th className="px-6 py-4 text-sm font-bold text-slate-700">Aluno</th>
                             <th className="px-6 py-4 text-sm font-bold text-slate-700">Responsável</th>
                             <th className="px-6 py-4 text-sm font-bold text-slate-700">Turma</th>
+                            <th className="px-6 py-4 text-sm font-bold text-slate-700">Horário</th>
                             <th className="px-6 py-4 text-sm font-bold text-slate-700">Status</th>
+                            <th className="px-6 py-4 text-sm font-bold text-slate-700">Ação</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {waitlist.length === 0 ? (
                             <tr>
-                              <td colSpan={5} className="px-6 py-10 text-center text-slate-400 italic">
+                              <td colSpan={6} className="px-6 py-10 text-center text-slate-400 italic">
                                 Nenhum registro na lista de espera.
                               </td>
                             </tr>
                           ) : (
-                            waitlist.map((item) => (
+                            waitlist.map((item, index) => (
                               <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                                <td className="px-6 py-4 text-sm text-slate-600">
+                                  {index + 1}
+                                </td>
                                 <td className="px-6 py-4 text-sm text-slate-600">
                                   {new Date(item.created_at).toLocaleDateString()}
                                 </td>
                                 <td className="px-6 py-4">
-                                  <div className="text-sm font-bold text-slate-900">{item.alunos?.nome_completo}</div>
-                                  <div className="text-xs text-slate-500">{item.alunos?.serie_ano}</div>
+                                  <div className="text-sm font-bold text-slate-900">{item.estudante}</div>
+                                  <div className="text-xs text-slate-500">{item.ano_escolar} - {item.turma_escolar}</div>
                                 </td>
                                 <td className="px-6 py-4">
-                                  <div className="text-sm text-slate-900">{item.responsaveis?.nome_completo}</div>
-                                  <div className="text-xs text-slate-500">{item.responsaveis?.telefone}</div>
+                                  <div className="text-sm text-slate-900">{item.responsavel1}</div>
+                                  <div className="text-xs text-slate-500">{item.whatsapp1}</div>
                                 </td>
                                 <td className="px-6 py-4">
                                   <div className="text-sm text-slate-900">{item.turma}</div>
                                   <div className="text-xs text-slate-500">{item.unidade}</div>
+                                </td>
+                                <td className="px-6 py-4 text-sm text-slate-600">
+                                  {item.horario}
                                 </td>
                                 <td className="px-6 py-4">
                                   <span className="px-2 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-bold uppercase">
                                     {item.status}
                                   </span>
                                 </td>
+                                <td className="px-6 py-4">
+                                  {(() => {
+                                    const turma = options.turmas.find(t => t.nome === item.turma);
+                                    const temVaga = turma && (turma.ocupacao_atual || 0) < (turma.capacidade || 0);
+                                    return (
+                                      <button
+                                        disabled={!temVaga || item.status === 'chamado'}
+                                        onClick={() => handleNotifyVacancy(item)}
+                                        className={`px-3 py-1 ${item.status === 'chamado' ? 'bg-red-600' : 'bg-emerald-600'} text-white rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-emerald-700 transition-colors`}
+                                      >
+                                        {item.status === 'chamado' ? 'Notificado' : 'Notificar Vaga'}
+                                      </button>
+                                    );
+                                  })()}
+                                </td>
                               </tr>
                             ))
                           )}
                         </tbody>
                       </table>
+                    </div>
+                  </div>
+                </div>
+              ) : adminTab === 'import' ? (
+                <div className="space-y-6">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900">Importação de Dados</h3>
+                      <p className="text-sm text-slate-500">Importe matrículas em massa via arquivo CSV.</p>
+                    </div>
+                    <button 
+                      onClick={downloadImportTemplate}
+                      className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-50 transition-all"
+                    >
+                      <Download size={18} /> Baixar Template
+                    </button>
+                  </div>
+
+                  <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm text-center">
+                    <div className="max-w-md mx-auto space-y-6">
+                      <div className="w-20 h-20 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mx-auto">
+                        <Upload size={40} />
+                      </div>
+                      <div>
+                        <h4 className="text-lg font-bold text-slate-900">Upload de Arquivo</h4>
+                        <p className="text-sm text-slate-500 mt-1">
+                          {importType === 'matriculas' 
+                            ? 'Selecione o arquivo CSV preenchido com os dados dos responsáveis, alunos e matrículas.'
+                            : importType === 'aulas_experimentais'
+                              ? 'Selecione o arquivo CSV preenchido com os dados das aulas experimentais.'
+                              : importType === 'ocorrencias'
+                                ? 'Selecione o arquivo CSV preenchido com os dados das ocorrências.'
+                                : importType === 'pagamentos_wix'
+                                  ? 'Selecione o arquivo CSV exportado do WIX para importar pagamentos.'
+                                  : 'Selecione o arquivo CSV preenchido com os dados das presenças.'}
+                        </p>
+                      </div>
+
+                      <div className="flex justify-center gap-4">
+                        <div className="text-left">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">
+                            Tipo de Importação
+                          </label>
+                          <select 
+                            value={importType}
+                            onChange={(e) => setImportType(e.target.value as any)}
+                            className="bg-slate-100 border-none rounded-lg px-3 py-2 text-xs font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                          >
+                            <option value="matriculas">Matrículas</option>
+                            <option value="aulas_experimentais">Aulas Experimentais</option>
+                            <option value="ocorrencias">Ocorrências</option>
+                            <option value="presencas">Presenças</option>
+                            <option value="pagamentos_wix">Pagamentos WIX</option>
+                          </select>
+                        </div>
+                        <div className="text-left">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">
+                            Codificação do Arquivo
+                          </label>
+                          <select 
+                            value={importEncoding}
+                            onChange={(e) => setImportEncoding(e.target.value)}
+                            className="bg-slate-100 border-none rounded-lg px-3 py-2 text-xs font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                          >
+                            <option value="UTF-8">UTF-8 (Padrão)</option>
+                            <option value="ISO-8859-1">ISO-8859-1 (Excel Windows)</option>
+                            <option value="macintosh">Macintosh (Excel Mac Antigo)</option>
+                            <option value="Windows-1252">Windows-1252 (Excel Brasil)</option>
+                          </select>
+                          <p className="text-[9px] text-slate-400 mt-1 max-w-[200px]">
+                            Se os nomes aparecerem com caracteres estranhos, tente mudar para Macintosh ou ISO-8859-1.
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <div className="relative">
+                        <input 
+                          type="file" 
+                          accept=".csv"
+                          onChange={handleFileUpload}
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        />
+                        <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 hover:border-blue-400 hover:bg-blue-50/50 transition-all">
+                          <p className="text-sm font-medium text-slate-600">
+                            Clique para selecionar ou arraste o arquivo aqui
+                          </p>
+                          <p className="text-xs text-slate-400 mt-1">Apenas arquivos .csv</p>
+                        </div>
+                      </div>
+
+                      {importData.length > 0 && !importResults && (
+                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-left">
+                          <div className="flex items-center gap-3 mb-3">
+                            <FileSpreadsheet className="text-blue-500" size={20} />
+                            <span className="text-sm font-bold text-slate-700">Arquivo carregado</span>
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            Foram detectadas <span className="font-bold text-slate-900">{importData.length}</span> linhas prontas para importação.
+                          </p>
+
+                          {isPreviewing && (
+                            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm flex items-center gap-2">
+                              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                              Analisando registros novos...
+                            </div>
+                          )}
+
+                          {importPreviewResults && !isPreviewing && (
+                            <div className="mt-4 p-4 bg-white border border-slate-200 rounded-xl">
+                              <h5 className="text-xs font-bold text-slate-400 mb-3 uppercase tracking-wider">Análise Prévia</h5>
+                              <div className="grid grid-cols-2 gap-3 text-sm">
+                                <div className="bg-emerald-50 text-emerald-700 p-3 rounded-xl border border-emerald-100">
+                                  <span className="block text-[10px] uppercase font-bold opacity-70 mb-1">Novos Registros</span>
+                                  <span className="text-2xl font-black leading-none">{importPreviewResults.success}</span>
+                                </div>
+                                <div className="bg-slate-50 text-slate-600 p-3 rounded-xl border border-slate-100">
+                                  <span className="block text-[10px] uppercase font-bold opacity-70 mb-1">Já Existentes (Ignorados)</span>
+                                  <span className="text-2xl font-black leading-none">{importPreviewResults.skipped || 0}</span>
+                                </div>
+                              </div>
+                              {importPreviewResults.errors?.length > 0 && (
+                                <div className="mt-3 text-xs text-amber-700 bg-amber-50 p-3 rounded-xl border border-amber-100">
+                                  <div className="flex items-start gap-2 mb-2">
+                                    <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                                    <span><span className="font-bold">Atenção:</span> {importPreviewResults.errors.length} linhas contêm erros e não serão importadas.</span>
+                                  </div>
+                                  <div className="mt-2 max-h-40 overflow-y-auto space-y-2 border-t border-amber-200 pt-2">
+                                    {importPreviewResults.errors.map((err: any, idx: number) => (
+                                      <div key={idx} className="p-2 bg-white/50 rounded-lg border border-amber-100 text-[10px]">
+                                        <p className="font-bold text-amber-900">Linha {err.row}: {err.error}</p>
+                                        {err.data && (
+                                          <p className="text-slate-500 truncate">Dados: {JSON.stringify(err.data)}</p>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Preview Table */}
+                          <div className="mt-4 border border-slate-200 rounded-xl overflow-hidden bg-white">
+                            <div className="bg-slate-100 px-3 py-1 text-[10px] font-bold text-slate-500 uppercase">
+                              Pré-visualização (Primeiras 3 linhas)
+                            </div>
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-[10px]">
+                                <thead>
+                                  <tr className="border-b border-slate-100">
+                                    <th className="px-3 py-2 text-left text-slate-400 font-medium">
+                                      {importType === 'pagamentos_wix' ? 'Data' : 'Nome do Aluno'}
+                                    </th>
+                                    <th className="px-3 py-2 text-left text-slate-400 font-medium">
+                                      {importType === 'ocorrencias' 
+                                        ? 'Observação' 
+                                        : importType === 'presencas'
+                                          ? 'Status'
+                                          : importType === 'pagamentos_wix'
+                                            ? 'Item / Aluno'
+                                            : 'Responsável'}
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(importPreviewResults?.preview || importData.slice(0, 3)).map((row, i) => (
+                                    <tr key={i} className="border-b border-slate-50 last:border-0">
+                                      <td className="px-3 py-2 text-slate-700 font-medium truncate max-w-[150px]">
+                                        {importType === 'pagamentos_wix'
+                                          ? (row.Data || '---')
+                                          : importType === 'matriculas' 
+                                            ? (row.aluno_nome || row['aluno_nome'] || Object.entries(row).find(([k]) => ['aluno', 'estudante'].includes(k.trim().toLowerCase()))?.[1] as string || '---')
+                                            : (Object.entries(row).find(([k]) => ['estudante', 'aluno'].includes(k.trim().toLowerCase()))?.[1] as string || '---')}
+                                      </td>
+                                      <td className="px-3 py-2 text-slate-500 truncate max-w-[250px]">
+                                        {importType === 'pagamentos_wix'
+                                          ? (
+                                            <div className="flex flex-col">
+                                              <span className="font-bold text-slate-700">{row.Item || '---'}</span>
+                                              <span className="text-[9px] text-blue-600">{row.Aluno || '---'}</span>
+                                            </div>
+                                          )
+                                          : importType === 'matriculas'
+                                            ? (row.responsavel_nome || row['responsavel_nome'] || Object.entries(row).find(([k]) => ['responsável', 'responsavel'].includes(k.trim().toLowerCase()))?.[1] as string || '---')
+                                            : importType === 'aulas_experimentais'
+                                              ? (Object.entries(row).find(([k]) => ['responsável 1', 'responsavel 1', 'responsavel'].includes(k.trim().toLowerCase()))?.[1] as string || '---')
+                                              : importType === 'ocorrencias'
+                                                ? (Object.entries(row).find(([k]) => ['observação', 'observacao'].includes(k.trim().toLowerCase()))?.[1] as string || '---')
+                                                : (Object.entries(row).find(([k]) => ['status'].includes(k.trim().toLowerCase()))?.[1] as string || '---')}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+
+                          <button 
+                            onClick={processImport}
+                            disabled={isImporting || isPreviewing}
+                            className="w-full mt-4 py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                          >
+                            {isImporting ? <RefreshCw size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
+                            {isPreviewing ? 'Analisando...' : 'Iniciar Importação'}
+                          </button>
+                        </div>
+                      )}
+
+                      {importResults && (
+                        <div className={`p-6 rounded-2xl border ${importResults.errors.length > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'} text-left`}>
+                          <h5 className={`font-bold mb-2 ${importResults.errors.length > 0 ? 'text-amber-800' : 'text-emerald-800'}`}>
+                            Resultado da Importação
+                          </h5>
+                          <div className="space-y-1 text-sm">
+                            <p className="text-slate-700">Total processado: <span className="font-bold">{importResults.processed}</span></p>
+                            <p className="text-emerald-700">Sucesso: <span className="font-bold">{importResults.success}</span></p>
+                            {importResults.skipped !== undefined && (
+                              <p className="text-blue-700">Ignorados (Já existentes): <span className="font-bold">{importResults.skipped}</span></p>
+                            )}
+                            <p className="text-red-700">Erros: <span className="font-bold">{importResults.errors.length}</span></p>
+                          </div>
+
+                          {importResults.details && importResults.details.length > 0 && (
+                            <div className="mt-4">
+                              <h6 className="text-[10px] font-bold text-slate-400 uppercase mb-2">Vínculos Realizados</h6>
+                              <div className="max-h-40 overflow-y-auto space-y-1">
+                                {importResults.details.map((detail: any, idx: number) => (
+                                  <div key={idx} className="p-2 bg-white/50 rounded-lg border border-emerald-100 text-[10px] flex justify-between items-center">
+                                    <span className="text-slate-600 font-medium truncate max-w-[150px]">{detail.item}</span>
+                                    <span className="text-blue-600 font-bold">{detail.aluno}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {importResults.errors.length > 0 && (
+                            <div className="mt-4 max-h-40 overflow-y-auto space-y-2">
+                              {importResults.errors.map((err: any, idx: number) => (
+                                <div key={idx} className="p-2 bg-white/50 rounded-lg border border-amber-200 text-[10px]">
+                                  <p className="font-bold text-amber-900">Linha {err.row}: {err.error}</p>
+                                  <p className="text-slate-500 truncate">Dados: {JSON.stringify(err.data)}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <button 
+                            onClick={() => {
+                              setImportData([]);
+                              setImportResults(null);
+                              setImportFile(null);
+                            }}
+                            className="w-full mt-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-all text-sm"
+                          >
+                            Limpar e Novo Upload
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-amber-50 p-6 rounded-3xl border border-amber-100">
+                    <div className="flex gap-4">
+                      <div className="p-2 bg-amber-100 text-amber-600 rounded-xl h-fit">
+                        <Info size={20} />
+                      </div>
+                      <div className="space-y-2">
+                        <h4 className="font-bold text-amber-900">Orientações para Importação</h4>
+                        <ul className="text-sm text-amber-800 space-y-1 list-disc pl-4">
+                          <li>Use o template CSV para garantir que os nomes das colunas estejam corretos.</li>
+                          <li>O sistema identifica responsáveis únicos pelo <strong>CPF</strong>.</li>
+                          <li><strong>Senha Inicial</strong>: O CPF do responsável será definido como sua senha inicial de acesso ao portal.</li>
+                          <li>O sistema identifica alunos únicos pela combinação de <strong>Nome Completo</strong> e <strong>Data de Nascimento</strong> vinculados ao responsável.</li>
+                          <li>Se um aluno tiver múltiplas matrículas, coloque cada uma em uma linha repetindo os dados do responsável e do aluno.</li>
+                          <li>A data de nascimento, matrícula e cancelamento deve estar no formato <strong>AAAA-MM-DD</strong>.</li>
+                          <li>Se os nomes aparecerem com caracteres incorretos (como ), mude a <strong>Codificação do Arquivo</strong> para <strong>Macintosh</strong> (se estiver no Mac) ou <strong>ISO-8859-1</strong> antes de fazer o upload.</li>
+                        </ul>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1513,12 +2819,38 @@ export default function App() {
                     ) : (
                       coupons.map((coupon) => (
                         <div key={coupon.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative group">
-                          <button 
-                            onClick={() => handleDeleteCoupon(coupon.id)}
-                            className="absolute top-4 right-4 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                          >
-                            <Trash2 size={18} />
-                          </button>
+                          <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => {
+                                setEditingCouponId(coupon.id);
+                                setNewCoupon({
+                                  codigo: coupon.codigo,
+                                  nome: coupon.nome,
+                                  tipo: coupon.tipo,
+                                  valor: coupon.valor,
+                                  aplicar_em: coupon.aplicar_em,
+                                  data_inicio: coupon.data_inicio ? coupon.data_inicio.split('T')[0] : new Date().toISOString().split('T')[0],
+                                  data_expiracao: coupon.data_expiracao ? coupon.data_expiracao.split('T')[0] : '',
+                                  limite_uso: coupon.limite_uso,
+                                  uso_unico_cliente: coupon.uso_unico_cliente || false,
+                                  sem_expiracao: !coupon.data_expiracao,
+                                  tem_limite_uso: !!coupon.limite_uso
+                                });
+                                setIsAddingCoupon(true);
+                              }}
+                              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                              title="Editar Cupom"
+                            >
+                              <Edit3 size={18} />
+                            </button>
+                            <button 
+                              onClick={() => setCouponToDelete(coupon.id)}
+                              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                              title="Excluir Cupom"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
                           <div className="flex items-center gap-3 mb-4">
                             <div className={`p-3 rounded-xl ${coupon.tipo === 'fixo' ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600'}`}>
                               {coupon.tipo === 'fixo' ? <DollarSign size={24} /> : <Percent size={24} />}
@@ -1567,8 +2899,10 @@ export default function App() {
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                         <input 
                           type="text" 
-                          placeholder="Buscar responsável..." 
+                          placeholder="Buscar responsável ou aluno..." 
                           className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none w-full md:w-64"
+                          value={enrollmentSearch}
+                          onChange={e => setEnrollmentSearch(e.target.value)}
                         />
                       </div>
                       <button 
@@ -1621,131 +2955,167 @@ export default function App() {
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-slate-50 border-b border-slate-200">
+                            <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Data</th>
                             <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Responsável</th>
                             <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Aluno</th>
                             <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Turma</th>
+                            <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Plano</th>
                             <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Método</th>
-                            <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
                             <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Ações</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {enrollments.length === 0 ? (
+                          {filteredFlattenedEnrollments.length === 0 ? (
                             <tr>
-                              <td colSpan={6} className="px-6 py-12 text-center text-slate-400 italic">
+                              <td colSpan={7} className="px-6 py-12 text-center text-slate-400 italic">
                                 Nenhuma matrícula encontrada no banco de dados.
                               </td>
                             </tr>
                           ) : (
-                            enrollments.map((enrollment, idx) => (
-                              <React.Fragment key={idx}>
-                                {enrollment.alunos.map((aluno, aIdx) => (
-                                  aluno.matriculas.map((mat, mIdx) => (
-                                    <tr key={`${idx}-${aIdx}-${mIdx}`} className="hover:bg-slate-50/50 transition-colors">
-                                      <td className="px-6 py-4">
-                                        <p className="font-semibold text-slate-900">{enrollment.nome_completo}</p>
-                                        <p className="text-[10px] text-slate-400 uppercase">Responsável</p>
-                                      </td>
-                                      <td className="px-6 py-4">
-                                        <p className="text-sm font-medium text-slate-700">{aluno.nome_completo}</p>
-                                        <p className="text-[10px] text-slate-500 uppercase">{aluno.serie_ano?.replace('_', ' ')}</p>
-                                      </td>
-                                      <td className="px-6 py-4">
-                                        <p className="text-sm font-bold text-emerald-600">{mat.turma}</p>
-                                        <p className="text-[10px] text-slate-500 uppercase">{mat.unidade}</p>
-                                        {mat.status && mat.status !== 'ativo' && (
-                                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase mt-1 inline-block ${
-                                            mat.status === 'transferido' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'
-                                          }`}>
-                                            {mat.status}
-                                          </span>
+                            filteredFlattenedEnrollments.map((item, idx) => {
+                              const { aluno, matricula: mat, ...enrollment } = item;
+                              return (
+                                <tr key={mat.id || idx} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="px-6 py-4">
+                                    <p className="font-semibold text-slate-900">
+                                      {formatDateShort(mat.data_matricula)}
+                                    </p>
+                                    <p className="text-[10px] text-slate-400 uppercase">Data Matrícula</p>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <p className="text-sm font-medium text-slate-700">{enrollment.nome_completo}</p>
+                                    <p className="text-[10px] text-slate-400 uppercase">Responsável</p>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <p className="text-sm font-medium text-slate-700">{aluno.nome_completo}</p>
+                                    <p className="text-[10px] text-slate-500 uppercase">{aluno.serie_ano?.replace('_', ' ')}</p>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <p className="text-sm font-bold text-emerald-600">{mat.turma}</p>
+                                    <p className="text-[10px] text-slate-500 uppercase">{mat.unidade}</p>
+                                    <div className="mt-1">
+                                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase inline-block ${
+                                        mat.status === 'ativo' || !mat.status ? 'bg-emerald-100 text-emerald-700' :
+                                        mat.status === 'transferido' ? 'bg-blue-100 text-blue-700' : 
+                                        mat.status === 'cancelado' ? 'bg-red-100 text-red-700' :
+                                        'bg-amber-100 text-amber-700'
+                                      }`}>
+                                        {mat.status || 'ativo'}
+                                      </span>
+                                      {mat.status === 'cancelado' && mat.data_cancelamento && (
+                                        <p className="text-[8px] text-slate-400 mt-0.5">
+                                          Cancelado em: {new Date(mat.data_cancelamento).toLocaleDateString('pt-BR')}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    {mat.plano ? (
+                                      <span className="px-2 py-1 bg-slate-100 text-slate-600 text-[10px] font-bold rounded uppercase border border-slate-200">
+                                        {mat.plano}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-400 italic">Padrão</span>
+                                    )}
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <div className="flex flex-col gap-1">
+                                      <div className="flex items-center gap-2">
+                                        {enrollment.pagamentos[0]?.metodo_pagamento === 'pix' ? (
+                                          <QrCode size={14} className="text-emerald-600" />
+                                        ) : (
+                                          <CreditCard size={14} className="text-purple-600" />
                                         )}
-                                      </td>
-                                      <td className="px-6 py-4">
-                                        <div className="flex items-center gap-2">
-                                          {enrollment.pagamentos[0]?.metodo_pagamento === 'pix' ? (
-                                            <QrCode size={14} className="text-emerald-600" />
-                                          ) : (
-                                            <CreditCard size={14} className="text-purple-600" />
-                                          )}
-                                          <span className="text-xs font-medium capitalize">
-                                            {enrollment.pagamentos[0]?.metodo_pagamento?.replace('_', ' ') || 'N/A'}
-                                          </span>
-                                        </div>
-                                      </td>
-                                      <td className="px-6 py-4">
-                                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                          enrollment.pagamentos[0]?.status === 'pago' 
-                                            ? 'bg-emerald-100 text-emerald-800' 
-                                            : 'bg-amber-100 text-amber-800'
-                                        }`}>
-                                          {enrollment.pagamentos[0]?.status === 'pago' ? 'Conciliado' : 'Pendente'}
+                                        <span className="text-xs font-medium capitalize">
+                                          {enrollment.pagamentos[0]?.metodo_pagamento?.replace('_', ' ') || 'N/A'}
                                         </span>
-                                      </td>
-                                      <td className="px-6 py-4 text-right">
-                                        <div className="flex items-center justify-end gap-2">
-                                          {mat.status === 'trancado' ? (
-                                            <button 
-                                              onClick={() => {
-                                                setReactivatingEnrollmentId(mat.id);
-                                                setIsReactivatingEnrollment(true);
-                                              }}
-                                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                                              title="Reativar Matrícula"
-                                            >
-                                              <RefreshCw size={16} />
-                                            </button>
-                                          ) : (mat.status !== 'cancelado' && mat.status !== 'transferido') && (
-                                            <>
-                                              <button 
-                                                onClick={() => {
-                                                  setFreezingEnrollmentId(mat.id);
-                                                  setIsFreezingEnrollment(true);
-                                                }}
-                                                className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                                                title="Trancar Matrícula"
-                                              >
-                                                <Lock size={16} />
-                                              </button>
-                                              <button 
-                                                onClick={() => {
-                                                  setTransferringEnrollmentId(mat.id);
-                                                  setTransferringStudent({
-                                                    id: aluno.id,
-                                                    nome_completo: aluno.nome_completo,
-                                                    serie_ano: aluno.serie_ano,
-                                                    data_nascimento: aluno.data_nascimento
-                                                  });
-                                                  setIsTransferringEnrollment(true);
-                                                  setTransferTarget({ turma: mat.turma, unidade: mat.unidade });
-                                                }}
-                                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                                title="Transferir Turma"
-                                              >
-                                                <Truck size={16} />
-                                              </button>
-                                              <button 
-                                                onClick={() => {
-                                                  setCancelingEnrollmentId(mat.id);
-                                                  setIsCancelingEnrollment(true);
-                                                }}
-                                                className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                                title="Cancelar Matrícula"
-                                              >
-                                                <XCircle size={16} />
-                                              </button>
-                                            </>
-                                          )}
-                                          <button className="p-1.5 text-slate-400 hover:text-emerald-600 transition-colors">
-                                            <ExternalLink size={16} />
+                                      </div>
+                                      <span className={`inline-flex items-center w-fit px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                        enrollment.pagamentos[0]?.status === 'pago' 
+                                          ? 'bg-emerald-100 text-emerald-800' 
+                                          : enrollment.pagamentos[0]?.status === 'cancelado'
+                                          ? 'bg-red-100 text-red-800'
+                                          : 'bg-amber-100 text-amber-800'
+                                      }`}>
+                                        {enrollment.pagamentos[0]?.status === 'pago' ? 'Conciliado' : 
+                                         enrollment.pagamentos[0]?.status === 'cancelado' ? 'Cancelado' : 
+                                         'Pendente'}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4 text-right">
+                                    <div className="flex items-center justify-end gap-2">
+                                      {mat.status === 'trancado' ? (
+                                        <button 
+                                          onClick={() => {
+                                            setReactivatingEnrollmentId(mat.id);
+                                            setIsReactivatingEnrollment(true);
+                                          }}
+                                          className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                          title="Reativar Matrícula"
+                                        >
+                                          <RefreshCw size={16} />
+                                        </button>
+                                      ) : (mat.status !== 'cancelado' && mat.status !== 'transferido') && (
+                                        <>
+                                          <button 
+                                            onClick={() => {
+                                              setFreezingEnrollmentId(mat.id);
+                                              setIsFreezingEnrollment(true);
+                                            }}
+                                            className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                            title="Suspender Matrícula"
+                                          >
+                                            <Lock size={16} />
                                           </button>
-                                        </div>
-                                      </td>
-                                    </tr>
-                                  ))
-                                ))}
-                              </React.Fragment>
-                            ))
+                                          <button 
+                                            onClick={() => {
+                                              setTransferringEnrollmentId(mat.id);
+                                              setTransferringStudent({
+                                                id: aluno.id,
+                                                nome_completo: aluno.nome_completo,
+                                                serie_ano: aluno.serie_ano,
+                                                data_nascimento: aluno.data_nascimento
+                                              });
+                                              setIsTransferringEnrollment(true);
+                                              setTransferTarget({ turma: mat.turma, unidade: mat.unidade });
+                                            }}
+                                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                            title="Transferir Turma"
+                                          >
+                                            <Truck size={16} />
+                                          </button>
+                                          <button 
+                                            onClick={() => {
+                                              setCancelingEnrollmentId(mat.id);
+                                              setIsCancelingEnrollment(true);
+                                            }}
+                                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                            title="Cancelar Matrícula"
+                                          >
+                                            <XCircle size={16} />
+                                          </button>
+                                        </>
+                                      )}
+                                      <button 
+                                        onClick={() => {
+                                          setSelectedEnrollmentDetails({
+                                            ...enrollment,
+                                            aluno,
+                                            matricula: mat
+                                          });
+                                          setIsViewingEnrollmentDetails(true);
+                                        }}
+                                        className="p-1.5 text-slate-400 hover:text-emerald-600 transition-colors"
+                                        title="Ver Detalhes"
+                                      >
+                                        <ExternalLink size={16} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
                           )}
                         </tbody>
                       </table>
@@ -1759,6 +3129,14 @@ export default function App() {
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                       <h3 className="text-lg font-bold text-slate-900">Relatórios Financeiros</h3>
                       <div className="flex gap-2">
+                        <button 
+                          onClick={handleSyncPayments}
+                          disabled={loading}
+                          className="px-4 py-2 rounded-lg text-sm font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all border border-emerald-200 flex items-center gap-2 disabled:opacity-50"
+                        >
+                          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+                          Sincronizar Pagar.me
+                        </button>
                         <button 
                           onClick={() => setFinanceFilters({...financeFilters, view: 'summary'})}
                           className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${financeFilters.view === 'summary' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
@@ -1896,7 +3274,7 @@ export default function App() {
                           .reduce((acc, curr) => acc + Number(curr.valor), 0);
                         
                         const totalPending = filteredPayments
-                          .filter(p => p.status !== 'pago')
+                          .filter(p => p.status === 'pendente' || p.status === 'falha')
                           .reduce((acc, curr) => acc + Number(curr.valor), 0);
 
                         return (
@@ -2048,9 +3426,17 @@ export default function App() {
                                               </td>
                                               <td className="px-6 py-4">
                                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                                  pag.status === 'pago' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                                  pag.status === 'pago' ? 'bg-emerald-100 text-emerald-800' : 
+                                                  pag.status === 'cancelado' ? 'bg-red-100 text-red-800' :
+                                                  pag.status === 'estornado' ? 'bg-blue-100 text-blue-800' :
+                                                  pag.status === 'falha' ? 'bg-rose-100 text-rose-800' :
+                                                  'bg-amber-100 text-amber-800'
                                                 }`}>
-                                                  {pag.status === 'pago' ? 'Conciliado' : 'Pendente'}
+                                                  {pag.status === 'pago' ? 'Conciliado' : 
+                                                   pag.status === 'cancelado' ? 'Cancelado' : 
+                                                   pag.status === 'estornado' ? 'Estornado' :
+                                                   pag.status === 'falha' ? 'Falhou' :
+                                                   'Pendente'}
                                                 </span>
                                               </td>
                                             </tr>
@@ -2221,6 +3607,18 @@ export default function App() {
                             </div>
 
                             <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 uppercase">Status</label>
+                              <select 
+                                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                                value={newOption.status}
+                                onChange={e => setNewOption({...newOption, status: e.target.value})}
+                              >
+                                <option value="ativo">Ativo</option>
+                                <option value="inativo">Inativo</option>
+                              </select>
+                            </div>
+
+                            <div className="space-y-1">
                               <label className="text-xs font-bold text-slate-500 uppercase">Professor(a)</label>
                               <input 
                                 type="text" 
@@ -2358,7 +3756,7 @@ export default function App() {
                             </h4>
                             <ul className="space-y-2 max-h-[400px] overflow-y-auto pr-1 custom-scrollbar">
                               {options.turmas.filter(t => t.nome.toLowerCase().includes(settingsSearch.toLowerCase()) || (t.unidade_nome || '').toLowerCase().includes(settingsSearch.toLowerCase())).map(t => (
-                                <li key={t.nome} className="group flex flex-col gap-2 text-sm text-slate-600 bg-slate-50 p-4 rounded-xl border border-slate-100 relative hover:border-emerald-200 hover:bg-emerald-50/30 transition-all">
+                                <li key={t.id || t.nome} className="group flex flex-col gap-2 text-sm text-slate-600 bg-slate-50 p-4 rounded-xl border border-slate-100 relative hover:border-emerald-200 hover:bg-emerald-50/30 transition-all">
                                 <div className="flex items-center justify-between">
                                   <span className="font-bold text-slate-900 text-base">{t.nome}</span>
                                   <div className="flex gap-1">
@@ -2376,6 +3774,12 @@ export default function App() {
                                     >
                                       <Trash2 size={16} />
                                     </button>
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <span className="text-slate-400 uppercase font-bold text-[9px]">Status</span>
+                                    <span className={`font-bold ${t.status === 'inativo' ? 'text-red-500' : 'text-emerald-600'}`}>
+                                      {(t.status || 'ativo').toUpperCase()}
+                                    </span>
                                   </div>
                                 </div>
                                 
@@ -2449,6 +3853,49 @@ export default function App() {
                         </button>
                       </div>
                     </div>
+
+                    {/* Pagar.me Configuration Section */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mt-6">
+                      <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+                        <CreditCard size={18} className="text-emerald-600" />
+                        Configuração Pagar.me (Fatura)
+                      </h3>
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Descrição Padrão (Max 13 chars)</label>
+                            <input 
+                              type="text" 
+                              maxLength={13}
+                              className="w-full px-4 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                              placeholder="SportForKids"
+                              value={pagarmeSoftDescriptor}
+                              onChange={e => setPagarmeSoftDescriptor(e.target.value)}
+                            />
+                            <p className="text-[10px] text-slate-400">O que aparecerá na fatura do cartão do cliente.</p>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Descrição Bernoulli (Max 13 chars)</label>
+                            <input 
+                              type="text" 
+                              maxLength={13}
+                              className="w-full px-4 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                              placeholder="BernoulliMais"
+                              value={pagarmeSoftDescriptorBernoulli}
+                              onChange={e => setPagarmeSoftDescriptorBernoulli(e.target.value)}
+                            />
+                            <p className="text-[10px] text-slate-400">Usado para unidades que contêm "Bernoulli" no nome.</p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={handleSavePagarmeSettings}
+                          disabled={isSavingPagarme}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 disabled:opacity-50"
+                        >
+                          {isSavingPagarme ? 'Salvando...' : 'Salvar Configurações'} <Save size={16} />
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -2487,6 +3934,12 @@ export default function App() {
                     Meu Perfil
                   </button>
                   <button 
+                    onClick={() => setPortalTab('documents')}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${portalTab === 'documents' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    Documentos
+                  </button>
+                  <button 
                     onClick={() => {
                       resetGuardian();
                       setStep('guardian');
@@ -2500,6 +3953,32 @@ export default function App() {
 
               {portalTab === 'dashboard' && (
                 <div className="space-y-6">
+                  {/* Banner de CPF Provisório */}
+                  {formData.guardian.cpf.startsWith('IMP') && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-4 text-amber-800"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                        <Info className="text-amber-600" size={20} />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-semibold">CPF Provisório Detectado</p>
+                        <p className="text-sm opacity-90">Por favor, atualize seu CPF e defina uma senha no seu perfil para garantir o acesso futuro.</p>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setPortalTab('profile');
+                          setIsEditingProfile(true);
+                        }}
+                        className="px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 transition-colors"
+                      >
+                        Atualizar Agora
+                      </button>
+                    </motion.div>
+                  )}
+
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                       <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Dependentes</p>
@@ -2576,11 +4055,64 @@ export default function App() {
                                     >
                                       <Trash2 size={16} />
                                     </button>
+                                    {mat.pagarme_subscription_id && (
+                                      <button 
+                                        onClick={() => {
+                                          setSelectedEnrollmentForCard(mat.id);
+                                          setIsUpdatingCard(true);
+                                        }}
+                                        className="flex items-center gap-1 px-2 py-1 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors text-[10px] font-bold uppercase"
+                                        title="Atualizar Cartão"
+                                      >
+                                        <CreditCard size={14} />
+                                        Cartão
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                               ))
                             ) : (
                               <p className="text-sm text-slate-400 italic text-center py-4">Nenhuma matrícula ativa.</p>
+                            )}
+
+                            {/* Histórico de Matrículas no Portal */}
+                            {dep.historico && dep.historico.length > 0 && (
+                              <div className="pt-4 border-t border-slate-100 space-y-2">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Histórico de Matrículas</p>
+                                {dep.historico.map((mat: any) => (
+                                  <div key={mat.id} className="flex items-center justify-between p-3 bg-slate-50/50 rounded-xl border border-slate-100 opacity-75">
+                                    <div className="flex flex-col flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-slate-500 line-through">{mat.turma}</span>
+                                        <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-400 rounded font-medium uppercase">{mat.unidade}</span>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+                                        {mat.horario && (
+                                          <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                                            <Clock size={10} /> {mat.horario}
+                                          </span>
+                                        )}
+                                        {mat.data_matricula && (
+                                          <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                                            <Calendar size={10} /> Início: {(() => {
+                                              const [y, m, d] = mat.data_matricula.split('T')[0].split('-');
+                                              return `${d}/${m}/${y.slice(-2)}`;
+                                            })()}
+                                          </span>
+                                        )}
+                                        {mat.data_cancelamento && (
+                                          <span className={`text-[10px] ${mat.status === 'transferido' ? 'text-blue-400' : 'text-red-400'} font-medium flex items-center gap-1`}>
+                                            <XCircle size={10} /> {mat.status === 'transferido' ? 'Transferido' : 'Cancelado'}: {(() => {
+                                              const [y, m, d] = mat.data_cancelamento.split('T')[0].split('-');
+                                              return `${d}/${m}/${y.slice(-2)}`;
+                                            })()}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
                             )}
                           </div>
                         </div>
@@ -2658,18 +4190,91 @@ export default function App() {
                                   </div>
                                 </td>
                                 <td className="px-6 py-4">
-                                  <button 
-                                    onClick={() => alert('Download de boletos e recibos estará disponível em breve.')}
-                                    className="text-emerald-600 hover:text-emerald-700 text-xs font-bold flex items-center gap-1"
-                                  >
-                                    <FileText size={14} /> Boleto/Recibo
-                                  </button>
+                                  {p.status === 'pago' ? (
+                                    <button 
+                                      onClick={() => handleDownloadReceipt(p.id)}
+                                      className="text-emerald-600 hover:text-emerald-700 text-xs font-bold flex items-center gap-1"
+                                    >
+                                      <FileText size={14} /> Recibo
+                                    </button>
+                                  ) : (
+                                    <span className="text-slate-400 text-xs italic">Indisponível</span>
+                                  )}
                                 </td>
                               </tr>
                             ))
                           )}
                         </tbody>
                       </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {portalTab === 'documents' && (
+                <div className="space-y-6">
+                  <h3 className="text-xl font-bold text-slate-900">Central de Documentos</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-3 bg-blue-50 rounded-xl text-blue-600">
+                          <FileText size={24} />
+                        </div>
+                        <h4 className="font-bold text-slate-900">Contratos de Matrícula</h4>
+                      </div>
+                      <p className="text-sm text-slate-500">Baixe os contratos assinados digitalmente para cada uma de suas matrículas ativas.</p>
+                      <div className="space-y-2">
+                        {groupedDependents.flatMap(dep => dep.matriculasAtivas).length === 0 ? (
+                          <p className="text-xs text-slate-400 italic">Nenhuma matrícula ativa encontrada.</p>
+                        ) : (
+                          groupedDependents.flatMap(dep => dep.matriculasAtivas).map((mat: any) => (
+                            <div key={mat.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                              <div>
+                                <p className="text-sm font-bold text-slate-800">{mat.turma}</p>
+                                <p className="text-[10px] text-slate-500 uppercase">{mat.unidade}</p>
+                              </div>
+                              <button 
+                                onClick={() => handleDownloadContract(mat.id)}
+                                className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-50 transition-all flex items-center gap-2"
+                              >
+                                <Download size={14} />
+                                Baixar PDF
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
+                          <DollarSign size={24} />
+                        </div>
+                        <h4 className="font-bold text-slate-900">Recibos de Pagamento</h4>
+                      </div>
+                      <p className="text-sm text-slate-500">Acesse os recibos de todas as mensalidades quitadas até o momento.</p>
+                      <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+                        {payments.filter(p => p.status === 'pago').length === 0 ? (
+                          <p className="text-xs text-slate-400 italic">Nenhum pagamento quitado encontrado.</p>
+                        ) : (
+                          payments.filter(p => p.status === 'pago').map((p) => (
+                            <div key={p.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                              <div>
+                                <p className="text-sm font-bold text-slate-800">R$ {p.valor?.toFixed(2)}</p>
+                                <p className="text-[10px] text-slate-500 uppercase">{new Date(p.created_at).toLocaleDateString()} • {p.turma || 'Matrícula'}</p>
+                              </div>
+                              <button 
+                                onClick={() => handleDownloadReceipt(p.id)}
+                                className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-50 transition-all flex items-center gap-2"
+                              >
+                                <Download size={14} />
+                                Recibo
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2745,7 +4350,20 @@ export default function App() {
                       </div>
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">CPF</label>
-                        <p className="text-slate-500 font-medium py-2.5">{formData.guardian.cpf}</p>
+                        {isEditingProfile && (formData.guardian.cpf.startsWith('IMP') || !formData.guardian.cpf) ? (
+                          <input 
+                            type="text" 
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                            value={formData.guardian.cpf.startsWith('IMP') ? '' : formData.guardian.cpf}
+                            placeholder="000.000.000-00"
+                            onChange={e => setFormData({...formData, guardian: {...formData.guardian, cpf: e.target.value}})}
+                          />
+                        ) : (
+                          <p className={`${formData.guardian.cpf.startsWith('IMP') ? 'text-amber-600 font-bold' : 'text-slate-900'} font-medium py-2.5`}>
+                            {formData.guardian.cpf}
+                            {formData.guardian.cpf.startsWith('IMP') && ' (Provisório - Clique em Atualizar)'}
+                          </p>
+                        )}
                       </div>
                       <div className="md:col-span-2 space-y-4">
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Endereço Completo</label>
@@ -2839,6 +4457,51 @@ export default function App() {
                             CEP: {formData.guardian.zipCode}
                           </p>
                         )}
+                      </div>
+
+                      {/* Seção de Métodos de Pagamento */}
+                      <div className="md:col-span-2 pt-8 border-t border-slate-100">
+                        <div className="flex items-center gap-2 mb-6">
+                          <div className="p-2 bg-amber-50 rounded-lg text-amber-600">
+                            <CreditCard size={20} />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-slate-900">Métodos de Pagamento</h4>
+                            <p className="text-xs text-slate-500">Gerencie os cartões das suas assinaturas ativas.</p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          {groupedDependents.flatMap(dep => dep.matriculasAtivas).filter(mat => mat.pagarme_subscription_id).length === 0 ? (
+                            <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 text-center">
+                              <p className="text-sm text-slate-400 italic">Nenhuma assinatura ativa com cartão de crédito encontrada.</p>
+                            </div>
+                          ) : (
+                            groupedDependents.flatMap(dep => dep.matriculasAtivas).filter(mat => mat.pagarme_subscription_id).map((mat: any) => (
+                              <div key={mat.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 shadow-sm gap-4">
+                                <div className="flex items-center gap-4">
+                                  <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600">
+                                    <CreditCard size={20} />
+                                  </div>
+                                  <div>
+                                    <p className="text-sm font-bold text-slate-900">{mat.turma}</p>
+                                    <p className="text-[10px] text-slate-500 uppercase">{mat.unidade}</p>
+                                  </div>
+                                </div>
+                                <button 
+                                  onClick={() => {
+                                    setSelectedEnrollmentForCard(mat.id);
+                                    setIsUpdatingCard(true);
+                                  }}
+                                  className="px-4 py-2 bg-amber-600 text-white rounded-xl text-xs font-bold hover:bg-amber-700 transition-all flex items-center justify-center gap-2 shadow-md shadow-amber-100"
+                                >
+                                  <RefreshCw size={14} />
+                                  Trocar Cartão
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
                       </div>
 
                       {isChangingPassword && (
@@ -2936,7 +4599,160 @@ export default function App() {
             </motion.div>
           ) : (
             <div className="max-w-3xl mx-auto">
-              <AnimatePresence mode="wait">
+              {/* Progress Bar */}
+              {['guardian', 'student', 'enrollment', 'payment'].includes(step) && (
+                <div className="mb-12 px-4">
+                  <div className="flex items-center justify-between relative">
+                    {/* Background Line */}
+                    <div className="absolute top-5 left-0 w-full h-1 bg-slate-100 -translate-y-1/2 z-0 rounded-full" />
+                    
+                    {/* Progress Line */}
+                    <motion.div 
+                      className="absolute top-5 left-0 h-1 bg-emerald-500 -translate-y-1/2 z-0 rounded-full"
+                      initial={{ width: '0%' }}
+                      animate={{ 
+                        width: step === 'guardian' ? '0%' : 
+                               step === 'student' ? '33.33%' : 
+                               step === 'enrollment' ? '66.66%' : '100%' 
+                      }}
+                      transition={{ duration: 0.5, ease: "easeInOut" }}
+                    />
+
+                    {[
+                      { id: 'guardian', label: 'Responsável', icon: User },
+                      { id: 'student', label: 'Aluno', icon: GraduationCap },
+                      { id: 'enrollment', label: 'Turma', icon: Clock },
+                      { id: 'payment', label: 'Pagamento', icon: CreditCard },
+                    ].map((s, idx) => {
+                      const stepOrder = ['guardian', 'student', 'enrollment', 'payment'];
+                      const currentIdx = stepOrder.indexOf(step);
+                      const isCompleted = currentIdx > idx;
+                      const isActive = step === s.id;
+                      
+                      return (
+                        <div key={s.id} className="relative z-10 flex flex-col items-center gap-3">
+                          <motion.div 
+                            initial={false}
+                            animate={{ 
+                              backgroundColor: isCompleted || isActive ? '#10b981' : '#ffffff',
+                              borderColor: isCompleted || isActive ? '#10b981' : '#e2e8f0',
+                              color: isCompleted || isActive ? '#ffffff' : '#94a3b8',
+                              scale: isActive ? 1.15 : 1,
+                              boxShadow: isActive ? '0 10px 15px -3px rgba(16, 185, 129, 0.2)' : '0 0px 0px rgba(0,0,0,0)'
+                            }}
+                            className="w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all"
+                          >
+                            {isCompleted ? <Check size={20} strokeWidth={3} /> : <s.icon size={18} />}
+                          </motion.div>
+                          <div className="flex flex-col items-center">
+                            <span className={`text-[10px] font-black uppercase tracking-widest ${isActive ? 'text-emerald-600' : 'text-slate-400'}`}>
+                              {s.label}
+                            </span>
+                            {isActive && (
+                              <motion.div 
+                                layoutId="activeStepDot"
+                                className="w-1 h-1 bg-emerald-600 rounded-full mt-1"
+                              />
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Modal Atualizar Cartão */}
+          {isUpdatingCard && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+              >
+                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                  <h3 className="text-lg font-bold text-slate-900">Atualizar Cartão de Crédito</h3>
+                  <button onClick={() => setIsUpdatingCard(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                    <X size={20} />
+                  </button>
+                </div>
+                <form onSubmit={handleUpdateCard} className="p-8 space-y-6">
+                  <div className="space-y-4">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label>
+                      <input 
+                        type="text" 
+                        required
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                        placeholder="0000 0000 0000 0000"
+                        value={newCardData.number}
+                        onChange={e => setNewCardData({...newCardData, number: e.target.value})}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 uppercase">Nome no Cartão</label>
+                      <input 
+                        type="text" 
+                        required
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                        placeholder="Como está no cartão"
+                        value={newCardData.holder_name}
+                        onChange={e => setNewCardData({...newCardData, holder_name: e.target.value})}
+                      />
+                    </div>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Mês</label>
+                        <input 
+                          type="text" 
+                          required
+                          maxLength={2}
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                          placeholder="MM"
+                          value={newCardData.exp_month}
+                          onChange={e => setNewCardData({...newCardData, exp_month: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Ano</label>
+                        <input 
+                          type="text" 
+                          required
+                          maxLength={4}
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                          placeholder="AAAA"
+                          value={newCardData.exp_year}
+                          onChange={e => setNewCardData({...newCardData, exp_year: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 uppercase">CVV</label>
+                        <input 
+                          type="text" 
+                          required
+                          maxLength={4}
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                          placeholder="123"
+                          value={newCardData.cvv}
+                          onChange={e => setNewCardData({...newCardData, cvv: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <button 
+                    type="submit"
+                    disabled={loading}
+                    className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {loading ? <RefreshCw className="animate-spin" size={20} /> : <Save size={20} />}
+                    Salvar Novo Cartão
+                  </button>
+                </form>
+              </motion.div>
+            </div>
+          )}
+
+          <AnimatePresence mode="wait">
                 {step === 'guardian' && (
                   <motion.div
                     key="guardian"
@@ -2945,88 +4761,67 @@ export default function App() {
                     exit={{ opacity: 0, x: -20 }}
                     className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8"
                   >
-                    <div className="flex items-center gap-3 mb-8">
-                      <div className="p-3 bg-emerald-50 rounded-xl">
-                        <User className="text-emerald-600" size={24} />
-                      </div>
-                      <div>
-                        <h2 className="text-2xl font-semibold">Dados do Responsável</h2>
-                        <p className="text-slate-500 text-sm">Quem responderá financeiramente pela matrícula.</p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-slate-700">CPF</label>
-                        <div className="relative">
-                          <input 
-                            type="text" 
-                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                            placeholder="000.000.000-00"
-                            value={formData.guardian.cpf}
-                            onChange={e => {
-                              const val = e.target.value;
-                              setFormData({...formData, guardian: {...formData.guardian, cpf: val}});
-                              if (val.replace(/\D/g, '').length === 11) {
-                                checkCPF(val);
-                              } else {
-                                setGuardianExists(null);
-                              }
-                            }}
-                          />
-                          {searchingGuardian && (
-                            <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                              <RefreshCw size={16} className="animate-spin text-emerald-600" />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {guardianExists === true && !formData.guardian.name && (
-                        <motion.div 
-                          initial={{ opacity: 0, y: -10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className="md:col-span-2 p-6 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-4"
-                        >
-                          <div className="flex items-center gap-3 text-emerald-800">
-                            <div className="p-2 bg-white rounded-lg shadow-sm">
-                              <ShieldCheck size={20} className="text-emerald-600" />
-                            </div>
-                            <div>
-                              <p className="font-bold text-sm">Cadastro Localizado!</p>
-                              <p className="text-xs opacity-80">Para sua segurança, confirme sua senha para realizar uma nova matrícula.</p>
-                            </div>
+                    {isAccessingPanel ? (
+                      <>
+                        <div className="flex items-center gap-3 mb-8">
+                          <div className="p-3 bg-emerald-50 rounded-xl">
+                            <ShieldCheck className="text-emerald-600" size={24} />
                           </div>
-                          
+                          <div>
+                            <h2 className="text-2xl font-semibold">Acesso ao Painel do Responsável</h2>
+                            <p className="text-slate-500 text-sm">Acesse com seu CPF ou E-mail cadastrado.</p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-6">
                           <div className="space-y-2">
-                            <label className="text-xs font-bold text-emerald-700 uppercase tracking-wider">Senha de Acesso</label>
-                            <div className="flex gap-2">
+                            <label className="text-sm font-medium text-slate-700">CPF ou E-mail</label>
+                            <div className="relative">
                               <input 
-                                ref={passwordInputRef}
-                                type="password" 
-                                className="flex-1 px-4 py-3 rounded-xl border-2 border-emerald-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all bg-white"
-                                placeholder="Digite sua senha cadastrada"
-                                value={formData.guardian.password}
-                                onChange={e => setFormData({...formData, guardian: {...formData.guardian, password: e.target.value}})}
+                                type="text" 
+                                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                                placeholder="000.000.000-00 ou seu@email.com"
+                                value={loginIdentifier}
+                                onChange={e => setLoginIdentifier(e.target.value)}
                                 onKeyDown={e => {
-                                  if (e.key === 'Enter' && !verifyingPassword && formData.guardian.password) {
-                                    verifyPassword();
+                                  if (e.key === 'Enter' && !searchingGuardian && loginIdentifier) {
+                                    handleAccess();
                                   }
                                 }}
                               />
-                              <button 
-                                onClick={verifyPassword}
-                                disabled={verifyingPassword || !formData.guardian.password}
-                                className="bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20 disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"
-                              >
-                                {verifyingPassword ? <RefreshCw size={18} className="animate-spin" /> : <ExternalLink size={18} />}
-                                Confirmar e Acessar
-                              </button>
+                              {searchingGuardian && (
+                                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                  <RefreshCw size={16} className="animate-spin text-emerald-600" />
+                                </div>
+                              )}
+                            </div>
+                            {accessError && (
+                              <p className="text-red-500 text-xs mt-1 flex items-center gap-1">
+                                <AlertCircle size={12} /> {accessError}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium text-slate-700">Senha</label>
+                            <div className="relative">
+                              <input 
+                                type="password" 
+                                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                                placeholder="Sua senha de acesso"
+                                value={loginPassword}
+                                onChange={e => setLoginPassword(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter' && !searchingGuardian && loginIdentifier && loginPassword) {
+                                    handleAccess();
+                                  }
+                                }}
+                              />
                             </div>
                             <div className="flex justify-end">
                               <button 
-                                onClick={recoverPassword}
-                                disabled={recoveringPassword}
+                                onClick={recoverLoginPassword}
+                                disabled={recoveringPassword || !loginIdentifier}
                                 className="text-emerald-700 text-xs font-bold hover:underline flex items-center gap-1 mt-1"
                               >
                                 {recoveringPassword ? <RefreshCw size={10} className="animate-spin" /> : null}
@@ -3034,216 +4829,495 @@ export default function App() {
                               </button>
                             </div>
                           </div>
-                        </motion.div>
-                      )}
 
-                      {(guardianExists === false || (guardianExists === true && formData.guardian.name)) && (
-                        <>
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700">Nome Completo</label>
-                            <input 
-                              type="text" 
-                              className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
-                              placeholder="Ex: João Silva"
-                              value={formData.guardian.name}
-                              readOnly={guardianExists === true && !isEditingGuardian}
-                              onChange={e => setFormData({...formData, guardian: {...formData.guardian, name: e.target.value}})}
-                            />
+                          <div className="flex flex-col gap-3">
+                            <button 
+                              onClick={handleAccess}
+                              disabled={searchingGuardian || !loginIdentifier || !loginPassword}
+                              className="w-full bg-emerald-600 text-white py-4 rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                            >
+                              {searchingGuardian ? <RefreshCw size={20} className="animate-spin" /> : <ChevronRight size={20} />}
+                              Acessar Painel
+                            </button>
+                            
+                            <div className="relative py-4">
+                              <div className="absolute inset-0 flex items-center">
+                                <div className="w-full border-t border-slate-100"></div>
+                              </div>
+                              <div className="relative flex justify-center text-xs uppercase">
+                                <span className="bg-white px-2 text-slate-400 font-medium">Ou se você é novo aqui</span>
+                              </div>
+                            </div>
+
+                            <button 
+                              onClick={() => {
+                                setIsAccessingPanel(false);
+                                setLoginPassword('');
+                                setAccessError(null);
+                              }}
+                              className="w-full bg-white text-slate-700 py-4 rounded-xl font-bold border border-slate-200 hover:bg-slate-50 transition-all flex items-center justify-center gap-2"
+                            >
+                              <Plus size={20} />
+                              Novo Cadastro / Matrícula
+                            </button>
                           </div>
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700">E-mail</label>
-                            <input 
-                              type="email" 
-                              className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
-                              placeholder="joao@exemplo.com"
-                              value={formData.guardian.email}
-                              readOnly={guardianExists === true && !isEditingGuardian}
-                              onChange={e => setFormData({...formData, guardian: {...formData.guardian, email: e.target.value}})}
-                            />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between mb-8">
+                          <div className="flex items-center gap-3">
+                            <div className="p-3 bg-emerald-50 rounded-xl">
+                              <User className="text-emerald-600" size={24} />
+                            </div>
+                            <div>
+                              <h2 className="text-2xl font-semibold">Dados do Responsável</h2>
+                              <p className="text-slate-500 text-sm">Quem responderá financeiramente pela matrícula.</p>
+                            </div>
                           </div>
+                          <button 
+                            onClick={() => {
+                              setIsAccessingPanel(true);
+                              setLoginPassword('');
+                              setAccessError(null);
+                            }}
+                            className="text-slate-500 text-sm font-medium hover:text-slate-700 transition-colors"
+                          >
+                            Já tenho cadastro
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700">Telefone</label>
-                            <input 
-                              type="tel" 
-                              className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
-                              placeholder="(11) 99999-9999"
-                              value={formData.guardian.phone}
-                              readOnly={guardianExists === true && !isEditingGuardian}
-                              onChange={e => setFormData({...formData, guardian: {...formData.guardian, phone: e.target.value}})}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700">
-                              {guardianExists ? (isChangingPassword ? 'Nova Senha' : 'Senha') : 'Crie uma Senha'}
-                            </label>
-                            <input 
-                              type="password" 
-                              className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isChangingPassword ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
-                              placeholder={guardianExists ? "********" : "Mínimo 6 caracteres"}
-                              value={isChangingPassword || !guardianExists ? formData.guardian.password : '********'}
-                              readOnly={guardianExists === true && !isChangingPassword}
-                              onChange={e => setFormData({...formData, guardian: {...formData.guardian, password: e.target.value}})}
-                            />
-                          </div>
-                          <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                              <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-                                CEP
-                                {isFetchingAddress && <RefreshCw size={14} className="animate-spin text-emerald-500" />}
-                              </label>
+                            <label className="text-sm font-medium text-slate-700">CPF</label>
+                            <div className="relative">
                               <input 
                                 type="text" 
-                                className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
-                                placeholder="00000-000"
-                                value={formData.guardian.zipCode}
-                                readOnly={guardianExists === true && !isEditingGuardian}
+                                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                                placeholder="000.000.000-00"
+                                value={formData.guardian.cpf}
                                 onChange={e => {
-                                  const val = e.target.value.replace(/\D/g, '').substring(0, 8);
-                                  const formatted = val.replace(/^(\d{5})(\d)/, '$1-$2');
-                                  setFormData({...formData, guardian: {...formData.guardian, zipCode: formatted}});
-                                  if (val.length === 8) fetchAddressByCep(val);
+                                  const val = e.target.value;
+                                  setFormData({...formData, guardian: {...formData.guardian, cpf: val}});
+                                  if (val.replace(/\D/g, '').length === 11) {
+                                    checkCPF(val);
+                                  } else {
+                                    setGuardianExists(null);
+                                  }
                                 }}
-                                onBlur={e => {
-                                  const val = e.target.value.replace(/\D/g, '');
-                                  if (val.length === 8) fetchAddressByCep(val);
-                                }}
                               />
-                            </div>
-                            <div className="space-y-2">
-                              <label className="text-sm font-medium text-slate-700">Rua</label>
-                              <input 
-                                type="text" 
-                                className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
-                                placeholder="Nome da rua"
-                                value={formData.guardian.street}
-                                readOnly={guardianExists === true && !isEditingGuardian}
-                                onChange={e => setFormData({...formData, guardian: {...formData.guardian, street: e.target.value}})}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <label className="text-sm font-medium text-slate-700">Número</label>
-                              <input 
-                                type="text" 
-                                className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
-                                placeholder="Número"
-                                value={formData.guardian.number}
-                                readOnly={guardianExists === true && !isEditingGuardian}
-                                onChange={e => setFormData({...formData, guardian: {...formData.guardian, number: e.target.value}})}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <label className="text-sm font-medium text-slate-700">Complemento</label>
-                              <input 
-                                type="text" 
-                                className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
-                                placeholder="Apto, Bloco (Opcional)"
-                                value={formData.guardian.complement}
-                                readOnly={guardianExists === true && !isEditingGuardian}
-                                onChange={e => setFormData({...formData, guardian: {...formData.guardian, complement: e.target.value}})}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <label className="text-sm font-medium text-slate-700">Bairro</label>
-                              <input 
-                                type="text" 
-                                className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
-                                placeholder="Bairro"
-                                value={formData.guardian.neighborhood}
-                                readOnly={guardianExists === true && !isEditingGuardian}
-                                onChange={e => setFormData({...formData, guardian: {...formData.guardian, neighborhood: e.target.value}})}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <label className="text-sm font-medium text-slate-700">Cidade</label>
-                              <input 
-                                type="text" 
-                                className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
-                                placeholder="Cidade"
-                                value={formData.guardian.city}
-                                readOnly={guardianExists === true && !isEditingGuardian}
-                                onChange={e => setFormData({...formData, guardian: {...formData.guardian, city: e.target.value}})}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <label className="text-sm font-medium text-slate-700">Estado (UF)</label>
-                              <input 
-                                type="text" 
-                                className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
-                                placeholder="SP"
-                                maxLength={2}
-                                value={formData.guardian.state}
-                                readOnly={guardianExists === true && !isEditingGuardian}
-                                onChange={e => setFormData({...formData, guardian: {...formData.guardian, state: e.target.value.toUpperCase()}})}
-                              />
-                            </div>
-                          </div>
-
-                          {guardianExists && (
-                            <div className="md:col-span-2 flex flex-wrap gap-3 mt-2">
-                              {!isEditingGuardian && !isChangingPassword ? (
-                                <>
-                                  <button 
-                                    onClick={() => setIsEditingGuardian(true)}
-                                    className="text-emerald-600 text-sm font-bold hover:bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200 transition-all flex items-center gap-2"
-                                  >
-                                    <RefreshCw size={14} /> Atualizar Dados de Cadastro
-                                  </button>
-                                  <button 
-                                    onClick={() => {
-                                      setIsChangingPassword(true);
-                                      setFormData(prev => ({...prev, guardian: {...prev.guardian, password: ''}}));
-                                    }}
-                                    className="text-slate-600 text-sm font-bold hover:bg-slate-50 px-4 py-2 rounded-lg border border-slate-200 transition-all flex items-center gap-2"
-                                  >
-                                    <ShieldCheck size={14} /> Alterar Senha
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <button 
-                                    onClick={updateGuardian}
-                                    disabled={loading}
-                                    className="bg-emerald-600 text-white text-sm font-bold px-6 py-2 rounded-lg hover:bg-emerald-700 transition-all flex items-center gap-2 shadow-lg shadow-emerald-600/20"
-                                  >
-                                    {loading ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-                                    Salvar Alterações
-                                  </button>
-                                  <button 
-                                    onClick={() => {
-                                      setIsEditingGuardian(false);
-                                      setIsChangingPassword(false);
-                                      refreshGuardianData(); // Revert changes
-                                    }}
-                                    className="text-slate-500 text-sm font-bold hover:bg-slate-100 px-4 py-2 rounded-lg transition-all"
-                                  >
-                                    Cancelar
-                                  </button>
-                                </>
+                              {searchingGuardian && (
+                                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                  <RefreshCw size={16} className="animate-spin text-emerald-600" />
+                                </div>
                               )}
                             </div>
+                          </div>
+
+                          {guardianExists === true && !formData.guardian.name && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: -10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="md:col-span-2 p-6 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-4"
+                            >
+                              <div className="flex items-center gap-3 text-emerald-800">
+                                <div className="p-2 bg-white rounded-lg shadow-sm">
+                                  <ShieldCheck size={20} className="text-emerald-600" />
+                                </div>
+                                <div>
+                                  <p className="font-bold text-sm">Cadastro Localizado!</p>
+                                  <p className="text-xs opacity-80">Para sua segurança, confirme sua senha para realizar uma nova matrícula.</p>
+                                </div>
+                              </div>
+                              
+                              <div className="space-y-2">
+                                <label className="text-xs font-bold text-emerald-700 uppercase tracking-wider">Senha de Acesso</label>
+                                <div className="flex gap-2">
+                                  <input 
+                                    ref={passwordInputRef}
+                                    type="password" 
+                                    className="flex-1 px-4 py-3 rounded-xl border-2 border-emerald-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all bg-white"
+                                    placeholder="Digite sua senha cadastrada"
+                                    value={formData.guardian.password}
+                                    onChange={e => setFormData({...formData, guardian: {...formData.guardian, password: e.target.value}})}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter' && !verifyingPassword && formData.guardian.password) {
+                                        verifyPassword();
+                                      }
+                                    }}
+                                  />
+                                  <button 
+                                    onClick={verifyPassword}
+                                    disabled={verifyingPassword || !formData.guardian.password}
+                                    className="bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20 disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"
+                                  >
+                                    {verifyingPassword ? <RefreshCw size={18} className="animate-spin" /> : <ExternalLink size={18} />}
+                                    Confirmar e Acessar
+                                  </button>
+                                </div>
+                                <div className="flex justify-end">
+                                  <button 
+                                    onClick={recoverPassword}
+                                    disabled={recoveringPassword}
+                                    className="text-emerald-700 text-xs font-bold hover:underline flex items-center gap-1 mt-1"
+                                  >
+                                    {recoveringPassword ? <RefreshCw size={10} className="animate-spin" /> : null}
+                                    Esqueci Minha Senha
+                                  </button>
+                                </div>
+                              </div>
+                            </motion.div>
                           )}
-                        </>
-                      )}
+
+                          {(guardianExists === false || (guardianExists === true && formData.guardian.name)) && (
+                            <>
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium text-slate-700">Nome Completo</label>
+                                <input 
+                                  type="text" 
+                                  className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                                  placeholder="Ex: João Silva"
+                                  value={formData.guardian.name}
+                                  readOnly={guardianExists === true && !isEditingGuardian}
+                                  onChange={e => setFormData({...formData, guardian: {...formData.guardian, name: e.target.value}})}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium text-slate-700">E-mail</label>
+                                <input 
+                                  type="email" 
+                                  className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                                  placeholder="joao@exemplo.com"
+                                  value={formData.guardian.email}
+                                  readOnly={guardianExists === true && !isEditingGuardian}
+                                  onChange={e => setFormData({...formData, guardian: {...formData.guardian, email: e.target.value}})}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium text-slate-700">Telefone</label>
+                                <input 
+                                  type="tel" 
+                                  className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                                  placeholder="(11) 99999-9999"
+                                  value={formData.guardian.phone}
+                                  readOnly={guardianExists === true && !isEditingGuardian}
+                                  onChange={e => setFormData({...formData, guardian: {...formData.guardian, phone: e.target.value}})}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium text-slate-700">
+                                  {guardianExists ? (isChangingPassword ? 'Nova Senha' : 'Senha') : 'Crie uma Senha'}
+                                </label>
+                                <input 
+                                  type="password" 
+                                  className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isChangingPassword ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                                  placeholder={guardianExists ? "********" : "Mínimo 6 caracteres"}
+                                  value={isChangingPassword || !guardianExists ? formData.guardian.password : '********'}
+                                  readOnly={guardianExists === true && !isChangingPassword}
+                                  onChange={e => setFormData({...formData, guardian: {...formData.guardian, password: e.target.value}})}
+                                />
+                              </div>
+                              <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                                    CEP
+                                    {isFetchingAddress && <RefreshCw size={14} className="animate-spin text-emerald-500" />}
+                                  </label>
+                                  <input 
+                                    type="text" 
+                                    className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                                    placeholder="00000-000"
+                                    value={formData.guardian.zipCode}
+                                    readOnly={guardianExists === true && !isEditingGuardian}
+                                    onChange={e => {
+                                      const val = e.target.value.replace(/\D/g, '').substring(0, 8);
+                                      const formatted = val.replace(/^(\d{5})(\d)/, '$1-$2');
+                                      setFormData({...formData, guardian: {...formData.guardian, zipCode: formatted}});
+                                      if (val.length === 8) fetchAddressByCep(val);
+                                    }}
+                                    onBlur={e => {
+                                      const val = e.target.value.replace(/\D/g, '');
+                                      if (val.length === 8) fetchAddressByCep(val);
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium text-slate-700">Rua</label>
+                                  <input 
+                                    type="text" 
+                                    className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                                    placeholder="Nome da rua"
+                                    value={formData.guardian.street}
+                                    readOnly={guardianExists === true && !isEditingGuardian}
+                                    onChange={e => setFormData({...formData, guardian: {...formData.guardian, street: e.target.value}})}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium text-slate-700">Número</label>
+                                  <input 
+                                    type="text" 
+                                    className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                                    placeholder="Número"
+                                    value={formData.guardian.number}
+                                    readOnly={guardianExists === true && !isEditingGuardian}
+                                    onChange={e => setFormData({...formData, guardian: {...formData.guardian, number: e.target.value}})}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium text-slate-700">Complemento</label>
+                                  <input 
+                                    type="text" 
+                                    className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                                    placeholder="Apto, Bloco (Opcional)"
+                                    value={formData.guardian.complement}
+                                    readOnly={guardianExists === true && !isEditingGuardian}
+                                    onChange={e => setFormData({...formData, guardian: {...formData.guardian, complement: e.target.value}})}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium text-slate-700">Bairro</label>
+                                  <input 
+                                    type="text" 
+                                    className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                                    placeholder="Bairro"
+                                    value={formData.guardian.neighborhood}
+                                    readOnly={guardianExists === true && !isEditingGuardian}
+                                    onChange={e => setFormData({...formData, guardian: {...formData.guardian, neighborhood: e.target.value}})}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium text-slate-700">Cidade</label>
+                                  <input 
+                                    type="text" 
+                                    className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                                    placeholder="Cidade"
+                                    value={formData.guardian.city}
+                                    readOnly={guardianExists === true && !isEditingGuardian}
+                                    onChange={e => setFormData({...formData, guardian: {...formData.guardian, city: e.target.value}})}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium text-slate-700">Estado (UF)</label>
+                                  <input 
+                                    type="text" 
+                                    className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all ${guardianExists && !isEditingGuardian ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                                    placeholder="SP"
+                                    maxLength={2}
+                                    value={formData.guardian.state}
+                                    readOnly={guardianExists === true && !isEditingGuardian}
+                                    onChange={e => setFormData({...formData, guardian: {...formData.guardian, state: e.target.value.toUpperCase()}})}
+                                  />
+                                </div>
+                              </div>
+
+                              {guardianExists && (
+                                <div className="md:col-span-2 flex flex-wrap gap-3 mt-2">
+                                  {!isEditingGuardian && !isChangingPassword ? (
+                                    <>
+                                      <button 
+                                        onClick={() => setIsEditingGuardian(true)}
+                                        className="text-emerald-600 text-sm font-bold hover:bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200 transition-all flex items-center gap-2"
+                                      >
+                                        <RefreshCw size={14} /> Atualizar Dados de Cadastro
+                                      </button>
+                                      <button 
+                                        onClick={() => {
+                                          setIsChangingPassword(true);
+                                          setFormData(prev => ({...prev, guardian: {...prev.guardian, password: ''}}));
+                                        }}
+                                        className="text-slate-600 text-sm font-bold hover:bg-slate-50 px-4 py-2 rounded-lg border border-slate-200 transition-all flex items-center gap-2"
+                                      >
+                                        <ShieldCheck size={14} /> Alterar Senha
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button 
+                                        onClick={updateGuardian}
+                                        disabled={loading}
+                                        className="bg-emerald-600 text-white text-sm font-bold px-6 py-2 rounded-lg hover:bg-emerald-700 transition-all flex items-center gap-2 shadow-lg shadow-emerald-600/20"
+                                      >
+                                        {loading ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                                        Salvar Alterações
+                                      </button>
+                                      <button 
+                                        onClick={() => {
+                                          setIsEditingGuardian(false);
+                                          setIsChangingPassword(false);
+                                          refreshGuardianData(); // Revert changes
+                                        }}
+                                        className="text-slate-500 text-sm font-bold hover:bg-slate-100 px-4 py-2 rounded-lg transition-all"
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+
+                        <div className="mt-10 flex justify-between items-center">
+                          <button 
+                            onClick={resetGuardian}
+                            className="text-slate-500 text-sm font-medium hover:text-slate-700 transition-colors flex items-center gap-1"
+                          >
+                            <RefreshCw size={14} /> Limpar CPF
+                          </button>
+                          <button 
+                            onClick={handleNext}
+                            disabled={loading}
+                            className="bg-slate-900 text-white px-8 py-3 rounded-xl font-medium flex items-center gap-2 hover:bg-slate-800 transition-colors disabled:opacity-50"
+                          >
+                            {loading ? (
+                              <RefreshCw size={18} className="animate-spin" />
+                            ) : (
+                              <>Próximo Passo <ChevronRight size={18} /></>
+                            )}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </motion.div>
+                )}
+
+                {step === 'complete_profile' && (
+                  <motion.div
+                    key="complete_profile"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8"
+                  >
+                    <div className="flex items-center gap-3 mb-8">
+                      <div className="p-3 bg-amber-50 rounded-xl">
+                        <Info className="text-amber-600" size={24} />
+                      </div>
+                      <div>
+                        <h2 className="text-2xl font-semibold">
+                          {isFirstAccess ? 'Primeiro Acesso' : (isTemporaryCpf ? 'Atualize seu Cadastro' : 'Complete seu Cadastro')}
+                        </h2>
+                        <p className="text-slate-500 text-sm">
+                          {isFirstAccess 
+                            ? 'Bem-vindo! Para sua segurança, confirme seus dados e defina uma senha de acesso.'
+                            : (isTemporaryCpf 
+                                ? 'Identificamos um CPF provisório em seu cadastro. Por favor, informe seu CPF real e defina uma senha de acesso.' 
+                                : 'Identificamos que faltam algumas informações importantes.')}
+                        </p>
+                      </div>
                     </div>
 
-                    <div className="mt-10 flex justify-between items-center">
-                      <button 
-                        onClick={resetGuardian}
-                        className="text-slate-500 text-sm font-medium hover:text-slate-700 transition-colors flex items-center gap-1"
-                      >
-                        <RefreshCw size={14} /> Limpar CPF
-                      </button>
-                      <button 
-                        onClick={handleNext}
-                        disabled={loading}
-                        className="bg-slate-900 text-white px-8 py-3 rounded-xl font-medium flex items-center gap-2 hover:bg-slate-800 transition-colors disabled:opacity-50"
-                      >
-                        {loading ? (
-                          <RefreshCw size={18} className="animate-spin" />
-                        ) : (
-                          <>Próximo Passo <ChevronRight size={18} /></>
-                        )}
-                      </button>
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-700">CPF</label>
+                          <input 
+                            type="text" 
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                            placeholder="000.000.000-00"
+                            value={formData.guardian.cpf}
+                            onChange={e => setFormData({...formData, guardian: {...formData.guardian, cpf: e.target.value}})}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-700">Defina uma Senha</label>
+                          <input 
+                            type="password" 
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                            placeholder="Mínimo 6 caracteres"
+                            value={formData.guardian.password}
+                            onChange={e => setFormData({...formData, guardian: {...formData.guardian, password: e.target.value}})}
+                          />
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                            CEP
+                            {isFetchingAddress && <RefreshCw size={14} className="animate-spin text-emerald-500" />}
+                          </label>
+                          <input 
+                            type="text" 
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                            placeholder="00000-000"
+                            value={formData.guardian.zipCode}
+                            onChange={e => {
+                              const val = e.target.value.replace(/\D/g, '').substring(0, 8);
+                              const formatted = val.replace(/^(\d{5})(\d)/, '$1-$2');
+                              setFormData({...formData, guardian: {...formData.guardian, zipCode: formatted}});
+                              if (val.length === 8) fetchAddressByCep(val);
+                            }}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-700">Rua</label>
+                          <input 
+                            type="text" 
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                            placeholder="Nome da rua"
+                            value={formData.guardian.street}
+                            onChange={e => setFormData({...formData, guardian: {...formData.guardian, street: e.target.value}})}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-700">Número</label>
+                          <input 
+                            type="text" 
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                            placeholder="Número"
+                            value={formData.guardian.number}
+                            onChange={e => setFormData({...formData, guardian: {...formData.guardian, number: e.target.value}})}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-700">Bairro</label>
+                          <input 
+                            type="text" 
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                            placeholder="Bairro"
+                            value={formData.guardian.neighborhood}
+                            onChange={e => setFormData({...formData, guardian: {...formData.guardian, neighborhood: e.target.value}})}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-700">Cidade</label>
+                          <input 
+                            type="text" 
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                            placeholder="Cidade"
+                            value={formData.guardian.city}
+                            onChange={e => setFormData({...formData, guardian: {...formData.guardian, city: e.target.value}})}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-700">Estado (UF)</label>
+                          <input 
+                            type="text" 
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                            placeholder="SP"
+                            maxLength={2}
+                            value={formData.guardian.state}
+                            onChange={e => setFormData({...formData, guardian: {...formData.guardian, state: e.target.value.toUpperCase()}})}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex gap-4">
+                        <button 
+                          onClick={() => setStep('guardian')}
+                          className="flex-1 bg-slate-100 text-slate-700 py-4 rounded-xl font-bold hover:bg-slate-200 transition-all"
+                        >
+                          Voltar
+                        </button>
+                        <button 
+                          onClick={handleCompleteProfile}
+                          disabled={isCompletingProfile}
+                          className="flex-[2] bg-emerald-600 text-white py-4 rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          {isCompletingProfile ? <RefreshCw size={20} className="animate-spin" /> : <Save size={20} />}
+                          Salvar e Acessar Portal
+                        </button>
+                      </div>
                     </div>
                   </motion.div>
                 )}
@@ -3540,7 +5614,23 @@ export default function App() {
                       </div>
 
                       <div className="space-y-2">
-                        <label className="text-sm font-medium text-slate-700">Responsável 1 <span className="text-red-500">*</span></label>
+                        <div className="flex justify-between items-center">
+                          <label className="text-sm font-medium text-slate-700">Responsável 1 <span className="text-red-500">*</span></label>
+                          <button 
+                            type="button"
+                            onClick={() => setFormData({
+                              ...formData,
+                              student: {
+                                ...formData.student,
+                                responsavel1: formData.guardian.name,
+                                whatsapp1: formData.guardian.phone
+                              }
+                            })}
+                            className="text-[10px] font-bold text-blue-600 hover:text-blue-700 uppercase tracking-wider flex items-center gap-1 transition-colors"
+                          >
+                            <User size={10} /> Copiar dados do Responsável
+                          </button>
+                        </div>
                         <input 
                           type="text" 
                           className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
@@ -3664,7 +5754,7 @@ export default function App() {
                           {filteredTurmas.map(t => {
                               const isFull = t.capacidade && (t.ocupacao_atual || 0) >= t.capacidade;
                               return (
-                                <option key={t.nome} value={t.nome}>
+                                <option key={t.id || t.nome} value={t.nome}>
                                   {t.nome} - {t.dias_horarios} (R$ {t.valor_mensalidade?.toFixed(2)}) {isFull ? '[LISTA DE ESPERA]' : `(${t.capacidade ? t.capacidade - (t.ocupacao_atual || 0) : '?'} vagas)`}
                                 </option>
                               );
@@ -3678,7 +5768,7 @@ export default function App() {
                             className="mt-2 p-4 bg-emerald-50 rounded-xl border border-emerald-100 text-sm space-y-1"
                           >
                             {options.turmas.filter(t => t.nome === formData.student.turmaComplementar).map(t => (
-                              <React.Fragment key={t.nome}>
+                              <React.Fragment key={t.id || t.nome}>
                                 <div className="flex justify-between">
                                   <span className="text-emerald-700 font-bold">Horários:</span>
                                   <span className="text-emerald-900">{t.dias_horarios}</span>
@@ -3805,6 +5895,29 @@ export default function App() {
                         <div className="flex-1">
                           <p className="font-semibold">Cartão de Crédito (Recorrente)</p>
                           <p className="text-xs text-slate-500">Cobrança automática mensal sem ocupar o limite total.</p>
+                        </div>
+                      </label>
+
+                      <label 
+                        className={`flex items-center gap-4 p-5 rounded-2xl border-2 cursor-pointer transition-all ${
+                          formData.paymentMethod === 'pix' 
+                            ? 'border-emerald-600 bg-emerald-50/50' 
+                            : 'border-slate-100 hover:border-slate-200'
+                        }`}
+                      >
+                        <input 
+                          type="radio" 
+                          name="payment" 
+                          className="hidden"
+                          checked={formData.paymentMethod === 'pix'}
+                          onChange={() => setFormData({...formData, paymentMethod: 'pix'})}
+                        />
+                        <div className="p-2 bg-white rounded-lg shadow-sm">
+                          <QrCode className="text-emerald-600" size={20} />
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-semibold">PIX (Mensal)</p>
+                          <p className="text-xs text-slate-500">Você receberá o QR Code mensalmente por e-mail e WhatsApp.</p>
                         </div>
                       </label>
                     </div>
@@ -3938,7 +6051,7 @@ export default function App() {
                         const finalPrice = Math.max(0, priceAfterCoupon - fidelityDiscount);
 
                         return (
-                          <React.Fragment key={t.nome}>
+                          <React.Fragment key={t.id || t.nome}>
                             <div className="space-y-3 mb-4">
                               <div className="flex justify-between text-sm">
                                 <span className="text-slate-500">Matrícula + 1ª Mensalidade ({t.nome})</span>
@@ -4024,11 +6137,18 @@ export default function App() {
                       <Clock size={40} />
                     </div>
                     <h2 className="text-3xl font-bold text-slate-900 mb-4">Lista de Espera Confirmada!</h2>
+                    {waitlistPosition && (
+                      <div className="mb-6 inline-flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-100 rounded-full text-amber-700 font-bold text-sm">
+                        <Users size={16} />
+                        Sua posição na fila: {waitlistPosition}º
+                      </div>
+                    )}
                     <p className="text-slate-600 mb-8 max-w-md mx-auto">
                       A turma selecionada está lotada no momento. Registramos seu interesse na lista de espera e entraremos em contato assim que surgir uma vaga.
                     </p>
                     <button 
                       onClick={() => {
+                        setWaitlistPosition(null);
                         if (guardianExists) {
                           refreshGuardianData();
                           setStep('portal');
@@ -4055,12 +6175,15 @@ export default function App() {
                     </div>
                     <h2 className="text-3xl font-bold mb-4">Matrícula Realizada!</h2>
                     
-                    {paymentInfo && paymentInfo.charges && paymentInfo.charges[0] && paymentInfo.charges[0].last_transaction && paymentInfo.charges[0].last_transaction.transaction_type === 'pix' && (
+                    {paymentInfo && (
+                      (paymentInfo.charges && paymentInfo.charges[0] && paymentInfo.charges[0].last_transaction && paymentInfo.charges[0].last_transaction.transaction_type === 'pix') ||
+                      (paymentInfo.order && paymentInfo.order.charges && paymentInfo.order.charges[0] && paymentInfo.order.charges[0].last_transaction && paymentInfo.order.charges[0].last_transaction.transaction_type === 'pix')
+                    ) && (
                       <div className="mb-8 p-6 bg-emerald-50 rounded-2xl border border-emerald-100 max-w-sm mx-auto">
                         <p className="text-emerald-800 font-bold mb-4 uppercase text-sm tracking-wider">Pagamento via PIX</p>
                         <div className="bg-white p-4 rounded-xl shadow-sm mb-4 inline-block">
                           <img 
-                            src={paymentInfo.charges[0].last_transaction.qr_code_url} 
+                            src={paymentInfo.order ? paymentInfo.order.charges[0].last_transaction.qr_code_url : paymentInfo.charges[0].last_transaction.qr_code_url} 
                             alt="QR Code PIX" 
                             className="w-48 h-48 mx-auto"
                             referrerPolicy="no-referrer"
@@ -4071,12 +6194,13 @@ export default function App() {
                           <div className="flex gap-2">
                             <input 
                               readOnly 
-                              value={paymentInfo.charges[0].last_transaction.qr_code}
+                              value={paymentInfo.order ? paymentInfo.order.charges[0].last_transaction.qr_code : paymentInfo.charges[0].last_transaction.qr_code}
                               className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono truncate"
                             />
                             <button 
                               onClick={(e) => {
-                                navigator.clipboard.writeText(paymentInfo.charges[0].last_transaction.qr_code);
+                                const code = paymentInfo.order ? paymentInfo.order.charges[0].last_transaction.qr_code : paymentInfo.charges[0].last_transaction.qr_code;
+                                navigator.clipboard.writeText(code);
                                 const btn = e.currentTarget;
                                 const originalText = btn.innerText;
                                 btn.innerText = 'Copiado!';
@@ -4095,7 +6219,12 @@ export default function App() {
                       </div>
                     )}
 
-                    {(paymentInfo && paymentInfo.charges && paymentInfo.charges[0] && paymentInfo.charges[0].payment_method === 'credit_card') || (paymentInfo && paymentInfo.payment_method === 'credit_card') ? (
+                    {(
+                      (paymentInfo && paymentInfo.charges && paymentInfo.charges[0] && paymentInfo.charges[0].payment_method === 'credit_card') || 
+                      (paymentInfo && paymentInfo.payment_method === 'credit_card') ||
+                      (paymentInfo && paymentInfo.subscription && paymentInfo.subscription.payment_method === 'credit_card') ||
+                      (paymentInfo && paymentInfo.order && paymentInfo.order.charges && paymentInfo.order.charges[0] && paymentInfo.order.charges[0].payment_method === 'credit_card')
+                    ) ? (
                       <div className="mb-8 p-6 bg-blue-50 rounded-2xl border border-blue-100 max-w-sm mx-auto">
                         <p className="text-blue-800 font-bold mb-2 uppercase text-sm tracking-wider">Cartão de Crédito</p>
                         <p className="text-slate-600 text-sm">
@@ -4191,6 +6320,128 @@ export default function App() {
                     className="flex-1 bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-200 disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {loading ? <RefreshCw size={18} className="animate-spin" /> : 'Confirmar'}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {isViewingEnrollmentDetails && selectedEnrollmentDetails && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-white rounded-3xl shadow-2xl border border-slate-200 p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+              >
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-emerald-50 rounded-xl">
+                      <User className="text-emerald-600" size={24} />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-bold">Detalhes da Matrícula</h2>
+                      <p className="text-slate-500 text-sm">Informações completas do aluno e responsável.</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setIsViewingEnrollmentDetails(false)}
+                    className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                  >
+                    <X size={20} className="text-slate-400" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Responsável</h3>
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2">
+                        <p className="text-sm font-bold text-slate-900">{selectedEnrollmentDetails.nome_completo}</p>
+                        <p className="text-sm text-slate-600 flex items-center gap-2">
+                          <Mail size={14} className="text-slate-400" /> {selectedEnrollmentDetails.email}
+                        </p>
+                        <p className="text-sm text-slate-600 flex items-center gap-2">
+                          <Phone size={14} className="text-slate-400" /> {selectedEnrollmentDetails.telefone}
+                        </p>
+                        <p className="text-sm text-slate-600 flex items-center gap-2">
+                          <CreditCard size={14} className="text-slate-400" /> CPF: {selectedEnrollmentDetails.cpf}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Aluno</h3>
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2">
+                        <p className="text-sm font-bold text-slate-900">{selectedEnrollmentDetails.aluno.nome_completo}</p>
+                        <p className="text-sm text-slate-600">Série/Ano: {selectedEnrollmentDetails.aluno.serie_ano?.replace('_', ' ')}</p>
+                        <p className="text-sm text-slate-600">Nascimento: {new Date(selectedEnrollmentDetails.aluno.data_nascimento).toLocaleDateString('pt-BR')}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Matrícula</h3>
+                      <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100 space-y-2">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="text-sm font-bold text-emerald-900">{selectedEnrollmentDetails.matricula.turma}</p>
+                            <p className="text-xs text-emerald-700 font-medium uppercase">{selectedEnrollmentDetails.matricula.unidade}</p>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            selectedEnrollmentDetails.matricula.status === 'ativo' ? 'bg-emerald-100 text-emerald-700' :
+                            selectedEnrollmentDetails.matricula.status === 'cancelado' ? 'bg-red-100 text-red-700' :
+                            'bg-amber-100 text-amber-700'
+                          }`}>
+                            {selectedEnrollmentDetails.matricula.status}
+                          </span>
+                        </div>
+                        <div className="pt-2 border-t border-emerald-100/50 space-y-1">
+                          <p className="text-xs text-emerald-800">Plano: <span className="font-bold uppercase">{selectedEnrollmentDetails.matricula.plano || 'Padrão'}</span></p>
+                          <p className="text-xs text-emerald-800">Data Matrícula: <span className="font-bold">{new Date(selectedEnrollmentDetails.matricula.data_matricula).toLocaleDateString('pt-BR')}</span></p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Pagamento</h3>
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                        {selectedEnrollmentDetails.pagamentos.map((pag: any, pIdx: number) => (
+                          <div key={pIdx} className="flex justify-between items-center p-2 bg-white rounded-xl border border-slate-100 shadow-sm">
+                            <div className="flex items-center gap-2">
+                              {pag.metodo_pagamento === 'pix' ? <QrCode size={14} className="text-emerald-600" /> : <CreditCard size={14} className="text-purple-600" />}
+                              <div>
+                                <p className="text-[10px] font-bold text-slate-900 uppercase">{pag.metodo_pagamento?.replace('_', ' ')}</p>
+                                <p className="text-[9px] text-slate-400">ID: {pag.pagarme_id?.slice(-8)}</p>
+                              </div>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
+                              pag.status === 'pago' ? 'bg-emerald-100 text-emerald-700' : 
+                              pag.status === 'cancelado' ? 'bg-red-100 text-red-700' :
+                              pag.status === 'estornado' ? 'bg-blue-100 text-blue-700' :
+                              pag.status === 'falha' ? 'bg-rose-100 text-rose-700' :
+                              'bg-amber-100 text-amber-700'
+                            }`}>
+                              {pag.status === 'pago' ? 'Conciliado' : 
+                               pag.status === 'cancelado' ? 'Cancelado' : 
+                               pag.status === 'estornado' ? 'Estornado' :
+                               pag.status === 'falha' ? 'Falhou' :
+                               'Pendente'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-8 flex justify-end">
+                  <button 
+                    onClick={() => setIsViewingEnrollmentDetails(false)}
+                    className="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"
+                  >
+                    Fechar
                   </button>
                 </div>
               </motion.div>
@@ -4365,6 +6616,7 @@ export default function App() {
                                            normalizeUnit(t.local_aula) === normalizeUnit(transferTarget.unidade);
                           
                           if (!unitMatch) return false;
+                          if (t.status === 'inativo') return false;
                           
                           if (!transferringStudent) return true;
 
@@ -4407,7 +6659,7 @@ export default function App() {
                           return gradeMatch && ageMatch;
                         })
                         .map(t => (
-                          <option key={t.nome} value={t.nome}>{t.nome}</option>
+                          <option key={t.id || t.nome} value={t.nome}>{t.nome}</option>
                         ))
                       }
                     </select>
@@ -4485,9 +6737,25 @@ export default function App() {
                 className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden"
               >
                 <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                  <h3 className="text-xl font-bold text-slate-900">Novo cupom</h3>
+                  <h3 className="text-xl font-bold text-slate-900">{editingCouponId ? 'Editar cupom' : 'Novo cupom'}</h3>
                   <button 
-                    onClick={() => setIsAddingCoupon(false)}
+                    onClick={() => {
+                      setIsAddingCoupon(false);
+                      setEditingCouponId(null);
+                      setNewCoupon({
+                        codigo: '',
+                        nome: '',
+                        tipo: 'fixo',
+                        valor: 0,
+                        aplicar_em: 'primeira_parcela',
+                        data_inicio: new Date().toISOString().split('T')[0],
+                        data_expiracao: '',
+                        limite_uso: null,
+                        uso_unico_cliente: false,
+                        sem_expiracao: true,
+                        tem_limite_uso: false
+                      });
+                    }}
                     className="p-2 hover:bg-white rounded-xl transition-colors text-slate-400 hover:text-slate-600"
                   >
                     <X size={20} />
@@ -4656,7 +6924,23 @@ export default function App() {
                   <div className="pt-6 border-t border-slate-100 flex justify-end gap-3">
                     <button 
                       type="button"
-                      onClick={() => setIsAddingCoupon(false)}
+                      onClick={() => {
+                        setIsAddingCoupon(false);
+                        setEditingCouponId(null);
+                        setNewCoupon({
+                          codigo: '',
+                          nome: '',
+                          tipo: 'fixo',
+                          valor: 0,
+                          aplicar_em: 'primeira_parcela',
+                          data_inicio: new Date().toISOString().split('T')[0],
+                          data_expiracao: '',
+                          limite_uso: null,
+                          uso_unico_cliente: false,
+                          sem_expiracao: true,
+                          tem_limite_uso: false
+                        });
+                      }}
                       className="px-6 py-3 text-slate-600 font-bold hover:bg-slate-50 rounded-2xl transition-all"
                     >
                       Cancelar
@@ -4664,12 +6948,45 @@ export default function App() {
                     <button 
                       type="submit"
                       disabled={loading}
-                      className="px-8 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all disabled:opacity-50"
+                      className="px-8 py-3 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all disabled:opacity-50 flex items-center gap-2"
                     >
-                      {loading ? 'Criando...' : 'Criar cupom'}
+                      {loading ? <RefreshCw size={18} className="animate-spin" /> : (editingCouponId ? <Save size={18} /> : <Plus size={18} />)}
+                      {editingCouponId ? 'Salvar Alterações' : 'Criar Cupom'}
                     </button>
                   </div>
                 </form>
+              </motion.div>
+            </div>
+          )}
+
+          {couponToDelete && (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 text-center"
+              >
+                <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <AlertCircle size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-2">Excluir Cupom?</h3>
+                <p className="text-slate-500 mb-8">
+                  Tem certeza que deseja excluir este cupom? Esta ação não pode ser desfeita, mas não afetará matrículas que já utilizaram este desconto.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setCouponToDelete(null)}
+                    className="flex-1 px-6 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCoupon(couponToDelete)}
+                    className="flex-1 px-6 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-all"
+                  >
+                    Excluir
+                  </button>
+                </div>
               </motion.div>
             </div>
           )}
@@ -4717,6 +7034,35 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+        {showNotifyModal.isOpen && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8"
+            >
+              <h3 className="text-2xl font-bold text-slate-900 mb-4">Notificar Vaga</h3>
+              <p className="text-slate-600 mb-6">
+                Deseja enviar uma mensagem para <strong>{showNotifyModal.item?.responsavel1}</strong> ({showNotifyModal.item?.whatsapp1}) informando sobre a disponibilidade de vaga para <strong>{showNotifyModal.item?.estudante}</strong>?
+              </p>
+              <div className="flex gap-4">
+                <button 
+                  onClick={() => setShowNotifyModal({ isOpen: false, item: null })}
+                  className="flex-1 px-6 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={confirmNotifyVacancy}
+                  className="flex-1 px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-colors"
+                >
+                  Enviar Mensagem
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </main>
 
       <footer className="max-w-6xl mx-auto py-12 px-6 text-center text-slate-400 text-sm">
@@ -4725,6 +7071,122 @@ export default function App() {
           <ShieldCheck size={14} /> Ambiente Seguro e Criptografado via Supabase
         </p>
       </footer>
+
+      {/* Modal de Mapeamento WIX */}
+      <AnimatePresence>
+        {showMappingModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[32px] shadow-2xl w-full max-w-2xl overflow-hidden"
+            >
+              <div className="p-8">
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h3 className="text-2xl font-black text-slate-900">Mapeamento de Colunas</h3>
+                    <p className="text-slate-500 text-sm">Indique qual coluna do seu CSV corresponde a cada campo necessário.</p>
+                  </div>
+                  <button 
+                    onClick={() => setShowMappingModal(false)}
+                    className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {[
+                    { id: 'email', label: 'Email do Responsável', icon: <Mail size={16} /> },
+                    { id: 'responsavel_nome', label: 'Nome do Responsável (Opcional)', icon: <User size={16} /> },
+                    { id: 'aluno', label: 'Nome do Aluno (Opcional)', icon: <User size={16} /> },
+                    { id: 'plano', label: 'Nome do Plano / Item', icon: <Tag size={16} /> },
+                    { id: 'data', label: 'Data do Pagamento', icon: <Calendar size={16} /> },
+                    { id: 'valor', label: 'Valor do Pagamento', icon: <DollarSign size={16} /> },
+                    { id: 'status', label: 'Status do Pagamento', icon: <CheckCircle2 size={16} /> },
+                    { id: 'transacao_id', label: 'ID da Transação (Opcional)', icon: <Hash size={16} /> }
+                  ].map((field) => (
+                    <div key={field.id} className="space-y-2">
+                      <label className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        {field.icon} {field.label}
+                      </label>
+                      <select 
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setWixMapping(prev => ({ ...prev!, [field.id]: val }));
+                        }}
+                        defaultValue={
+                          // Tenta pré-selecionar baseado em nomes comuns
+                          csvHeaders.find(h => {
+                            const cleanH = h.toLowerCase();
+                            if (field.id === 'email') return cleanH.includes('email') || cleanH.includes('e-mail');
+                            if (field.id === 'responsavel_nome') return cleanH === 'nome' || cleanH === 'name' || cleanH.includes('responsável') || cleanH.includes('responsavel');
+                            if (field.id === 'aluno') return cleanH.includes('aluno') || cleanH.includes('estudante') || cleanH.includes('filho') || cleanH.includes('criança');
+                            if (field.id === 'plano') return cleanH.includes('item') || cleanH.includes('plano') || cleanH.includes('produto');
+                            if (field.id === 'data') return cleanH.includes('data') || cleanH.includes('date');
+                            if (field.id === 'valor') return cleanH.includes('valor') || cleanH.includes('total') || cleanH.includes('preço') || cleanH.includes('preço');
+                            if (field.id === 'status') return cleanH.includes('status');
+                            if (field.id === 'transacao_id') return cleanH.includes('id') || cleanH.includes('transação') || cleanH.includes('transacao');
+                            return false;
+                          }) || ''
+                        }
+                      >
+                        <option value="">-- Selecione uma coluna --</option>
+                        {csvHeaders.map((header, idx) => (
+                          <option key={idx} value={header}>{header}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-10 flex gap-4">
+                  <button 
+                    onClick={() => setShowMappingModal(false)}
+                    className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    onClick={() => {
+                      // Se o usuário não selecionou nada, tenta usar os defaults baseados no find acima
+                      const finalMapping = { ...wixMapping } as any;
+                      ['email', 'responsavel_nome', 'aluno', 'plano', 'data', 'valor', 'status', 'transacao_id'].forEach(f => {
+                        if (!finalMapping[f]) {
+                          const found = csvHeaders.find(h => {
+                            const cleanH = h.toLowerCase();
+                            if (f === 'email') return cleanH.includes('email') || cleanH.includes('e-mail');
+                            if (f === 'responsavel_nome') return cleanH === 'nome' || cleanH === 'name' || cleanH.includes('responsável') || cleanH.includes('responsavel');
+                            if (f === 'aluno') return cleanH.includes('aluno') || cleanH.includes('estudante') || cleanH.includes('filho') || cleanH.includes('criança');
+                            if (f === 'plano') return cleanH.includes('item') || cleanH.includes('plano') || cleanH.includes('produto');
+                            if (f === 'data') return cleanH.includes('data') || cleanH.includes('date');
+                            if (f === 'valor') return cleanH.includes('valor') || cleanH.includes('total') || cleanH.includes('preço');
+                            if (f === 'status') return cleanH.includes('status');
+                            if (f === 'transacao_id') return cleanH.includes('id') || cleanH.includes('transação') || cleanH.includes('transacao');
+                            return false;
+                          });
+                          if (found) finalMapping[f] = found;
+                        }
+                      });
+                      
+                      if (!finalMapping.email || !finalMapping.plano) {
+                        alert('Por favor, mapeie pelo menos o Email e o Plano.');
+                        return;
+                      }
+                      handleConfirmMapping(finalMapping);
+                    }}
+                    className="flex-[2] py-4 bg-slate-900 text-white font-bold rounded-2xl hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20"
+                  >
+                    Confirmar Mapeamento
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Error Modal */}
       {errorMessage && (
@@ -4759,6 +7221,124 @@ export default function App() {
                 className="px-6 py-2 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-all"
               >
                 Entendi
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {successMessage && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+          >
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-emerald-50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <CheckCircle2 size={20} className="text-emerald-600" />
+                </div>
+                <h2 className="text-xl font-bold text-emerald-900">Sucesso</h2>
+              </div>
+              <button 
+                onClick={() => setSuccessMessage(null)}
+                className="p-2 hover:bg-emerald-100 rounded-full transition-colors"
+              >
+                <X size={20} className="text-emerald-400" />
+              </button>
+            </div>
+            
+            <div className="p-6">
+              <p className="text-slate-700 whitespace-pre-wrap">{successMessage}</p>
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+              <button 
+                onClick={() => setSuccessMessage(null)}
+                className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all"
+              >
+                Continuar
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+      {/* Welcome Message Modal */}
+      {showWelcomeModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-white rounded-[32px] shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-100"
+          >
+            <div className="relative h-48 bg-emerald-600 flex items-center justify-center overflow-hidden">
+              <div className="absolute inset-0 opacity-20">
+                <div className="absolute -top-24 -left-24 w-64 h-64 bg-white rounded-full blur-3xl"></div>
+                <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-white rounded-full blur-3xl"></div>
+              </div>
+              <div className="relative flex flex-col items-center text-white text-center px-6">
+                <div className="w-20 h-20 bg-white/20 backdrop-blur-md rounded-3xl flex items-center justify-center mb-4 border border-white/30">
+                  <Sparkles size={40} className="text-white" />
+                </div>
+                <h2 className="text-2xl font-black uppercase tracking-tight">Migração Concluída!</h2>
+              </div>
+              <button 
+                onClick={() => setShowWelcomeModal(false)}
+                className="absolute top-6 right-6 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-8 md:p-10 space-y-6">
+              <div className="space-y-4">
+                <h3 className="text-xl font-bold text-slate-900 leading-tight">
+                  Bem-vindo(a) ao novo Portal de Matrículas Sport for Kids!
+                </h3>
+                <p className="text-slate-600 leading-relaxed">
+                  Para sua comodidade, migramos todos os dados da plataforma anterior para este novo ambiente. 
+                  O acesso continua sendo pelo mesmo e-mail que você já utilizava.
+                </p>
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 space-y-4">
+                <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest">Para realizar seu primeiro acesso:</h4>
+                <ul className="space-y-3">
+                  {[
+                    "Informe seu e-mail no campo indicado;",
+                    "Clique em \"Esqueci minha senha\";",
+                    "Você receberá uma senha temporária via WhatsApp;"
+                  ].map((item, i) => (
+                    <li key={i} className="flex items-start gap-3 text-slate-700">
+                      <div className="mt-1 w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0 text-emerald-600 font-bold text-[10px]">
+                        {i + 1}
+                      </div>
+                      <span className="text-sm font-medium">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="flex items-start gap-4 p-4 bg-amber-50 rounded-2xl border border-amber-100">
+                <div className="p-2 bg-amber-100 rounded-xl text-amber-600">
+                  <Info size={20} />
+                </div>
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  <strong>Importante:</strong> Após o primeiro login, solicitamos que altere essa senha para uma de sua preferência nas configurações do perfil.
+                </p>
+              </div>
+
+              <p className="text-sm text-slate-500 text-center italic">
+                Estamos à disposição para ajudar. Se precisar de qualquer suporte, não hesite em nos contatar!
+              </p>
+
+              <button 
+                onClick={() => setShowWelcomeModal(false)}
+                className="w-full py-4 bg-slate-900 text-white font-black uppercase tracking-widest rounded-2xl hover:bg-slate-800 transition-all shadow-xl shadow-slate-200"
+              >
+                Entendi, vamos lá!
               </button>
             </div>
           </motion.div>

@@ -1,3 +1,4 @@
+import cron from "node-cron";
 import express from "express";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -6,6 +7,7 @@ import * as dotenv from "dotenv";
 import * as util from "util";
 import PDFDocument from 'pdfkit';
 import axios from "axios";
+import crypto from "crypto";
 
 // Handle __dirname and __filename for both ESM and CJS environments
 const currentDirname = process.cwd();
@@ -18,15 +20,34 @@ dotenv.config();
 
 const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || "";
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
 let supabase: SupabaseClient<any, "public", any>;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error("CRITICAL: Supabase URL or Anon Key is missing in environment variables!");
-  // Initialize with dummy values to prevent crash, but warn the user
+if (!supabaseUrl || (!supabaseAnonKey && !supabaseServiceRoleKey)) {
+  console.error("CRITICAL: Supabase URL or Key is missing in environment variables!");
   supabase = createClient("https://dummy.supabase.co", "dummy-key");
 } else {
-  supabase = createClient(supabaseUrl, supabaseAnonKey);
+  // Use service role key if available for administrative/server-side operations
+  const keyToUse = supabaseServiceRoleKey || supabaseAnonKey;
+  console.log(`[Supabase] Initializing client with key type: ${supabaseServiceRoleKey ? 'SERVICE_ROLE' : 'ANON'}`);
+  supabase = createClient(supabaseUrl, keyToUse);
+}
+
+async function getSetting(key: string, defaultValue: string = ''): Promise<string> {
+  try {
+    const { data, error } = await supabase
+      .from('configuracoes')
+      .select('valor')
+      .eq('chave', key)
+      .maybeSingle();
+    
+    if (error || !data) return defaultValue;
+    return data.valor || defaultValue;
+  } catch (err) {
+    console.error(`Error fetching setting ${key}:`, err);
+    return defaultValue;
+  }
 }
 
 async function generatePDFBuffer(text: string): Promise<Buffer> {
@@ -43,6 +64,100 @@ async function generatePDFBuffer(text: string): Promise<Buffer> {
     doc.end();
   });
 }
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const formatDate = (dateStr: any) => {
+  if (!dateStr) return null;
+  let s = String(dateStr).trim().replace(/,/g, '');
+  if (!s) return null;
+  
+  // Remove time part if present
+  s = s.split(/\s+/)[0];
+  
+  // Try YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
+  
+  // Try DD/MM/YYYY or MM/DD/YYYY or YYYY/MM/DD or DD.MM.YYYY
+  const parts = s.split(/[\/\-\.]/);
+  if (parts.length === 3) {
+    let day, month, year;
+    if (parts[0].length === 4) { // YYYY/MM/DD
+      year = parts[0];
+      month = parts[1];
+      day = parts[2];
+    } else if (parts[2].length === 4 || parts[2].length === 2) { // DD/MM/YYYY or MM/DD/YYYY
+      day = parts[0];
+      month = parts[1];
+      year = parts[2];
+      if (year && year.length === 2) {
+        year = parseInt(year) > 50 ? `19${year}` : `20${year}`;
+      }
+      
+      // Basic heuristic for DD/MM vs MM/DD
+      // If first part > 12, it must be the day (DD/MM/YYYY)
+      // If second part > 12, it must be the day (MM/DD/YYYY)
+      if (month && day && parseInt(month) > 12 && parseInt(day) <= 12) {
+        [day, month] = [month, day];
+      }
+    }
+    
+    if (day && month && year) {
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+  }
+  return null;
+};
+
+const formatTimestamp = (tsStr: any) => {
+  if (!tsStr) return null;
+  const s = String(tsStr).trim();
+  if (!s) return null;
+
+  // If it's already in YYYY-MM-DD HH:MM:SS or ISO
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    if (s.length === 10) return `${s} 00:00:00`;
+    return s.replace('T', ' ').substring(0, 19);
+  }
+  
+  // Try DD/MM/YYYY HH:MM:SS
+  const parts = s.split(/\s+/);
+  const datePart = formatDate(parts[0]);
+  if (datePart) {
+    let timePart = parts[1] || '00:00:00';
+    // Ensure timePart is HH:MM:SS
+    const timeParts = timePart.split(':');
+    if (timeParts.length === 2) timePart += ':00';
+    return `${datePart} ${timePart}`;
+  }
+  
+  return null;
+};
+
+const checkTable = async (tableName: string) => {
+  try {
+    const { error } = await supabase.from(tableName).select('id').limit(1);
+    if (error && (error.code === '42P01' || error.message?.includes('does not exist'))) {
+      return { exists: false, error: error.message };
+    }
+    return { exists: true, error: error?.message };
+  } catch (err: any) {
+    return { exists: false, error: err.message };
+  }
+};
+
+const getErrorMessage = (err: any): string => {
+  if (!err) return 'Unknown error';
+  if (typeof err === 'string') return err;
+  if (err.message) return err.message;
+  if (err.error_description) return err.error_description;
+  if (err.error) return typeof err.error === 'string' ? err.error : getErrorMessage(err.error);
+  try {
+    const str = JSON.stringify(err);
+    if (str !== '{}') return str;
+  } catch {}
+  return String(err);
+};
 
 async function sendBrevoEmail(
   toEmail: string, 
@@ -164,6 +279,180 @@ async function sendWhatsAppMessage(toPhone: string, contactName: string, message
   }
 }
 
+async function sendPaymentFailureNotification(guardianId: string, studentName: string, className: string, reason: string) {
+  try {
+    const { data: guardian, error: gError } = await supabase
+      .from('responsaveis')
+      .select('nome_completo, email, telefone')
+      .eq('id', guardianId)
+      .single();
+
+    if (gError || !guardian) {
+      console.error(`[Notificação] Erro ao buscar dados do responsável ${guardianId}:`, gError);
+      return;
+    }
+
+    const subject = "Falha no Pagamento da Matrícula - Sport for Kids";
+    const message = `
+Olá ${guardian.nome_completo},
+
+Infelizmente, o pagamento da matrícula de ${studentName} na turma ${className} não pôde ser processado.
+
+Motivo: ${reason}
+
+Sua matrícula não foi confirmada. Por favor, acesse o portal para revisar os dados de pagamento ou tente realizar a matrícula novamente.
+
+Se precisar de ajuda, entre em contato conosco.
+    `;
+
+    const htmlContent = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <h2 style="color: #e11d48;">Falha no Pagamento da Matrícula</h2>
+        <p>Olá <strong>${guardian.nome_completo}</strong>,</p>
+        <p>Infelizmente, o pagamento da matrícula de <strong>${studentName}</strong> na turma <strong>${className}</strong> não pôde ser processado.</p>
+        <div style="background-color: #fff1f2; border-left: 4px solid #e11d48; padding: 10px; margin: 20px 0;">
+          <p style="margin: 0;"><strong>Motivo:</strong> ${reason}</p>
+        </div>
+        <p>Sua matrícula <strong>não foi confirmada</strong>. Por favor, acesse o portal para revisar os dados de pagamento ou tente realizar a matrícula novamente.</p>
+        <p>Se precisar de ajuda, entre em contato conosco.</p>
+        <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+        <p style="font-size: 12px; color: #64748b; text-align: center;">Sport for Kids - Transformando vidas através do esporte</p>
+      </div>
+    `;
+
+    // Enviar E-mail via Brevo
+    if (guardian.email) {
+      await sendBrevoEmail(guardian.email, guardian.nome_completo, subject, htmlContent);
+    }
+
+    // Enviar WhatsApp via UTalk
+    if (guardian.telefone) {
+      await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, message).catch(e => console.error("Erro ao enviar WhatsApp de falha:", e));
+    }
+    
+  } catch (error) {
+    console.error("[Notificação] Erro crítico ao enviar notificação:", error);
+  }
+}
+
+async function syncAllPendingPayments() {
+  const secretKey = getPagarmeSecretKey();
+  if (!secretKey) {
+    console.warn('[Sync Cron] Pagar.me Secret Key não configurada. Pulando sincronização.');
+    return { message: 'Chave não configurada', updatedCount: 0 };
+  }
+  
+  const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+
+  try {
+    console.log('[Sync Cron] Iniciando sincronização automática de pagamentos pendentes...');
+    
+    // 1. Get all pending payments from Supabase
+    const { data: pendingPayments, error: pError } = await supabase
+      .from('pagamentos')
+      .select('*')
+      .eq('status', 'pendente')
+      .order('created_at', { ascending: false })
+      .limit(50); // Limit to avoid timeouts
+
+    if (pError) throw pError;
+
+    if (!pendingPayments || pendingPayments.length === 0) {
+      console.log('[Sync Cron] Nenhum pagamento pendente para sincronizar.');
+      return { message: 'Nenhum pagamento pendente', updatedCount: 0 };
+    }
+
+    console.log(`[Sync Cron] Encontrados ${pendingPayments.length} pagamentos pendentes.`);
+
+    let updatedCount = 0;
+    const results = [];
+
+    for (const payment of pendingPayments) {
+      const paymentId = payment.id;
+      let order: any = null;
+
+      // Try to fetch from Pagar.me
+      if (payment.pagarme) {
+        try {
+          const endpoint = payment.pagarme.startsWith('sub_') ? 'subscriptions' : 'orders';
+          const response = await axios.get(`https://api.pagar.me/core/v5/${endpoint}/${payment.pagarme}`, {
+            headers: {
+              'Authorization': `Basic ${authHeader}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          order = response.data;
+        } catch (err: any) {
+          // console.warn(`[Sync Cron] Erro ao buscar pelo ID ${payment.pagarme} para o pagamento ${paymentId}:`, err.message);
+        }
+      }
+
+      // If not found by ID, try by code
+      if (!order) {
+        try {
+          const response = await axios.get(`https://api.pagar.me/core/v5/orders?code=${paymentId}`, {
+            headers: {
+              'Authorization': `Basic ${authHeader}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          const orders = response.data.data;
+          if (orders && orders.length > 0) {
+            order = orders[0];
+          }
+        } catch (err: any) {
+          // console.warn(`[Sync Cron] Erro ao buscar pelo código ${paymentId}:`, err.message);
+        }
+      }
+
+      if (order) {
+        if (order.status === 'paid') {
+          const { error: updateError } = await supabase
+            .from('pagamentos')
+            .update({ 
+              status: 'pago',
+              data_pagamento: new Date().toISOString(),
+              pagarme: order.id
+            })
+            .eq('id', paymentId);
+
+          if (!updateError) {
+            updatedCount++;
+            results.push({ id: paymentId, status: 'pago' });
+
+            // Activate enrollment if applicable
+            if (payment.matricula_id) {
+              await supabase
+                .from('matriculas')
+                .update({ status: 'ativo' })
+                .eq('id', payment.matricula_id);
+            }
+          }
+        } else if (order.status === 'canceled' || order.status === 'failed') {
+           await supabase
+            .from('pagamentos')
+            .update({ 
+              status: 'falha',
+              motivo_falha: order.last_transaction?.gateway_message || 'Cancelado ou falhou no Pagar.me'
+            })
+            .eq('id', paymentId);
+          results.push({ id: paymentId, status: 'falha' });
+        }
+      }
+    }
+
+    console.log(`[Sync Cron] Sincronização concluída. ${updatedCount} pagamentos atualizados.`);
+    return { 
+      message: `Sincronização concluída. ${updatedCount} atualizados.`,
+      updatedCount,
+      results
+    };
+  } catch (error) {
+    console.error('[Sync Cron] Erro crítico na sincronização automática:', error);
+    return { error: 'Erro na sincronização', updatedCount: 0 };
+  }
+}
+
 function getPagarmeSecretKey() {
   let secretKey = (process.env.PAGARME_SECRET_KEY || "").trim();
   
@@ -195,6 +484,7 @@ async function createPagarmeOrder(data: {
   description: string;
   code: string; // Reference ID for webhook
   softDescriptor?: string;
+  ip?: string;
 }) {
   const secretKey = getPagarmeSecretKey();
   
@@ -313,7 +603,7 @@ async function createPagarmeOrder(data: {
           expires_in: 86400 
         } : {
           installments: 1,
-          statement_descriptor: data.softDescriptor || "SPORTFORKIDS",
+          statement_descriptor: (data.softDescriptor || "SportForKids").substring(0, 13),
           card: {
             number: data.card?.number?.replace(/\D/g, ''),
             holder_name: data.card?.holderName?.substring(0, 64),
@@ -326,6 +616,11 @@ async function createPagarmeOrder(data: {
       }
     ]
   };
+
+  // Adiciona IP se disponível para ajudar no antifraude
+  if (data.ip) {
+    payload.ip = data.ip;
+  }
 
   try {
     // Codificação manual para garantir o formato Basic Auth (username:password)
@@ -385,6 +680,7 @@ async function createPagarmeSubscription(data: {
   cycles?: number;
   start_at?: string; // ISO date string
   softDescriptor?: string;
+  ip?: string;
 }) {
   const secretKey = getPagarmeSecretKey();
   
@@ -463,7 +759,7 @@ async function createPagarmeSubscription(data: {
     interval_count: 1,
     billing_type: "prepaid",
     installments: 1,
-    statement_descriptor: data.softDescriptor || "SPORTFORKIDS",
+    statement_descriptor: (data.softDescriptor || "SportForKids").substring(0, 13),
     cycles: data.cycles,
     start_at: data.start_at,
     customer: {
@@ -503,6 +799,11 @@ async function createPagarmeSubscription(data: {
     ]
   };
 
+  // Adiciona IP se disponível para ajudar no antifraude
+  if (data.ip) {
+    payload.ip = data.ip;
+  }
+
   try {
     const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
     
@@ -540,10 +841,38 @@ async function createPagarmeSubscription(data: {
 }
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // API Routes
+  app.get("/api/settings/bulk", async (req, res) => {
+    const { keys } = req.query;
+    if (!keys || typeof keys !== 'string') {
+      return res.status(400).json({ error: "Keys must be a comma-separated string" });
+    }
+    const keyList = keys.split(',');
+    try {
+      const { data, error } = await supabase
+        .from('configuracoes')
+        .select('chave, valor')
+        .in('chave', keyList);
+      
+      if (error) throw error;
+      const result: Record<string, string> = {};
+      data?.forEach(item => {
+        result[item.chave] = item.valor || "";
+      });
+      // Fill in missing keys with empty strings
+      keyList.forEach(k => {
+        if (!(k in result)) result[k] = "";
+      });
+      res.json(result);
+    } catch (error: any) {
+      console.warn("Error fetching bulk settings from Supabase:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/settings/:key", async (req, res) => {
     const { key } = req.params;
     try {
@@ -572,6 +901,185 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error saving setting to Supabase:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/guardian/access", async (req, res) => {
+    const { identifier, password } = req.body;
+    try {
+      if (!identifier) {
+        return res.status(400).json({ error: "Identificador (CPF ou Email) é obrigatório" });
+      }
+
+      const isEmail = identifier.includes('@');
+      let query = supabase.from('responsaveis').select('*');
+      
+      if (isEmail) {
+        query = query.eq('email', identifier.trim().toLowerCase());
+      } else {
+        const cleanCPF = identifier.replace(/\D/g, '');
+        query = query.eq('cpf', cleanCPF);
+      }
+
+      const { data: guardian, error: gError } = await query.maybeSingle();
+
+      if (gError) throw gError;
+      
+      if (!guardian) {
+        return res.status(404).json({ error: "Responsável não encontrado" });
+      }
+
+      // Verify password if provided
+      if (password && guardian.senha && guardian.senha !== password) {
+        return res.status(401).json({ error: "Senha incorreta" });
+      }
+
+      // If password is required but not provided
+      if (!password && guardian.senha) {
+        return res.status(401).json({ error: "Senha é obrigatória", passwordRequired: true });
+      }
+
+      // If found by email but CPF is missing or temporary, OR if password is not set yet
+      const isTemporaryCpf = guardian.cpf && guardian.cpf.startsWith('IMP');
+      if (!guardian.cpf || isTemporaryCpf || !guardian.senha) {
+        return res.json({ 
+          needsProfileCompletion: true, 
+          isTemporaryCpf: !!isTemporaryCpf,
+          isFirstAccess: !guardian.senha,
+          guardian: {
+            id: guardian.id,
+            nome_completo: guardian.nome_completo,
+            email: guardian.email,
+            telefone: guardian.telefone,
+            endereco: guardian.endereco,
+            cpf: isTemporaryCpf ? guardian.cpf : (guardian.cpf || '')
+          }
+        });
+      }
+
+      // If found by CPF or found by email with CPF already set
+      // Fetch students separately to avoid complex join issues
+      const { data: students, error: sError } = await supabase
+        .from('alunos')
+        .select('*, matriculas(*)')
+        .eq('responsavel_id', guardian.id);
+
+      if (sError) {
+        console.warn("Error fetching students for guardian:", sError);
+      }
+
+      const data = { ...guardian, alunos: students || [] };
+
+      // Fetch all turmas to get schedules
+      const { data: turmasComp, error: tError } = await supabase
+        .from('turmas_complementares')
+        .select('nome, dias_horarios');
+
+      if (tError) {
+        console.warn("Error fetching turmas_complementares:", tError);
+      }
+
+      const allTurmas = turmasComp || [];
+      const turmaScheduleMap = new Map();
+      allTurmas.forEach(t => {
+        if (t.nome && t.dias_horarios) {
+          const normalizedName = t.nome.trim().toLowerCase();
+          turmaScheduleMap.set(normalizedName, t.dias_horarios);
+        }
+      });
+
+      const flatAlunos: any[] = [];
+      data.alunos?.forEach((aluno: any) => {
+        if (aluno.matriculas && aluno.matriculas.length > 0) {
+          aluno.matriculas.forEach((mat: any) => {
+            const lookupName = (mat.turma || "").trim().toLowerCase();
+            flatAlunos.push({
+              ...aluno,
+              id: mat.id,
+              aluno_id: aluno.id,
+              turma: mat.turma,
+              unidade: mat.unidade,
+              status: mat.status,
+              data_cancelamento: mat.data_cancelamento,
+              data_matricula: mat.data_matricula,
+              pagarme_subscription_id: mat.pagarme_subscription_id,
+              horario: turmaScheduleMap.get(lookupName) || null,
+              matriculas: undefined
+            });
+          });
+        } else {
+          flatAlunos.push({
+            ...aluno,
+            aluno_id: aluno.id,
+            turma: null,
+            unidade: null
+          });
+        }
+      });
+      
+      const hasActiveEnrollments = flatAlunos.some(a => a.status === 'ativo');
+
+      res.json({
+        ...data,
+        alunos: flatAlunos,
+        hasActiveEnrollments
+      });
+    } catch (error: any) {
+      console.error("Error accessing guardian panel:", error);
+      res.status(500).json({ error: error.message || "Erro interno no servidor" });
+    }
+  });
+
+  app.post("/api/guardian/complete-profile", async (req, res) => {
+    const { id, cpf, name, email, phone, address, password } = req.body;
+    try {
+      if (!id || !cpf) {
+        return res.status(400).json({ error: "ID e CPF são obrigatórios" });
+      }
+
+      const cleanCPF = cpf.replace(/\D/g, '');
+      
+      // Check if CPF already exists for another user
+      const { data: existing, error: checkError } = await supabase
+        .from('responsaveis')
+        .select('id')
+        .eq('cpf', cleanCPF)
+        .neq('id', id)
+        .maybeSingle();
+
+      if (existing) {
+        return res.status(400).json({ error: "Este CPF já está cadastrado para outro usuário." });
+      }
+
+      const { data, error } = await supabase
+        .from('responsaveis')
+        .update({
+          nome_completo: name,
+          cpf: cleanCPF,
+          email: email,
+          telefone: phone,
+          endereco: address,
+          senha: password
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // After updating, fetch students to return full data
+      const { data: students } = await supabase
+        .from('alunos')
+        .select('*, matriculas(*)')
+        .eq('responsavel_id', id);
+
+      res.json({ 
+        success: true, 
+        guardian: { ...data, alunos: students || [] } 
+      });
+    } catch (error: any) {
+      console.error("Error completing guardian profile:", error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -611,7 +1119,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
         res.json({ exists: false });
       }
     } catch (error: any) {
-      console.error("Error fetching guardian:", JSON.stringify(error, null, 2));
+      console.error("Error fetching guardian:", error);
       res.status(500).json({ error: error.message, details: error });
     }
   });
@@ -676,6 +1184,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                 status: mat.status,
                 data_cancelamento: mat.data_cancelamento,
                 data_matricula: mat.data_matricula,
+                pagarme_subscription_id: mat.pagarme_subscription_id,
                 horario: turmaScheduleMap.get(lookupName) || null,
                 matriculas: undefined
               });
@@ -729,30 +1238,46 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
         .single();
 
       if (error) {
-        console.error("Error registering guardian:", JSON.stringify(error, null, 2));
+        console.error("Error registering guardian:", error);
         return res.status(400).json({ error: error.message, details: error });
       }
 
       res.json({ success: true, guardian: data });
     } catch (error: any) {
-      console.error("Internal error registering guardian:", JSON.stringify(error, null, 2));
+      console.error("Internal error registering guardian:", error);
       res.status(500).json({ error: error.message });
     }
   });
 
   app.post("/api/guardian/recover-password", async (req, res) => {
-    const { cpf } = req.body;
+    const { cpf, identifier } = req.body;
     try {
-      const { data, error } = await supabase
-        .from('responsaveis')
-        .select('nome_completo, telefone, senha')
-        .eq('cpf', cpf)
-        .maybeSingle();
+      let query = supabase.from('responsaveis').select('nome_completo, telefone, senha');
+      
+      if (identifier) {
+        const isEmail = identifier.includes('@');
+        if (isEmail) {
+          query = query.eq('email', identifier.trim().toLowerCase());
+        } else {
+          const cleanCPF = identifier.replace(/\D/g, '');
+          query = query.eq('cpf', cleanCPF);
+        }
+      } else if (cpf) {
+        query = query.eq('cpf', cpf);
+      } else {
+        return res.status(400).json({ error: "CPF ou Identificador é obrigatório" });
+      }
+
+      const { data, error } = await query.maybeSingle();
 
       if (error) throw error;
       
       if (!data) {
         return res.status(404).json({ error: "Responsável não encontrado" });
+      }
+
+      if (!data.telefone) {
+        return res.status(400).json({ error: "Telefone não cadastrado para este responsável. Entre em contato com o suporte." });
       }
 
       await sendWhatsAppMessage(
@@ -797,8 +1322,289 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
     }
   });
 
+  // Portal Endpoints: Card Update & Documents
+  app.patch("/api/portal/subscription/card", async (req, res) => {
+    const { enrollmentId, card } = req.body;
+    try {
+      const { data: matData, error: matError } = await supabase
+        .from('matriculas')
+        .select('pagarme_subscription_id')
+        .eq('id', enrollmentId)
+        .single();
+
+      if (matError || !matData?.pagarme_subscription_id) {
+        return res.status(404).json({ error: "Assinatura não encontrada para esta matrícula." });
+      }
+
+      const secretKey = (process.env.PAGARME_SECRET_KEY || "").trim();
+      if (!secretKey) throw new Error("PAGARME_SECRET_KEY não configurada.");
+
+      const authHeader = `Basic ${Buffer.from(`${secretKey}:`).toString('base64')}`;
+
+      // Update card in Pagar.me subscription
+      await axios.patch(`https://api.pagar.me/core/v5/subscriptions/${matData.pagarme_subscription_id}/card`, {
+        card: {
+          number: card.number.replace(/\s/g, ''),
+          holder_name: card.holder_name,
+          exp_month: card.exp_month,
+          exp_year: card.exp_year,
+          cvv: card.cvv
+        }
+      }, {
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      res.json({ success: true, message: "Cartão atualizado com sucesso na assinatura." });
+    } catch (error: any) {
+      console.error("Error updating subscription card:", error.response?.data || error.message);
+      const errorMsg = error.response?.data?.message || error.message;
+      res.status(500).json({ error: `Erro ao atualizar cartão: ${errorMsg}` });
+    }
+  });
+
+  app.get("/api/portal/documents/contract/:enrollmentId", async (req, res) => {
+    const { enrollmentId } = req.params;
+    try {
+      // 1. Fetch enrollment
+      const { data: mat, error: matError } = await supabase
+        .from('matriculas')
+        .select('*')
+        .eq('id', enrollmentId)
+        .single();
+
+      if (matError) {
+        console.error("Supabase error fetching enrollment:", matError);
+        return res.status(500).send(`Erro ao buscar matrícula: ${matError.message}`);
+      }
+      if (!mat) return res.status(404).send("Matrícula não encontrada.");
+
+      // 1.1 Fetch class data for values
+      let valorSistema = 0;
+      if (mat.turma_id) {
+        const { data: classData } = await supabase
+          .from('turmas_complementares')
+          .select('valor_mensalidade')
+          .eq('id', mat.turma_id)
+          .maybeSingle();
+        valorSistema = classData?.valor_mensalidade || 0;
+      }
+
+      // 1.2 Fetch first payment to get the actual charged value
+      const { data: firstPayment } = await supabase
+        .from('pagamentos')
+        .select('valor')
+        .eq('matricula_id', enrollmentId)
+        .order('data_vencimento', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      const valorPadrao = valorSistema * 1.10;
+      const descontoTaxaZero = valorSistema * 0.10;
+      const valorCheio = valorSistema;
+      const valorMatricula = firstPayment?.valor || valorSistema;
+
+      // 2. Fetch student
+      const { data: student, error: sError } = await supabase
+        .from('alunos')
+        .select('*')
+        .eq('id', mat.aluno_id)
+        .single();
+
+      if (sError || !student) {
+        console.error("Error fetching student for contract:", sError);
+        return res.status(500).send("Erro ao buscar dados do aluno.");
+      }
+
+      // 3. Fetch guardian
+      const { data: guardian, error: gError } = await supabase
+        .from('responsaveis')
+        .select('*')
+        .eq('id', student.responsavel_id)
+        .single();
+
+      if (gError || !guardian) {
+        console.error("Error fetching guardian for contract:", gError);
+        return res.status(500).send("Erro ao buscar dados do responsável.");
+      }
+
+      // 4. Fetch terms template
+      const { data: termsData } = await supabase
+        .from('configuracoes')
+        .select('valor')
+        .eq('chave', 'terms_template')
+        .maybeSingle();
+
+      let termsText = termsData?.valor || "Termos e condições não definidos.";
+      
+      // Format address
+      let formattedAddress = "Não informado";
+      if (guardian.endereco) {
+        try {
+          const addr = typeof guardian.endereco === 'string' ? JSON.parse(guardian.endereco) : guardian.endereco;
+          const street = addr.logradouro || addr.street || '';
+          const number = addr.numero || addr.number || '';
+          const complement = addr.complemento || addr.complement ? ` - ${addr.complemento || addr.complement}` : '';
+          const neighborhood = addr.bairro || addr.neighborhood || '';
+          const city = addr.cidade || addr.city || '';
+          const state = addr.estado || addr.state || '';
+          const zip = addr.cep || addr.zipCode || '';
+          
+          formattedAddress = `${street}, ${number}${complement}, ${neighborhood}, ${city}/${state}, CEP: ${zip}`;
+        } catch (e) {
+          formattedAddress = String(guardian.endereco);
+        }
+      }
+
+      // Values from enrollment logic
+      // valorPadrao, valorCheio, desconto, valorMatricula are already calculated above
+
+      // Helper to format currency
+      const formatCurrency = (val: number) => 
+        new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+
+      // Replace placeholders (both {{}} and [] formats)
+      const replacements: Record<string, string> = {
+        "NOME_RESPONSAVEL": guardian.nome_completo || "",
+        "RESPONSAVEL": guardian.nome_completo || "",
+        "CPF_RESPONSAVEL": guardian.cpf || "",
+        "CPF": guardian.cpf || "",
+        "EMAIL_RESPONSAVEL": guardian.email || "",
+        "TELEFONE_RESPONSAVEL": guardian.telefone || "",
+        "ENDERECO_RESPONSAVEL": formattedAddress,
+        "ENDERECO": formattedAddress,
+        "NOME_ALUNO": student.nome_completo || "",
+        "ESTUDANTE": student.nome_completo || "",
+        "TURMA": mat.turma || "",
+        "CURSO": mat.turma || "",
+        "UNIDADE": mat.unidade || "",
+        "DATA_MATRICULA": new Date(mat.created_at).toLocaleDateString('pt-BR'),
+        "VALOR PADRAO": formatCurrency(valorPadrao),
+        "VALOR CHEIO": formatCurrency(valorCheio),
+        "VALOR LIQUIDO": formatCurrency(valorMatricula),
+        "VALOR": formatCurrency(valorMatricula),
+        "desconto taxa zero": formatCurrency(descontoTaxaZero)
+      };
+
+      for (const [key, value] of Object.entries(replacements)) {
+        const regexBraces = new RegExp(`{{${key}}}`, 'g');
+        const regexBrackets = new RegExp(`\\[${key}\\]`, 'g');
+        termsText = termsText.replace(regexBraces, value).replace(regexBrackets, value);
+      }
+
+      const doc = new PDFDocument({ margin: 50 });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=Contrato_${student.nome_completo.replace(/\s/g, '_')}.pdf`);
+      doc.pipe(res);
+
+      doc.fontSize(20).text('CONTRATO DE PRESTAÇÃO DE SERVIÇOS ESPORTIVOS', { align: 'center' });
+      doc.moveDown();
+      doc.fontSize(12).text(`CONTRATANTE: ${guardian.nome_completo}`);
+      doc.text(`CPF: ${guardian.cpf}`);
+      doc.text(`ENDEREÇO: ${formattedAddress}`);
+      doc.moveDown();
+      doc.text(`OBJETO: Prestação de serviços de aulas de ${mat.turma} na unidade ${mat.unidade}.`);
+      doc.text(`ALUNO(A): ${student.nome_completo}`);
+      doc.moveDown();
+      doc.text('CLÁUSULAS E CONDIÇÕES:');
+      doc.moveDown();
+      doc.fontSize(10).text(termsText, { align: 'justify', lineGap: 2 });
+      doc.moveDown();
+      doc.fontSize(12).text(`DATA DA MATRÍCULA: ${new Date(mat.created_at).toLocaleDateString('pt-BR')}`);
+      doc.moveDown(4);
+      doc.text('________________________________________________', { align: 'center' });
+      doc.text('Assinatura do Responsável (Digital)', { align: 'center' });
+
+      doc.end();
+    } catch (error: any) {
+      console.error("Error generating contract:", error);
+      res.status(500).send("Erro ao gerar contrato.");
+    }
+  });
+
+  app.get("/api/portal/documents/receipt/:paymentId", async (req, res) => {
+    const { paymentId } = req.params;
+    try {
+      // 1. Fetch payment
+      const { data: payment, error: pError } = await supabase
+        .from('pagamentos')
+        .select('*')
+        .eq('id', paymentId)
+        .single();
+
+      if (pError || !payment) {
+        console.error("Error fetching payment for receipt:", pError);
+        return res.status(404).send("Pagamento não encontrado.");
+      }
+
+      // 2. Fetch student
+      let student: any = null;
+      if (payment.aluno_id) {
+        const { data: sData } = await supabase.from('alunos').select('*').eq('id', payment.aluno_id).single();
+        student = sData;
+      }
+
+      // Fallback if aluno_id is missing in pagamentos (try to get from matricula)
+      if (!student && payment.matricula_id) {
+        const { data: mat } = await supabase.from('matriculas').select('aluno_id').eq('id', payment.matricula_id).single();
+        if (mat) {
+          const { data: s2 } = await supabase.from('alunos').select('*').eq('id', mat.aluno_id).single();
+          student = s2;
+        }
+      }
+
+      if (!student) {
+        console.error("Could not find student for receipt");
+        return res.status(500).send("Erro ao buscar dados do aluno.");
+      }
+
+      // 3. Fetch guardian
+      const { data: guardian, error: gError } = await supabase
+        .from('responsaveis')
+        .select('*')
+        .eq('id', student.responsavel_id)
+        .single();
+
+      if (gError || !guardian) {
+        console.error("Error fetching guardian for receipt:", gError);
+        return res.status(500).send("Erro ao buscar dados do responsável.");
+      }
+
+      const doc = new PDFDocument();
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=Recibo_${student.nome_completo.replace(/\s/g, '_')}_${paymentId.substring(0, 8)}.pdf`);
+      doc.pipe(res);
+
+      doc.fontSize(20).text('RECIBO DE PAGAMENTO', { align: 'center' });
+      doc.moveDown();
+      doc.fontSize(12).text(`RECEBEMOS DE: ${guardian.nome_completo}`);
+      doc.text(`CPF: ${guardian.cpf}`);
+      doc.moveDown();
+      doc.text(`A IMPORTÂNCIA DE: R$ ${payment.valor?.toFixed(2)}`);
+      doc.text(`REFERENTE A: Mensalidade de ${payment.turma || 'Esportes'} - Unidade ${payment.unidade || 'Sport for Kids'}`);
+      doc.text(`ALUNO(A): ${student.nome_completo}`);
+      doc.moveDown();
+      doc.text(`DATA DO PAGAMENTO: ${new Date(payment.data_pagamento || payment.created_at).toLocaleDateString('pt-BR')}`);
+      doc.text(`MÉTODO: ${payment.metodo_pagamento?.toUpperCase() || 'CARTÃO DE CRÉDITO'}`);
+      doc.moveDown(2);
+      doc.text('Pelo presente, damos plena e geral quitação pelo valor recebido.');
+      doc.moveDown(4);
+      doc.text('________________________________________________', { align: 'center' });
+      doc.text('SPORT FOR KIDS LTDA', { align: 'center' });
+      doc.text('CNPJ: 00.000.000/0001-00', { align: 'center' });
+
+      doc.end();
+    } catch (error: any) {
+      console.error("Error generating receipt:", error);
+      res.status(500).send("Erro ao gerar recibo.");
+    }
+  });
+
   app.post("/api/enroll", async (req, res) => {
     const { guardian, student, paymentMethod, couponId } = req.body;
+    const clientIp = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || '').split(',')[0].trim();
     
     try {
       // 0. Get the class data (price and ID)
@@ -1105,7 +1911,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
         responsavel_id: guardianId,
         aluno_id: alunoId,
         valor: valorCobrado,
-        metodo_pagamento: 'cartao_credito',
+        metodo_pagamento: paymentMethod === 'pix' ? 'pix' : 'cartao_credito',
         status: 'pendente',
         data_vencimento: todayStr
       };
@@ -1117,7 +1923,13 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       installments.push(firstPayment);
 
       if (inicioAulas && fimAulas) {
-        const baseDay = inicioAulas.getDate();
+        let baseDay = inicioAulas.getDate();
+        
+        // Se a matrícula for realizada após o início das aulas, o dia base passa a ser o dia da matrícula
+        if (today > inicioAulas) {
+          baseDay = today.getDate();
+        }
+
         let nextVencimento = new Date(today);
         
         // If today is before classes start, we start counting from the start month
@@ -1135,26 +1947,22 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
         }
 
         while (nextVencimento <= fimAulas) {
-          let valorParcela = valorCobrado;
+          // Calcula o saldo de dias entre o vencimento e o fim das aulas
+          const diffTime = fimAulas.getTime() - nextVencimento.getTime();
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
           
-          // Check if this is the last installment
-          // Rule: "a ultima parcela do ano desse cliente deve ser proporciona(preço) do seu vencimento (02/dez) a data final (10/dez)"
-          const nextCycleDate = new Date(nextVencimento);
-          nextCycleDate.setMonth(nextCycleDate.getMonth() + 1);
-          nextCycleDate.setDate(baseDay);
-          
-          if (nextCycleDate > fimAulas) {
-            // Proportional calculation
-            const diffTime = fimAulas.getTime() - nextVencimento.getTime();
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            valorParcela = (valorCobrado / 30) * Math.max(0, diffDays);
+          // Só gera a parcela se o saldo de dias for superior a 12 dias
+          if (diffDays <= 12) {
+            break;
           }
+
+          let valorParcela = valorCobrado; // Valor sempre cheio
 
           const installment: any = {
             responsavel_id: guardianId,
             aluno_id: alunoId,
             valor: Number(valorParcela.toFixed(2)),
-            metodo_pagamento: 'cartao_credito',
+            metodo_pagamento: paymentMethod === 'pix' ? 'pix' : 'cartao_credito',
             status: 'pendente',
             data_vencimento: nextVencimento.toISOString().split('T')[0]
           };
@@ -1356,10 +2164,40 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
       let paymentInfo = null;
       if (valorCobrado > 0) {
-        const softDescriptor = (student.unidade || "").includes("Bernoulli") ? "BernoulliMais" : "Sport for Kids";
+        const isBernoulli = (student.unidade || "").includes("Bernoulli");
+        const softDescriptorKey = isBernoulli ? 'pagarme_soft_descriptor_bernoulli' : 'pagarme_soft_descriptor';
+        const defaultSoftDescriptor = isBernoulli ? 'BernoulliMais' : 'SportForKids';
+        const softDescriptor = await getSetting(softDescriptorKey, defaultSoftDescriptor);
         
         try {
-          if (paymentMethod === 'credit_card' && req.body.card) {
+          if (paymentMethod === 'pix') {
+            console.log(`[Pagar.me] Criando pedido PIX para ${guardian.name}, valor: ${valorCobrado}`);
+            const order = await createPagarmeOrder({
+              customer: {
+                name: guardian.name,
+                email: guardian.email,
+                cpf: guardian.cpf,
+                phone: guardian.phone,
+                address: guardian.address
+              },
+              amount: Math.round(valorCobrado * 100), // convert to cents
+              paymentMethod: 'pix',
+              description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
+              code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_pix_${Date.now()}`,
+              softDescriptor,
+              ip: clientIp
+            });
+            paymentInfo = order;
+            console.log("Pagar.me PIX order created successfully:", order.id);
+            
+            // Salva o ID do pedido no primeiro pagamento
+            if (order && order.id && firstPaymentId) {
+              await supabase
+                .from('pagamentos')
+                .update({ pagarme: order.id })
+                .eq('id', firstPaymentId);
+            }
+          } else if (paymentMethod === 'credit_card' && req.body.card) {
             const today = new Date();
             const isBeforeStart = inicioAulas && today < inicioAulas;
             
@@ -1380,7 +2218,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                 paymentMethod: 'credit_card',
                 description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
                 code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}`,
-                softDescriptor
+                softDescriptor,
+                ip: clientIp
               });
               
               // 2. Cria a Assinatura agendada para o início das aulas + 1 mês
@@ -1398,7 +2237,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                 code: firstPaymentId ? `${firstPaymentId}_sub_${Date.now()}` : `sub_${Date.now()}`,
                 cycles: installments.length - 1,
                 start_at: new Date(installments[1].data_vencimento + "T12:00:00Z").toISOString(),
-                softDescriptor
+                softDescriptor,
+                ip: clientIp
               });
               
               paymentInfo = { order, subscription };
@@ -1430,7 +2270,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                 description: `Mensalidade - ${student.name} (${student.turmaComplementar})`,
                 code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
                 cycles: installments.length,
-                softDescriptor
+                softDescriptor,
+                ip: clientIp
               });
               paymentInfo = subscription;
               console.log("Pagar.me subscription created successfully:", subscription.id);
@@ -1454,25 +2295,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                   });
               }
             }
-          } else {
-            console.log(`Creating Pagar.me order for ${guardian.name}, amount: ${valorCobrado}`);
-            const order = await createPagarmeOrder({
-              customer: {
-                name: guardian.name,
-                email: guardian.email,
-                cpf: guardian.cpf,
-                phone: guardian.phone,
-                address: guardian.address
-              },
-              card: req.body.card,
-              amount: Math.round(valorCobrado * 100), // convert to cents
-              paymentMethod: 'credit_card',
-              description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
-              code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-              softDescriptor
-            });
-            paymentInfo = order;
-            console.log("Pagar.me order created successfully");
+          } else if (paymentMethod === 'credit_card') {
+            // Se for cartão mas não tiver os dados do cartão
+            console.warn("Pagamento via cartão selecionado mas dados do cartão ausentes.");
           }
         } catch (pError: any) {
           const apiError = pError.response?.data;
@@ -1485,6 +2310,20 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
               console.error(`- ${key}: ${apiError.errors[key].join(', ')}`);
             });
           }
+
+          // Notificar responsável sobre a falha no pagamento
+          const failureReason = apiError?.message || 
+                               apiError?.errors?.[Object.keys(apiError.errors || {})[0]]?.[0] || 
+                               pError.message || 
+                               "Transação recusada pela operadora do cartão.";
+          
+          await sendPaymentFailureNotification(
+            guardianId,
+            student.name,
+            student.turmaComplementar,
+            failureReason
+          );
+
           // We continue anyway, as the enrollment was successful in the DB
         }
       } else {
@@ -1528,7 +2367,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
         supabase.from('series_anos').select('nome').order('ordem'),
         supabase.from('unidades').select('nome').order('nome'),
         supabase.from('turmas_complementares').select('*').order('nome'),
-        supabase.from('matriculas').select('turma').is('data_cancelamento', null)
+        supabase.from('matriculas').select('turma, unidade').eq('status', 'ativo')
       ]);
 
       if (turmas.error) console.error("Error fetching turmas:", turmas.error);
@@ -1537,20 +2376,23 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
         console.log("Sample turma:", turmas.data[0]);
       }
 
-      // Count active enrollments per class
+      // Count active enrollments per class and unit
       const occupancyMap: { [key: string]: number } = {};
       matriculas.data?.forEach(m => {
-        if (m.turma) {
-          occupancyMap[m.turma] = (occupancyMap[m.turma] || 0) + 1;
+        if (m.turma && m.unidade) {
+          const key = `${m.unidade}|${m.turma}`;
+          occupancyMap[key] = (occupancyMap[key] || 0) + 1;
         }
       });
 
       res.json({
         series: series.data?.map(s => s.nome) || [],
         unidades: unidades.data?.map(u => u.nome) || [],
-        turmas: turmas.data?.map(t => ({
+        turmas: turmas.data?.filter(t => 
+          !['Voleibol 4', 'Voleibol 5', 'Voleibol 6', 'Ginástica Rítmica 3', 'Jazz Dance 2'].includes(t.nome)
+        ).map(t => ({
           ...t,
-          ocupacao_atual: occupancyMap[t.nome] || 0
+          ocupacao_atual: occupancyMap[`${t.unidade_nome}|${t.nome}`] || 0
         })) || []
       });
     } catch (error: any) {
@@ -1572,7 +2414,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       capacidade,
       local_aula,
       data_inicio,
-      professor
+      professor,
+      status
     } = req.body;
 
     let table = '';
@@ -1596,7 +2439,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
           ...(capacidade !== undefined ? { capacidade } : {}),
           ...(local_aula !== undefined ? { local_aula } : {}),
           ...(data_inicio !== undefined ? { data_inicio } : {}),
-          ...(professor !== undefined ? { professor } : {})
+          ...(professor !== undefined ? { professor } : {}),
+          ...(status !== undefined ? { status } : {})
         }])
         .select();
 
@@ -1621,7 +2465,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       capacidade,
       local_aula,
       data_inicio,
-      professor
+      professor,
+      status
     } = req.body;
 
     let table = '';
@@ -1645,7 +2490,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
           ...(capacidade !== undefined ? { capacidade } : {}),
           ...(local_aula !== undefined ? { local_aula } : {}),
           ...(data_inicio !== undefined ? { data_inicio } : {}),
-          ...(professor !== undefined ? { professor } : {})
+          ...(professor !== undefined ? { professor } : {}),
+          ...(status !== undefined ? { status } : {})
         })
         .eq('nome', decodeURIComponent(oldNome))
         .select();
@@ -1675,6 +2521,69 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       if (error) throw error;
       res.json({ success: true });
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/tasks/create", async (req, res) => {
+    const { tipo, responsavel_id, aluno_id, matricula_id, detalhes } = req.body;
+    try {
+      const { data, error } = await supabase
+        .from('tarefas')
+        .insert([{
+          tipo,
+          responsavel_id,
+          aluno_id,
+          matricula_id,
+          detalhes,
+          status: 'pendente',
+          created_at: new Date().toISOString()
+        }]);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error creating task:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/tasks", async (req, res) => {
+    try {
+      console.log("[Tasks] Fetching tasks...");
+      const { data, error } = await supabase
+        .from('tarefas')
+        .select(`
+          *,
+          responsaveis(nome_completo),
+          alunos(nome_completo),
+          matriculas(turma, unidade)
+        `)
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error("[Tasks] Supabase Error:", error);
+        throw error;
+      }
+      
+      console.log(`[Tasks] Found ${data?.length || 0} tasks`);
+      res.json(data);
+    } catch (error: any) {
+      console.error("[Tasks] Catch Error:", error);
+      res.status(500).json({ error: error.message || "Erro desconhecido ao buscar tarefas" });
+    }
+  });
+
+  app.post("/api/tasks/update-status", async (req, res) => {
+    const { taskId, status } = req.body;
+    try {
+      const { error } = await supabase
+        .from('tarefas')
+        .update({ status })
+        .eq('id', taskId);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error updating task status:", error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -1713,11 +2622,18 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
       if (error) throw error;
 
+      // 1.5. Cancelar pagamentos pendentes vinculados a esta matrícula
+      await supabase
+        .from('pagamentos')
+        .update({ status: 'cancelado' })
+        .eq('matricula_id', enrollmentId)
+        .eq('status', 'pendente');
+
       // 2. Fidelity Discount Reversion Logic
       // If one enrollment is cancelled and only one remains, the next payment loses the discount
       const { data: enrollmentData } = await supabase
         .from('matriculas')
-        .select('aluno_id')
+        .select('aluno_id, turma')
         .eq('id', enrollmentId)
         .single();
       
@@ -1874,7 +2790,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
             .single();
 
           if (guardianData && guardianData.telefone) {
-            const msg = `Olá ${guardianData.nome_completo}! Confirmamos o cancelamento da matrícula de ${studentData.nome_completo}. Os débitos mensais referentes a esta matrícula foram cessados. Agradecemos o tempo que estiveram conosco!`;
+            const msg = `Olá *${guardianData.nome_completo}*! Confirmamos o cancelamento da matrícula de *${studentData.nome_completo}* da turma *${enrollmentData.turma}*. Os débitos mensais referentes a esta matrícula foram cessados. Agradecemos o tempo que estiveram conosco! Caso possamos ajudar em qualquer necessidade, nos sinalize.`;
             await sendWhatsAppMessage(guardianData.telefone, guardianData.nome_completo, msg)
               .catch(e => console.error("Erro ao enviar WhatsApp de cancelamento:", e));
           }
@@ -2073,6 +2989,27 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
       if (insertError) throw insertError;
 
+      // 5. Enviar WhatsApp para o responsável
+      const { data: studentData } = await supabase
+        .from('alunos')
+        .select('nome_completo, responsavel_id')
+        .eq('id', oldEnrollment.aluno_id)
+        .single();
+      
+      if (studentData) {
+        const { data: guardianData } = await supabase
+          .from('responsaveis')
+          .select('nome_completo, telefone')
+          .eq('id', studentData.responsavel_id)
+          .single();
+
+        if (guardianData && guardianData.telefone) {
+          const msg = `Olá *${guardianData.nome_completo}*! Confirmamos a transferência da matrícula de *${studentData.nome_completo}* da turma *${oldEnrollment.turma}* para *${newTurma}*. Seguimos a disposição para qualquer necessidade..`;
+          await sendWhatsAppMessage(guardianData.telefone, guardianData.nome_completo, msg)
+            .catch(e => console.error("Erro ao enviar WhatsApp de transferência:", e));
+        }
+      }
+
       res.json({ success: true });
     } catch (error: any) {
       console.error("Transfer Error:", error);
@@ -2091,7 +3028,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       ] = await Promise.all([
         supabase.from('responsaveis').select('id, nome_completo'),
         supabase.from('alunos').select('id, nome_completo, serie_ano, responsavel_id, data_nascimento'),
-        supabase.from('matriculas').select('id, aluno_id, turma, unidade, status, data_cancelamento'),
+        supabase.from('matriculas').select('id, aluno_id, turma, unidade, status, data_cancelamento, data_matricula, plano'),
         supabase.from('pagamentos').select('responsavel_id, status, metodo_pagamento')
       ]);
 
@@ -2217,6 +3154,13 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       }
 
       // 2.5 Check for duplicate waitlist entry
+      const { data: turmasData, error: turmasError } = await supabase
+        .from('turmas_complementares')
+        .select('*');
+      
+      if (turmasError) throw turmasError;
+      const options = { turmas: turmasData || [] };
+
       if (alunoId) {
         const { data: existingWaitlist, error: waitlistError } = await supabase
           .from('lista_espera')
@@ -2257,6 +3201,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       }
 
       // 3. Add to Waitlist
+      const selectedTurma = options.turmas.find(t => t.nome === student.turmaComplementar);
       const { error: wError } = await supabase
         .from('lista_espera')
         .insert([{
@@ -2264,12 +3209,30 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
           responsavel_id: guardianId,
           unidade: student.unidade,
           turma: student.turmaComplementar,
-          status: 'aguardando'
+          status: 'aguardando',
+          estudante: student.name.trim(),
+          ano_escolar: student.grade,
+          turma_escolar: student.turmaEscolar,
+          responsavel1: guardian.name,
+          whatsapp1: guardian.phone,
+          horario: selectedTurma?.dias_horarios
         }]);
 
       if (wError) throw wError;
 
-      res.json({ success: true });
+      // 4. Get position in waitlist
+      const { count, error: countError } = await supabase
+        .from('lista_espera')
+        .select('*', { count: 'exact', head: true })
+        .eq('turma', student.turmaComplementar)
+        .eq('status', 'aguardando');
+      
+      if (countError) {
+        console.error("Error counting waitlist:", countError);
+        return res.json({ success: true });
+      }
+
+      res.json({ success: true, position: count });
     } catch (error: any) {
       console.error("Waitlist error:", error);
       res.status(500).json({ error: error.message });
@@ -2319,6 +3282,52 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
     }
   });
 
+  app.post("/api/waitlist/notify", async (req, res) => {
+    const { waitlistId, whatsapp } = req.body;
+    try {
+      // Fetch waitlist item to get all necessary data
+      const { data: item, error: fetchError } = await supabase
+        .from('lista_espera')
+        .select('*')
+        .eq('id', waitlistId)
+        .single();
+      
+      if (fetchError) throw fetchError;
+
+      const message = `Olá *${item.responsavel1}*, acabou de surgir uma vaga disponível para *${item.estudante}* na turma *${item.turma}* que estavam aguardando! a matrícula já pode ser realizada!`;
+      
+      await sendWhatsAppMessage(whatsapp, item.responsavel1, message);
+      
+      console.log(`[Notify] Updating waitlist item ${waitlistId} to 'chamado'`);
+      
+      // Prepare the update object with all required fields to satisfy NOT NULL constraints
+      const updateDataPayload = {
+        ...item,
+        status: 'chamado',
+        data_status_atualizado: new Date().toISOString()
+      };
+
+      console.log(`[Notify] Payload for upsert:`, JSON.stringify(updateDataPayload, null, 2));
+
+      // Using upsert with the ID to ensure it finds and updates the specific row
+      const { error: updateError, data: updateData } = await supabase
+        .from('lista_espera')
+        .upsert(updateDataPayload)
+        .select();
+      
+      if (updateError) {
+        console.error(`[Notify] Error updating waitlist item ${waitlistId}:`, JSON.stringify(updateError, null, 2));
+        throw updateError;
+      }
+      console.log(`[Notify] Successfully updated waitlist item ${waitlistId}:`, updateData);
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error('Error notifying waitlist:', error);
+      res.status(500).json({ error: 'Erro ao notificar vaga.' });
+    }
+  });
+
   app.post("/api/coupons", async (req, res) => {
     try {
       const { error } = await supabase.from('cupons').insert([req.body]);
@@ -2332,6 +3341,16 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.delete("/api/coupons/:id", async (req, res) => {
     try {
       const { error } = await supabase.from('cupons').delete().eq('id', req.params.id);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/coupons/:id", async (req, res) => {
+    try {
+      const { error } = await supabase.from('cupons').update(req.body).eq('id', req.params.id);
       if (error) throw error;
       res.json({ success: true });
     } catch (error: any) {
@@ -2424,11 +3443,11 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
         }
       }
 
-      if (pRes.error) { console.error("Pagamentos Fetch Error:", pRes.error); throw new Error(`Pagamentos: ${pRes.error.message || JSON.stringify(pRes.error)}`); }
-      if (rRes.error) { console.error("Responsaveis Fetch Error:", rRes.error); throw new Error(`Responsaveis: ${rRes.error.message || JSON.stringify(rRes.error)}`); }
-      if (aRes.error) { console.error("Alunos Fetch Error:", aRes.error); throw new Error(`Alunos: ${aRes.error.message || JSON.stringify(aRes.error)}`); }
-      if (mRes.error) { console.error("Matriculas Fetch Error:", mRes.error); throw new Error(`Matriculas: ${mRes.error.message || JSON.stringify(mRes.error)}`); }
-      if (tRes.error) { console.error("Turmas Fetch Error:", tRes.error); throw new Error(`Turmas: ${tRes.error.message || JSON.stringify(tRes.error)}`); }
+      if (pRes.error) { console.error("Pagamentos Fetch Error:", pRes.error); throw new Error(`Pagamentos: ${getErrorMessage(pRes.error)}`); }
+      if (rRes.error) { console.error("Responsaveis Fetch Error:", rRes.error); throw new Error(`Responsaveis: ${getErrorMessage(rRes.error)}`); }
+      if (aRes.error) { console.error("Alunos Fetch Error:", aRes.error); throw new Error(`Alunos: ${getErrorMessage(aRes.error)}`); }
+      if (mRes.error) { console.error("Matriculas Fetch Error:", mRes.error); throw new Error(`Matriculas: ${getErrorMessage(mRes.error)}`); }
+      if (tRes.error) { console.error("Turmas Fetch Error:", tRes.error); throw new Error(`Turmas: ${getErrorMessage(tRes.error)}`); }
 
       const pagamentos = pRes.data || [];
       const responsaveis = rRes.data || [];
@@ -2513,6 +3532,245 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
         pagarmeError: error.response?.data
       });
     }
+  });
+
+  // Admin: Bulk Import
+  app.post("/api/admin/import", async (req, res) => {
+    const { rows, preview } = req.body;
+    console.log(`Import request received with ${rows?.length || 0} rows. Preview: ${preview}`);
+    
+    if (!rows || !Array.isArray(rows)) {
+      return res.status(400).json({ error: "Invalid data format. Expected an array of rows." });
+    }
+
+    // Check tables existence first
+    const tablesToCheck = ['responsaveis', 'alunos', 'matriculas'];
+    for (const table of tablesToCheck) {
+      const { exists, error } = await checkTable(table);
+      if (!exists) {
+        console.error(`Critical error: table '${table}' is missing in Supabase. Error: ${error}`);
+        return res.status(500).json({ 
+          error: `Tabela '${table}' não encontrada no Supabase. Por favor, verifique se as migrações foram executadas.`,
+          details: error
+        });
+      }
+    }
+
+    if (rows.length > 0) {
+      console.log('First row sample:', JSON.stringify(rows[0], null, 2));
+    }
+
+    const results = {
+      success: 0,
+      skipped: 0,
+      errors: [] as any[],
+      processed: 0
+    };
+
+    for (const row of rows) {
+      results.processed++;
+      // Add a small delay to prevent rate limiting (100ms)
+      await sleep(100);
+      try {
+        // 1. Process Guardian
+        let guardianId: any;
+        const email = String(row.responsavel_email || '').trim().toLowerCase();
+        const cpf = String(row.responsavel_cpf || '').replace(/\D/g, '');
+        
+        if (!email && !cpf && !row.responsavel_nome) {
+          console.warn(`Skipping empty row at index ${results.processed - 1}`);
+          continue;
+        }
+
+        let existingGuardian = null;
+        
+        if (email) {
+          const { data, error: gError } = await supabase
+            .from('responsaveis')
+            .select('id')
+            .eq('email', email)
+            .maybeSingle();
+          if (gError) throw gError;
+          existingGuardian = data;
+        }
+        
+        if (!existingGuardian && cpf) {
+          const { data, error: gError } = await supabase
+            .from('responsaveis')
+            .select('id')
+            .eq('cpf', cpf)
+            .maybeSingle();
+          if (gError) throw gError;
+          existingGuardian = data;
+        }
+
+        if (existingGuardian) {
+          guardianId = existingGuardian.id;
+        } else {
+          if (preview) {
+            guardianId = `preview-guardian-${results.processed}`;
+          } else {
+            // If CPF is missing but required by DB, generate a unique placeholder
+            const finalCpf = cpf || `IMP${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+            
+            const { data: newGuardian, error: gError } = await supabase
+              .from('responsaveis')
+              .insert([{
+                nome_completo: row.responsavel_nome || 'Responsável Importado',
+                cpf: finalCpf,
+                email: email || null,
+                telefone: row.responsavel_telefone,
+                endereco: row.responsavel_endereco,
+                senha: cpf || email || '123456' // Fallback password
+              }])
+              .select()
+              .single();
+
+            if (gError) throw gError;
+            guardianId = newGuardian.id;
+          }
+        }
+
+        // 2. Process Student
+        let alunoId: any;
+        const studentName = String(row.aluno_nome || '').trim();
+        const birthDate = formatDate(row.aluno_data_nascimento);
+
+        let studentQuery = supabase
+          .from('alunos')
+          .select('id')
+          .eq('responsavel_id', guardianId)
+          .ilike('nome_completo', studentName);
+        
+        if (birthDate) {
+          studentQuery = studentQuery.eq('data_nascimento', birthDate);
+        }
+
+        const { data: existingStudent, error: sCheckError } = await studentQuery.maybeSingle();
+        if (sCheckError) throw sCheckError;
+
+        if (existingStudent) {
+          alunoId = existingStudent.id;
+        } else {
+          if (preview) {
+            alunoId = `preview-aluno-${results.processed}`;
+          } else {
+            const { data: newStudent, error: sError } = await supabase
+              .from('alunos')
+              .insert([{
+                responsavel_id: guardianId,
+                nome_completo: studentName || 'Aluno Importado',
+                data_nascimento: birthDate,
+                serie_ano: row.aluno_serie,
+                turma_escolar: row.aluno_turma_escolar,
+                responsavel_1: row.responsavel_1 || '',
+                whatsapp_1: row.whatsapp_1 || '',
+                responsavel_2: row.responsavel_2 || '',
+                whatsapp_2: row.whatsapp_2 || ''
+              }])
+              .select()
+              .single();
+
+            if (sError) throw sError;
+            alunoId = newStudent.id;
+          }
+        }
+
+        // 3. Process Enrollment
+        const enrollmentDate = formatDate(row.data_matricula) || new Date().toISOString().split('T')[0];
+        const cancelDate = formatDate(row.data_cancelamento);
+        const status = String(row.status || 'ativo').toLowerCase();
+        const turma = row.turma_complementar;
+        const unidade = row.unidade;
+
+        // --- LOOKUP turma_id ---
+        let turma_id = null;
+        if (turma && unidade) {
+          const { data: turmaData, error: turmaError } = await supabase
+            .from('turmas')
+            .select('id')
+            .ilike('nome', turma)
+            .eq('unidade', unidade)
+            .maybeSingle();
+          
+          if (!turmaError && turmaData) {
+            turma_id = turmaData.id;
+          }
+        }
+
+        // Check if enrollment already exists - only for existing students and non-preview IDs
+        if (alunoId && !String(alunoId).startsWith('preview-')) {
+          let enrollmentQuery = supabase
+            .from('matriculas')
+            .select('id')
+            .eq('aluno_id', alunoId);
+            
+          if (turma_id) {
+            enrollmentQuery = enrollmentQuery.eq('turma_id', turma_id);
+          } else if (turma) {
+            enrollmentQuery = enrollmentQuery.eq('turma', turma);
+          } else {
+            enrollmentQuery = enrollmentQuery.is('turma', null);
+          }
+
+          if (unidade) {
+            enrollmentQuery = enrollmentQuery.eq('unidade', unidade);
+          } else {
+            enrollmentQuery = enrollmentQuery.is('unidade', null);
+          }
+
+          const { data: existingEnrollment, error: eCheckError } = await enrollmentQuery.maybeSingle();
+          if (eCheckError) {
+            console.error(`Error checking existence for enrollment (${alunoId}):`, JSON.stringify(eCheckError, null, 2));
+          } else if (existingEnrollment) {
+            console.log(`Skipping duplicate enrollment for student ${alunoId} in class ${turma}`);
+            results.skipped++;
+            continue;
+          }
+        }
+
+        if (preview) {
+          results.success++;
+          continue;
+        }
+
+        const insertMatricula: any = {
+          aluno_id: alunoId,
+          turma: turma,
+          unidade: unidade,
+          status: status,
+          data_matricula: enrollmentDate,
+          plano: row.plano,
+          data_cancelamento: cancelDate,
+          turma_id: turma_id
+        };
+
+        let { error: mError } = await supabase
+          .from('matriculas')
+          .insert([insertMatricula]);
+
+        if (mError && (mError.code === '42703' || mError.code === 'PGRST204')) {
+          // Some column does not exist. Let's try without 'turma'
+          delete insertMatricula.turma;
+          const secondInsert = await supabase.from('matriculas').insert([insertMatricula]);
+          mError = secondInsert.error;
+        }
+
+        if (mError) throw mError;
+        results.success++;
+      } catch (err: any) {
+        console.error(`Error importing row ${results.processed}:`, err);
+        results.errors.push({
+          row: results.processed,
+          student: row.aluno_nome,
+          error: getErrorMessage(err),
+          data: row
+        });
+      }
+    }
+
+    console.log(`Import finished. Success: ${results.success}, Errors: ${results.errors.length}`);
+    res.json(results);
   });
 
   // Manual Payment Sync
@@ -2660,6 +3918,16 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
         console.log(`[Sync] Pagamento ${paymentId} sincronizado com sucesso como PAGO`);
         return res.json({ status: 'pago', updated: true });
+      } else if (order.status === 'failed' || order.status === 'canceled') {
+        const newStatus = order.status === 'failed' ? 'falhou' : 'cancelado';
+        console.log(`[Sync] Pedido com status ${order.status} na Pagar.me. Atualizando Supabase para ${newStatus}...`);
+        
+        await supabase
+          .from('pagamentos')
+          .update({ status: newStatus })
+          .eq('id', paymentId);
+          
+        return res.json({ status: newStatus, updated: true });
       }
 
       console.log(`[Sync] O pedido ${paymentId} ainda está com status: ${order.status}`);
@@ -2668,6 +3936,749 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
       console.error('[Sync] Erro ao sincronizar pagamento:', error.response?.data || error.message);
       res.status(500).json({ error: 'Erro ao sincronizar com Pagar.me' });
     }
+  });
+
+  app.get("/api/admin/check-schema", async (req, res) => {
+    try {
+      const response = await fetch(`${supabaseUrl}/rest/v1/?apikey=${supabaseAnonKey}`);
+      const data = await response.json();
+      const tableSchema = data.definitions['aulas_experimentais'];
+      res.json({ required: tableSchema ? tableSchema.required : 'Table not found' });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post("/api/admin/import-aulas-experimentais", async (req, res) => {
+    const { rows, preview } = req.body;
+    console.log(`Import aulas experimentais request received with ${rows?.length || 0} rows. Preview: ${preview}`);
+    
+    if (!rows || !Array.isArray(rows)) {
+      return res.status(400).json({ error: "Invalid data format. Expected an array of rows." });
+    }
+
+    // Check table existence first
+    const { exists, error: tableError } = await checkTable('aulas_experimentais');
+    if (!exists) {
+      console.error(`Critical error: table 'aulas_experimentais' is missing in Supabase. Error: ${tableError}`);
+      return res.status(500).json({ 
+        error: "Tabela 'aulas_experimentais' não encontrada no Supabase. Por favor, verifique se as migrações foram executadas.",
+        details: tableError
+      });
+    }
+
+    const results = {
+      success: 0,
+      skipped: 0,
+      errors: [] as any[],
+      processed: 0
+    };
+
+    for (const row of rows) {
+      results.processed++;
+      try {
+        const getVal = (keys: string[]) => {
+          const entry = Object.entries(row).find(([k]) => {
+            const cleanK = k.replace(/^\uFEFF/i, '').trim().toLowerCase();
+            return keys.some(key => {
+              const cleanKey = key.toLowerCase();
+              return cleanK === cleanKey || cleanK.includes(cleanKey);
+            });
+          });
+          return entry ? String(entry[1]).trim() : '';
+        };
+
+        const estudante = getVal(['estudante', 'aluno']);
+        const unidade = getVal(['unidade']);
+        const curso = getVal(['curso']);
+        const dataAulaRaw = getVal(['aula', 'data aula', 'data da aula']);
+        const dataAula = formatDate(dataAulaRaw);
+        const dataNascimentoRaw = getVal(['nascimento', 'data de nascimento', 'data_nascimento', 'aluno_data_nascimento']);
+        const dataNascimento = formatDate(dataNascimentoRaw);
+        const serieAno = getVal(['serie', 'série', 'ano', 'serie_ano', 'aluno_serie']);
+        
+        if (!estudante || !unidade) {
+          console.warn(`Skipping invalid row at index ${results.processed - 1}`);
+          results.errors.push({ row: results.processed, error: 'Estudante e Unidade são obrigatórios', data: row });
+          continue;
+        }
+
+        // --- LOOKUP aluno_id ---
+        let aluno_id = null;
+        let isNewStudent = false;
+        const { data: alunoData, error: alunoError } = await supabase
+          .from('alunos')
+          .select('id')
+          .ilike('nome_completo', estudante)
+          .maybeSingle();
+        
+        if (!alunoError && alunoData) {
+          aluno_id = alunoData.id;
+        } else {
+          isNewStudent = true;
+        }
+
+        if (!aluno_id) {
+          if (preview) {
+            aluno_id = `preview-aluno-${results.processed}`;
+          } else {
+            // Register as Lead if not found
+            // We need a guardian for the student. Let's try to find or create a "Lead Guardian"
+            let guardianId = null;
+            const { data: leadGuardian, error: lgError } = await supabase
+              .from('responsaveis')
+              .select('id')
+              .ilike('nome_completo', 'Responsável Lead (Importação)')
+              .maybeSingle();
+            
+            if (leadGuardian) {
+              guardianId = leadGuardian.id;
+            } else {
+              const { data: newLG, error: nlgError } = await supabase
+                .from('responsaveis')
+                .insert([{ 
+                  nome_completo: 'Responsável Lead (Importação)',
+                  telefone: '00000000000',
+                  cpf: '00000000000',
+                  senha: 'lead_guardian_pass'
+                }])
+                .select('id')
+                .maybeSingle();
+              
+              if (newLG) {
+                guardianId = newLG.id;
+              } else {
+                console.error("Error creating Lead Guardian:", JSON.stringify(nlgError, null, 2));
+              }
+            }
+
+            if (!guardianId) {
+              results.errors.push({ 
+                row: results.processed, 
+                error: `Não foi possível criar ou encontrar um responsável para o aluno Lead: ${estudante}`,
+                data: row 
+              });
+              continue;
+            }
+
+            const { data: newAluno, error: insertError } = await supabase
+              .from('alunos')
+              .insert([{
+                nome_completo: estudante,
+                responsavel_id: guardianId,
+                data_nascimento: dataNascimento,
+                serie_ano: serieAno
+              }])
+              .select('id')
+              .single();
+
+            if (insertError) {
+              console.error(`Error creating Lead student for ${estudante}:`, JSON.stringify(insertError, null, 2));
+              results.errors.push({ 
+                row: results.processed, 
+                error: `Erro ao cadastrar aluno como Lead: ${getErrorMessage(insertError)}`,
+                details: insertError,
+                data: row 
+              });
+              continue;
+            }
+            aluno_id = newAluno.id;
+          }
+        }
+
+        // Check if aula experimental already exists - only for existing students and non-preview IDs
+        if (!isNewStudent && aluno_id && !String(aluno_id).startsWith('preview-')) {
+          let query = supabase
+            .from('aulas_experimentais')
+            .select('id')
+            .eq('unidade', unidade)
+            .eq('aluno_id', aluno_id);
+
+          if (curso) {
+            query = query.eq('curso', curso);
+          } else {
+            query = query.is('curso', null);
+          }
+
+          if (dataAula) {
+            query = query.eq('aula', dataAula);
+          } else {
+            query = query.is('aula', null);
+          }
+          
+          const { data: existingAulas, error: checkError } = await query;
+
+          if (checkError) {
+            console.error(`Error checking existence for aula experimental (${estudante}):`, JSON.stringify(checkError, null, 2));
+            const errorMsg = getErrorMessage(checkError);
+            
+            results.errors.push({ 
+              row: results.processed, 
+              error: `Erro ao verificar existência: ${errorMsg}`,
+              data: row 
+            });
+            continue;
+          }
+
+          if (existingAulas && existingAulas.length > 0) {
+            console.log(`Skipping duplicate aula experimental for student ${estudante} at ${unidade}`);
+            results.skipped++;
+            continue;
+          }
+        }
+
+        if (preview) {
+          results.success++;
+          continue;
+        }
+
+        const insertData: any = {
+          id: crypto.randomUUID(),
+          unidade: unidade,
+          curso: curso || null,
+          aula: dataAula,
+          horario: getVal(['horário', 'horario']) || null,
+          responsavel1: getVal(['responsável 1', 'responsavel 1', 'responsavel']) || null,
+          whatsapp1: getVal(['whatsapp1', 'whatsapp 1', 'whatsapp']) || null,
+          status: getVal(['status']) || 'Pendente',
+          observacao_professor: getVal(['observação professor', 'observacao professor', 'observacao_professor']) || null,
+          follow_up_sent: getVal(['follow-up', 'follow_up', 'follow up']).toLowerCase() === 'sim',
+          lembrete_enviado: getVal(['lembrete', 'lembrete enviado']).toLowerCase() === 'sim',
+          convertido: getVal(['convertido']).toLowerCase() === 'sim',
+          etapa: getVal(['etapa']) || null,
+          ano_escolar: getVal(['ano escolar', 'ano_escolar']) || null,
+          turma_escolar: getVal(['turma escolar', 'turma_escolar']) || null,
+          aluno_id: aluno_id
+        };
+
+        // Try to insert with all columns first
+        let { error } = await supabase.from('aulas_experimentais').insert([insertData]);
+
+        if (error) {
+          console.error(`Error inserting aula experimental for ${estudante}:`, error);
+          results.errors.push({ row: results.processed, error: getErrorMessage(error), data: row });
+        } else {
+          results.success++;
+        }
+      } catch (err: any) {
+        console.error(`Exception processing row ${results.processed}:`, err);
+        results.errors.push({ row: results.processed, error: err.message });
+      }
+    }
+
+    return res.json(results);
+  });
+
+  app.post("/api/admin/import-ocorrencias", async (req, res) => {
+    const { rows, preview } = req.body;
+    console.log(`Import ocorrencias request received with ${rows?.length || 0} rows. Preview: ${preview}`);
+    
+    if (!rows || !Array.isArray(rows)) {
+      return res.status(400).json({ error: "Invalid data format. Expected an array of rows." });
+    }
+
+    // Check table existence first
+    const { exists, error: tableError } = await checkTable('ocorrencias');
+    if (!exists) {
+      console.error(`Critical error: table 'ocorrencias' is missing in Supabase. Error: ${tableError}`);
+      return res.status(500).json({ 
+        error: "Tabela 'ocorrencias' não encontrada no Supabase. Por favor, verifique se as migrações foram executadas.",
+        details: tableError
+      });
+    }
+
+    const results = {
+      success: 0,
+      skipped: 0,
+      errors: [] as any[],
+      processed: 0
+    };
+
+    for (const row of rows) {
+      results.processed++;
+      // Add a small delay to prevent rate limiting (100ms)
+      await sleep(100);
+      try {
+        const getVal = (keys: string[]) => {
+          const entry = Object.entries(row).find(([k]) => {
+            const cleanK = k.replace(/^\uFEFF/i, '').trim().toLowerCase();
+            return keys.some(key => {
+              const cleanKey = key.toLowerCase();
+              return cleanK === cleanKey || cleanK.includes(cleanKey);
+            });
+          });
+          return entry ? String(entry[1]).trim() : '';
+        };
+
+        const dataOcorrenciaRaw = getVal(['data', 'data ocorrencia', 'data da ocorrencia']);
+        const dataOcorrencia = formatDate(dataOcorrenciaRaw);
+        const unidade = getVal(['unidade']);
+        const estudante = getVal(['estudante', 'aluno']);
+        const dataNascimentoRaw = getVal(['nascimento', 'data de nascimento', 'data_nascimento', 'aluno_data_nascimento']);
+        const dataNascimento = formatDate(dataNascimentoRaw);
+        const serieAno = getVal(['serie', 'série', 'ano', 'serie_ano', 'aluno_serie']);
+        const observacao = getVal(['observação', 'observacao']);
+        const usuario = getVal(['usuário', 'usuario']);
+        
+        if (!estudante || !dataOcorrencia || !observacao) {
+          console.warn(`Skipping invalid row at index ${results.processed - 1}`);
+          results.errors.push({ 
+            row: results.processed, 
+            error: 'Estudante, Data e Observação são obrigatórios',
+            data: row 
+          });
+          continue;
+        }
+
+        // --- LOOKUP aluno_id ---
+        let aluno_id = null;
+        let isNewStudent = false;
+        const { data: alunoData, error: alunoError } = await supabase
+          .from('alunos')
+          .select('id')
+          .ilike('nome_completo', estudante)
+          .maybeSingle();
+        
+        if (!alunoError && alunoData) {
+          aluno_id = alunoData.id;
+        } else {
+          isNewStudent = true;
+        }
+
+        if (!aluno_id) {
+          if (preview) {
+            aluno_id = `preview-aluno-${results.processed}`;
+          } else {
+            // Register as Lead if not found
+            // We need a guardian for the student. Let's try to find or create a "Lead Guardian"
+            let guardianId = null;
+            const { data: leadGuardian, error: lgError } = await supabase
+              .from('responsaveis')
+              .select('id')
+              .ilike('nome_completo', 'Responsável Lead (Importação)')
+              .maybeSingle();
+            
+            if (leadGuardian) {
+              guardianId = leadGuardian.id;
+            } else {
+              const { data: newLG, error: nlgError } = await supabase
+                .from('responsaveis')
+                .insert([{ 
+                  nome_completo: 'Responsável Lead (Importação)',
+                  telefone: '00000000000',
+                  cpf: '00000000000',
+                  senha: 'lead_guardian_pass'
+                }])
+                .select('id')
+                .maybeSingle();
+              
+              if (newLG) {
+                guardianId = newLG.id;
+              } else {
+                console.error("Error creating Lead Guardian:", JSON.stringify(nlgError, null, 2));
+              }
+            }
+
+            if (!guardianId) {
+              results.errors.push({ 
+                row: results.processed, 
+                error: `Não foi possível criar ou encontrar um responsável para o aluno Lead: ${estudante}`,
+                data: row 
+              });
+              continue;
+            }
+
+            const { data: newAluno, error: insertError } = await supabase
+              .from('alunos')
+              .insert([{
+                nome_completo: estudante,
+                responsavel_id: guardianId,
+                data_nascimento: dataNascimento,
+                serie_ano: serieAno
+              }])
+              .select('id')
+              .single();
+            
+            if (insertError) {
+              console.error(`Error creating Lead student for ${estudante}:`, JSON.stringify(insertError, null, 2));
+              results.errors.push({ 
+                row: results.processed, 
+                error: `Erro ao cadastrar aluno como Lead: ${getErrorMessage(insertError)}`,
+                details: insertError,
+                data: row 
+              });
+              continue;
+            }
+            aluno_id = newAluno.id;
+          }
+        }
+
+        // Check if ocorrencia already exists - only for existing students and non-preview IDs
+        if (!isNewStudent && aluno_id && !String(aluno_id).startsWith('preview-')) {
+          let query = supabase
+            .from('ocorrencias')
+            .select('id')
+            .eq('data', dataOcorrencia)
+            .eq('aluno_id', aluno_id)
+            .ilike('observacao', observacao);
+
+          if (unidade) {
+            query = query.eq('unidade', unidade);
+          }
+          
+          const { data: existingOcorrencias, error: checkError } = await query;
+
+          if (checkError) {
+            console.error(`Error checking existence for ocorrencia (${estudante}):`, JSON.stringify(checkError, null, 2));
+            const errorMsg = getErrorMessage(checkError);
+            
+            results.errors.push({ 
+              row: results.processed, 
+              error: `Erro ao verificar existência: ${errorMsg}`,
+              data: row 
+            });
+            continue;
+          }
+
+          if (existingOcorrencias && existingOcorrencias.length > 0) {
+            console.log(`Skipping duplicate ocorrencia for student ${estudante} on ${dataOcorrencia}`);
+            results.skipped++;
+            continue;
+          }
+        }
+
+        if (preview) {
+          results.success++;
+          continue;
+        }
+
+        const insertData: any = {
+          id: crypto.randomUUID(),
+          data: dataOcorrencia,
+          unidade: unidade || null,
+          observacao: observacao,
+          usuario: usuario || null,
+          aluno_id: aluno_id
+        };
+
+        // Try to insert with all columns first
+        let { error } = await supabase.from('ocorrencias').insert([insertData]);
+
+        if (error) {
+          console.error(`Error inserting ocorrencia for ${estudante}:`, error);
+          results.errors.push({ row: results.processed, error: getErrorMessage(error), data: row });
+        } else {
+          results.success++;
+        }
+      } catch (err: any) {
+        console.error(`Exception processing row ${results.processed}:`, err);
+        results.errors.push({ row: results.processed, error: err.message, data: row });
+      }
+    }
+
+    return res.json(results);
+  });
+
+  app.get("/api/admin/check-tables", async (req, res) => {
+    try {
+      const tables = ['responsaveis', 'alunos', 'matriculas', 'aulas_experimentais', 'ocorrencias', 'presencas'];
+      const results: any = {};
+      
+      for (const table of tables) {
+        // Try to get columns from information_schema
+        const { data: colData, error: colError } = await supabase.rpc('get_table_columns', { table_name: table });
+        
+        let columns: string[] = [];
+        if (!colError && colData) {
+          columns = colData.map((c: any) => c.column_name);
+        } else {
+          // Fallback to select * limit 1
+          const { data, error } = await supabase.from(table).select('*').limit(1);
+          columns = data && data.length > 0 ? Object.keys(data[0]) : [];
+        }
+
+        console.log(`Table '${table}' columns:`, columns);
+        results[table] = { 
+          exists: true, // If we got here, we assume it exists or we'll get an error below
+          columns,
+          error: null
+        };
+      }
+      
+      return res.json(results);
+    } catch (err: any) {
+      console.error('Error in check-tables:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/admin/import-presencas", async (req, res) => {
+    const { rows, preview } = req.body;
+    console.log(`Import presencas request received with ${rows?.length || 0} rows. Preview: ${preview}`);
+    
+    if (!rows || !Array.isArray(rows)) {
+      return res.status(400).json({ error: "Invalid data format. Expected an array of rows." });
+    }
+
+    // Check table existence first
+    const { exists, error: tableError } = await checkTable('presencas');
+    if (!exists) {
+      console.error(`Critical error: table 'presencas' is missing in Supabase. Error: ${tableError}`);
+      return res.status(500).json({ 
+        error: "Tabela 'presencas' não encontrada no Supabase. Por favor, verifique se as migrações foram executadas.",
+        details: tableError
+      });
+    }
+
+    const results = {
+      success: 0,
+      skipped: 0,
+      errors: [] as any[],
+      processed: 0
+    };
+
+    for (const row of rows) {
+      results.processed++;
+      // Add a small delay to prevent rate limiting (100ms)
+      await sleep(100);
+      try {
+        const getVal = (keys: string[]) => {
+          const entry = Object.entries(row).find(([k]) => {
+            const cleanK = k.replace(/^\uFEFF/i, '').trim().toLowerCase();
+            return keys.some(key => {
+              const cleanKey = key.toLowerCase();
+              return cleanK === cleanKey || cleanK.includes(cleanKey);
+            });
+          });
+          return entry ? String(entry[1]).trim() : '';
+        };
+
+        const dataPresencaRaw = getVal(['data']);
+        const dataPresenca = formatDate(dataPresencaRaw);
+        const unidade = getVal(['unidade']);
+        const turma = getVal(['turma']);
+        const estudante = getVal(['estudante', 'aluno']);
+        const dataNascimentoRaw = getVal(['nascimento', 'data de nascimento', 'data_nascimento', 'aluno_data_nascimento']);
+        const dataNascimento = formatDate(dataNascimentoRaw);
+        const serieAno = getVal(['serie', 'série', 'ano', 'serie_ano', 'aluno_serie']);
+        const status = getVal(['status']);
+        const observacao = getVal(['observação', 'observacao']);
+        const alarme = getVal(['alarme']);
+        const timestampInclusao = getVal(['timestamp inclusão', 'timestamp inclusao', 'timestamp']);
+        
+        if (!estudante || !dataPresenca || !status) {
+          console.warn(`Skipping invalid row at index ${results.processed - 1}`);
+          results.errors.push({ 
+            row: results.processed, 
+            error: 'Estudante, Data e Status são obrigatórios',
+            data: row 
+          });
+          continue;
+        }
+
+        // --- LOOKUP IDs ---
+        let aluno_id = null;
+        let turma_id = null;
+
+        // 1. Find aluno_id by name
+        let isNewStudent = false;
+        if (estudante) {
+          const { data: alunoData, error: alunoError } = await supabase
+            .from('alunos')
+            .select('id')
+            .ilike('nome_completo', estudante)
+            .maybeSingle();
+
+          if (!alunoError && alunoData) {
+            aluno_id = alunoData.id;
+          } else {
+            isNewStudent = true;
+          }
+        }
+
+        // 2. Find turma_id from turmas_complementares table
+        if (turma && unidade) {
+          const { data: turmaData, error: turmaError } = await supabase
+            .from('turmas_complementares')
+            .select('id')
+            .ilike('nome', turma)
+            .eq('unidade_nome', unidade)
+            .maybeSingle();
+          
+          if (!turmaError && turmaData) {
+            turma_id = turmaData.id;
+          }
+        } else if (turma) {
+          // Fallback if no unidade is provided
+          const { data: turmaData, error: turmaError } = await supabase
+            .from('turmas_complementares')
+            .select('id')
+            .ilike('nome', turma)
+            .limit(1)
+            .maybeSingle();
+            
+          if (!turmaError && turmaData) {
+            turma_id = turmaData.id;
+          }
+        }
+
+        if (!aluno_id) {
+          if (preview) {
+            aluno_id = `preview-aluno-${results.processed}`;
+          } else {
+            // Register as Lead if not found
+            // We need a guardian for the student. Let's try to find or create a "Lead Guardian"
+            let guardianId = null;
+            const { data: leadGuardian, error: lgError } = await supabase
+              .from('responsaveis')
+              .select('id')
+              .ilike('nome_completo', 'Responsável Lead (Importação)')
+              .maybeSingle();
+            
+            if (leadGuardian) {
+              guardianId = leadGuardian.id;
+            } else {
+              const { data: newLG, error: nlgError } = await supabase
+                .from('responsaveis')
+                .insert([{ 
+                  nome_completo: 'Responsável Lead (Importação)',
+                  telefone: '00000000000',
+                  cpf: '00000000000',
+                  senha: 'lead_guardian_pass'
+                }])
+                .select('id')
+                .maybeSingle();
+              
+              if (newLG) {
+                guardianId = newLG.id;
+              } else {
+                console.error("Error creating Lead Guardian:", JSON.stringify(nlgError, null, 2));
+              }
+            }
+
+            if (!guardianId) {
+              results.errors.push({ 
+                row: results.processed, 
+                error: `Não foi possível criar ou encontrar um responsável para o aluno Lead: ${estudante}`,
+                data: row 
+              });
+              continue;
+            }
+
+            const { data: newAluno, error: insertError } = await supabase
+              .from('alunos')
+              .insert([{
+                nome_completo: estudante,
+                responsavel_id: guardianId,
+                data_nascimento: dataNascimento,
+                serie_ano: serieAno
+              }])
+              .select('id')
+              .single();
+            
+            if (insertError) {
+              console.error(`Error creating Lead student for ${estudante}:`, JSON.stringify(insertError, null, 2));
+              results.errors.push({ 
+                row: results.processed, 
+                error: `Erro ao cadastrar aluno como Lead: ${getErrorMessage(insertError)}`,
+                details: insertError,
+                data: row 
+              });
+              continue;
+            }
+            aluno_id = newAluno.id;
+          }
+        }
+
+        if (!turma_id && turma) {
+          results.errors.push({ 
+            row: results.processed, 
+            error: `Turma não encontrada: ${turma}`,
+            data: row 
+          });
+          continue;
+        }
+
+        // Check if presenca already exists - only for existing students and non-preview IDs
+        if (!isNewStudent && aluno_id && !String(aluno_id).startsWith('preview-')) {
+          let query = supabase
+            .from('presencas')
+            .select('id')
+            .eq('data', dataPresenca)
+            .eq('aluno_id', aluno_id);
+
+          if (turma_id) {
+            query = query.eq('turma_id', turma_id);
+          }
+
+          const { data: existingPresencas, error: checkError } = await query;
+
+          if (checkError) {
+            console.error(`Error checking existence for presenca (${estudante}):`, JSON.stringify(checkError, null, 2));
+            const errorMsg = getErrorMessage(checkError);
+            
+            results.errors.push({ 
+              row: results.processed, 
+              error: `Erro ao verificar existência: ${errorMsg}`,
+              data: row 
+            });
+            continue;
+          }
+
+          if (existingPresencas && existingPresencas.length > 0) {
+            console.log(`Skipping duplicate presenca for student ${estudante} on ${dataPresenca}`);
+            results.skipped++;
+            continue;
+          }
+        }
+
+        if (preview) {
+          results.success++;
+          continue;
+        }
+
+        const insertData: any = {
+          id: crypto.randomUUID(),
+          data: dataPresenca,
+          unidade: unidade || null,
+          status: status,
+          observacao: observacao || null,
+          alarme: alarme || null,
+          timestamp_inclusao: formatTimestamp(timestampInclusao),
+          aluno_id: aluno_id,
+          turma_id: turma_id
+        };
+
+        // Try to insert with all columns first
+        let { error } = await supabase.from('presencas').insert([insertData]);
+
+        if (error && (error.code === '42703' || error.code === 'PGRST204')) {
+          // If it fails with missing column, it might be because observacao, alarme, or timestamp_inclusao are missing in some environments
+          delete insertData.alarme;
+          delete insertData.observacao;
+          delete insertData.timestamp_inclusao;
+          const secondInsert = await supabase.from('presencas').insert([insertData]);
+          error = secondInsert.error;
+        }
+
+        if (error) {
+          console.error(`Error inserting presenca for ${estudante}:`, JSON.stringify(error, null, 2));
+          results.errors.push({ 
+            row: results.processed, 
+            error: getErrorMessage(error),
+            details: error,
+            data: row
+          });
+        } else {
+          results.success++;
+        }
+      } catch (err: any) {
+        console.error(`Exception processing row ${results.processed}:`, err);
+        results.errors.push({ row: results.processed, error: err.message, data: row });
+      }
+    }
+
+    return res.json(results);
   });
 
   // Pagar.me Webhook
@@ -2705,8 +4716,12 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
         event.type === 'charge.paid' || 
         event.type === 'order.payment_failed' ||
         event.type === 'invoice.paid' ||
+        event.type === 'invoice.payment_failed' ||
         event.type === 'subscription.created' ||
-        event.type === 'subscription.updated'
+        event.type === 'subscription.updated' ||
+        event.type === 'subscription.canceled' ||
+        event.type === 'charge.refunded' ||
+        event.type === 'order.canceled'
       ) {
         const data = event.data;
         let paymentId = null;
@@ -2832,14 +4847,28 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
             event.type === 'invoice.paid' ||
             ((event.type === 'subscription.created' || event.type === 'subscription.updated') && data.status === 'active');
             
-          const isFailed = event.type === 'order.payment_failed';
+          const isFailed = 
+            event.type === 'order.payment_failed' || 
+            event.type === 'invoice.payment_failed' ||
+            event.type === 'charge.payment_failed' ||
+            event.type === 'charge.failed' ||
+            event.type === 'charge.antifraud_reproval' ||
+            event.type === 'charge.antifraud_reproved';
+
+          const isCanceled = 
+            event.type === 'subscription.canceled' || 
+            event.type === 'order.canceled' ||
+            event.type === 'charge.canceled' ||
+            event.type === 'invoice.canceled';
+
+          const isRefunded = event.type === 'charge.refunded';
           
-          if (!isPaid && !isFailed) {
-            console.log(`[Webhook Pagar.me] Evento ignorado (não é pago nem falha). Status: ${data.status}`);
+          if (!isPaid && !isFailed && !isCanceled && !isRefunded) {
+            console.log(`[Webhook Pagar.me] Evento ignorado (não é pago, falha, cancelamento nem estorno). Status: ${data.status}`);
             return res.status(200).json({ received: true });
           }
 
-          const status = isPaid ? 'pago' : 'falha';
+          const status = isPaid ? 'pago' : (isCanceled ? 'cancelado' : (isRefunded ? 'estornado' : 'falha'));
 
           // Check if it's a recurring payment (cycle > 1)
           const invoice = data.invoice || (data.charges && data.charges[0] && data.charges[0].invoice) || (event.type === 'invoice.paid' ? data : null);
@@ -2861,6 +4890,15 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
             } else {
               updatePayload.pagarme = data.id;
             }
+          }
+
+          if (isFailed) {
+            updatePayload.motivo_falha = 
+              data.last_transaction?.gateway_response?.errors?.[0]?.message || 
+              data.last_transaction?.acquirer_message || 
+              data.antifraud_response?.message ||
+              data.message ||
+              (event.type === 'charge.antifraud_reproval' || event.type === 'charge.antifraud_reproved' ? "Reprovado pelo sistema de antifraude." : "Transação recusada pela operadora do cartão.");
           }
 
           if (isSubscription && cycle > 1) {
@@ -2914,13 +4952,35 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
               // Check if matricula is currently pending
               const { data: matricula } = await supabase
                 .from('matriculas')
-                .select('status')
+                .select('status, turma_id, unidade, turma, created_at')
                 .eq('id', paymentData.matricula_id)
                 .single();
 
               if (matricula && matricula.status === 'pendente') {
                 console.log(`[Webhook Pagar.me] Ativando matrícula ${paymentData.matricula_id}...`);
                 
+                // Fetch class data for values
+                const { data: classData } = await supabase
+                  .from('turmas_complementares')
+                  .select('valor_mensalidade')
+                  .eq('id', matricula.turma_id)
+                  .maybeSingle();
+
+                // Fetch first payment for actual charged value
+                const { data: firstPayment } = await supabase
+                  .from('pagamentos')
+                  .select('valor')
+                  .eq('matricula_id', paymentData.matricula_id)
+                  .order('data_vencimento', { ascending: true })
+                  .limit(1)
+                  .maybeSingle();
+
+                const valorSistema = classData?.valor_mensalidade || 0;
+                const valorPadrao = valorSistema * 1.10;
+                const descontoTaxaZero = valorSistema * 0.10;
+                const valorCheio = valorSistema;
+                const valorMatricula = firstPayment?.valor || valorSistema;
+
                 // Update matricula status to 'ativo' and set data_matricula
                 await supabase
                   .from('matriculas')
@@ -2933,7 +4993,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                 // Fetch guardian and student details for notifications
                 const { data: guardian } = await supabase
                   .from('responsaveis')
-                  .select('nome_completo, telefone, email')
+                  .select('*')
                   .eq('id', paymentData.responsavel_id)
                   .single();
 
@@ -2948,10 +5008,23 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                 if (guardian) {
                   // Send WhatsApp
                   if (guardian.telefone) {
+                    const guardianFirstName = (guardian.nome_completo || '').trim().split(' ')[0];
+                    const studentFirstName = student?.nome_completo 
+                      ? student.nome_completo.trim().split(' ')[0] 
+                      : 'seu filho(a)';
+                    const identidade = matricula.unidade === 'Colégio Bernoulli' 
+                      ? "*no B+*" 
+                      : `na *Sport for Kids* (${matricula.unidade})`;
+
+                    const whatsappMsg = `Olá,*${guardianFirstName}* Que alegria ter vocês com a gente! 🎉
+A matrícula de *${studentFirstName}* em *${matricula.turma}* ${identidade} foi confirmada com sucesso. Já estamos preparando tudo para que essa jornada seja incrível.🏆
+
+Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só responder essa mensagem. Seja muito bem-vindo(a) ao nosso time! 🏆`;
+
                     await sendWhatsAppMessage(
                       guardian.telefone,
                       guardian.nome_completo,
-                      `Olá ${guardian.nome_completo}! Recebemos a confirmação do seu pagamento de matrícula. A matrícula de ${student?.nome_completo || 'seu filho(a)'} foi ativada com sucesso. Seja bem-vindo à Sport for Kids!`
+                      whatsappMsg
                     ).catch(e => console.error("Erro ao enviar WhatsApp de confirmação:", e));
                   }
 
@@ -2965,11 +5038,57 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                         .maybeSingle();
 
                       let termsText = termsData?.valor || "Termos e condições não definidos.";
-                      termsText = termsText.replace(/{{NOME_RESPONSAVEL}}/g, guardian.nome_completo);
-                      if (student) {
-                        termsText = termsText.replace(/{{NOME_ALUNO}}/g, student.nome_completo);
-                        termsText = termsText.replace(/{{TURMA}}/g, student.turma_complementar || "");
-                        termsText = termsText.replace(/{{UNIDADE}}/g, student.unidade || "");
+                      
+                      // Format address
+                      let formattedAddress = "Não informado";
+                      if (guardian.endereco) {
+                        try {
+                          const addr = typeof guardian.endereco === 'string' ? JSON.parse(guardian.endereco) : guardian.endereco;
+                          const street = addr.logradouro || addr.street || '';
+                          const number = addr.numero || addr.number || '';
+                          const complement = addr.complemento || addr.complement ? ` - ${addr.complemento || addr.complement}` : '';
+                          const neighborhood = addr.bairro || addr.neighborhood || '';
+                          const city = addr.cidade || addr.city || '';
+                          const state = addr.estado || addr.state || '';
+                          const zip = addr.cep || addr.zipCode || '';
+                          
+                          formattedAddress = `${street}, ${number}${complement}, ${neighborhood}, ${city}/${state}, CEP: ${zip}`;
+                        } catch (e) {
+                          formattedAddress = String(guardian.endereco);
+                        }
+                      }
+
+                      // Helper to format currency
+                      const formatCurrency = (val: number) => 
+                        new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+
+                      const replacements: Record<string, string> = {
+                        "NOME_RESPONSAVEL": guardian.nome_completo || "",
+                        "RESPONSAVEL": guardian.nome_completo || "",
+                        "CPF_RESPONSAVEL": guardian.cpf || "",
+                        "CPF": guardian.cpf || "",
+                        "EMAIL_RESPONSAVEL": guardian.email || "",
+                        "TELEFONE_RESPONSAVEL": guardian.telefone || "",
+                        "ENDERECO_RESPONSAVEL": formattedAddress,
+                        "ENDERECO": formattedAddress,
+                        "NOME_ALUNO": student?.nome_completo || "",
+                        "ESTUDANTE": student?.nome_completo || "",
+                        "TURMA": matricula.turma || "",
+                        "CURSO": matricula.turma || "",
+                        "UNIDADE": matricula.unidade || "",
+                        "DATA_MATRICULA": new Date(matricula.created_at).toLocaleDateString('pt-BR'),
+                        "VALOR PADRAO": formatCurrency(valorPadrao),
+                        "VALOR CHEIO": formatCurrency(valorCheio),
+                        "VALOR LIQUIDO": formatCurrency(valorMatricula),
+                        "VALOR": formatCurrency(valorMatricula),
+                        "desconto taxa zero": formatCurrency(descontoTaxaZero)
+                      };
+
+                      // Apply replacements for both {{}} and [] formats
+                      for (const [key, value] of Object.entries(replacements)) {
+                        const regexBraces = new RegExp(`{{${key}}}`, 'g');
+                        const regexBrackets = new RegExp(`\\[${key}\\]`, 'g');
+                        termsText = termsText.replace(regexBraces, value).replace(regexBrackets, value);
                       }
 
                       const pdfBuffer = await generatePDFBuffer(termsText);
@@ -3007,14 +5126,14 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
             // Handle failed payment -> cancel matricula if it was pending
             const { data: paymentData } = await supabase
               .from('pagamentos')
-              .select('matricula_id')
+              .select('responsavel_id, matricula_id')
               .eq('id', targetPaymentId)
               .single();
 
             if (paymentData && paymentData.matricula_id) {
               const { data: matricula } = await supabase
                 .from('matriculas')
-                .select('status')
+                .select('status, turma, aluno_id')
                 .eq('id', paymentData.matricula_id)
                 .single();
 
@@ -3027,6 +5146,82 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
                     data_cancelamento: new Date().toISOString()
                   })
                   .eq('id', paymentData.matricula_id);
+
+                // Fetch student details for notification
+                const { data: student } = await supabase
+                  .from('alunos')
+                  .select('nome_completo')
+                  .eq('id', matricula.aluno_id)
+                  .single();
+
+                const failureReason = 
+                  data.last_transaction?.gateway_response?.errors?.[0]?.message || 
+                  data.last_transaction?.acquirer_message || 
+                  data.antifraud_response?.message ||
+                  data.message ||
+                  (event.type === 'charge.antifraud_reproval' || event.type === 'charge.antifraud_reproved' ? "Reprovado pelo sistema de antifraude." : "Transação recusada pela operadora do cartão.");
+
+                await sendPaymentFailureNotification(
+                  paymentData.responsavel_id,
+                  student?.nome_completo || "Estudante",
+                  matricula.turma || "Turma não identificada",
+                  failureReason
+                );
+              }
+            }
+          } else if (isCanceled || isRefunded) {
+            // 4. Cancelamento de Matrícula via Webhook de Assinatura, Pedido ou Estorno
+            const subscriptionId = data.id || (data.subscription && data.subscription.id);
+            const orderId = data.id || (data.order && data.order.id);
+            
+            if (subscriptionId && subscriptionId.startsWith('sub_')) {
+              console.log(`[Webhook Pagar.me] Assinatura ${subscriptionId} cancelada/estornada. Atualizando matrícula...`);
+              
+              // Find the enrollment to get its ID for payment cancellation
+              const { data: mData } = await supabase
+                .from('matriculas')
+                .select('id')
+                .eq('pagarme_subscription_id', subscriptionId)
+                .maybeSingle();
+
+              await supabase
+                .from('matriculas')
+                .update({ 
+                  status: 'cancelado',
+                  data_cancelamento: new Date().toISOString()
+                })
+                .eq('pagarme_subscription_id', subscriptionId);
+
+              if (mData && mData.id) {
+                await supabase
+                  .from('pagamentos')
+                  .update({ status: 'cancelado' })
+                  .eq('matricula_id', mData.id)
+                  .eq('status', 'pendente');
+              }
+            } else if (orderId && (orderId.startsWith('or_') || orderId.startsWith('ch_'))) {
+              console.log(`[Webhook Pagar.me] Pedido/Cobrança ${orderId} cancelado/estornado. Atualizando matrícula...`);
+              // Find the payment to get the matricula_id
+              const { data: pData } = await supabase
+                .from('pagamentos')
+                .select('matricula_id')
+                .eq('pagarme', orderId)
+                .maybeSingle();
+              
+              if (pData && pData.matricula_id) {
+                await supabase
+                  .from('matriculas')
+                  .update({ 
+                    status: 'cancelado',
+                    data_cancelamento: new Date().toISOString()
+                  })
+                  .eq('id', pData.matricula_id);
+
+                await supabase
+                  .from('pagamentos')
+                  .update({ status: 'cancelado' })
+                  .eq('matricula_id', pData.matricula_id)
+                  .eq('status', 'pendente');
               }
             }
           }
@@ -3038,6 +5233,481 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
     }
     
     return res.status(200).json({ received: true });
+  });
+
+  app.post("/api/admin/import-wix-payments", express.json({ limit: '10mb' }), async (req, res) => {
+    const { payments, preview, mapping } = req.body; // Expecting an array of objects and optional mapping
+    if (!Array.isArray(payments)) {
+      return res.status(400).json({ error: 'Formato inválido. Esperado um array de pagamentos.' });
+    }
+
+    const fuzzy = (s: any) => {
+      if (!s) return '';
+      return String(s)
+        .replace(/[\u0000-\u001F\u007F-\u009F\uFEFF]/g, '')
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]/gi, '')
+        .toLowerCase()
+        .trim();
+    };
+
+    const getVal = (row: any, keys: string[]) => {
+      const entries = Object.entries(row);
+      const cleanKey = (s: string) => s.replace(/[\u0000-\u001F\u007F-\u009F\uFEFF]/g, '').toLowerCase().trim();
+      
+      // 1. Tenta correspondência exata primeiro
+      for (const key of keys) {
+        const ck = cleanKey(key);
+        const found = entries.find(([k]) => cleanKey(k) === ck);
+        if (found) return String(found[1]).trim();
+      }
+      // 2. Tenta correspondência parcial se não achar exata
+      for (const key of keys) {
+        const ck = cleanKey(key);
+        const found = entries.find(([k]) => cleanKey(k).includes(ck));
+        if (found) return String(found[1]).trim();
+      }
+      return '';
+    };
+
+    const getMappedVal = (row: any, fieldId: string, defaultKeys: string[]) => {
+      if (mapping && mapping[fieldId]) {
+        return String(row[mapping[fieldId]] || '').trim();
+      }
+      return getVal(row, defaultKeys);
+    };
+
+    const searchInRow = (row: any, search: string) => {
+      if (!search) return false;
+      const s = fuzzy(search);
+      if (s.length < 3) return false;
+      return Object.values(row).some(val => {
+        if (!val) return false;
+        const fVal = fuzzy(val);
+        return fVal.includes(s) || s.includes(fVal);
+      });
+    };
+
+    const searchStudentInRow = (row: any, studentName: string) => {
+      if (!studentName) return false;
+      const s = fuzzy(studentName);
+      const rowValues = Object.values(row).map(v => fuzzy(v));
+      
+      // Check if fuzzy full name is in any column
+      if (rowValues.some(val => val.includes(s) || s.includes(val))) return true;
+      
+      // Split name into parts and see if at least two parts match
+      const parts = studentName.toLowerCase().split(' ').filter(p => p.length > 2);
+      if (parts.length < 2) {
+        return rowValues.some(val => val.includes(fuzzy(studentName)));
+      }
+      
+      let matchCount = 0;
+      for (const part of parts) {
+        const fPart = fuzzy(part);
+        if (rowValues.some(val => val.includes(fPart))) {
+          matchCount++;
+        }
+      }
+      return matchCount >= 2;
+    };
+
+    if (preview) {
+      const previewData = [];
+      const sample = payments.slice(0, 10);
+      
+      for (const row of sample) {
+        const email = getMappedVal(row, 'email', ['Email']);
+        const responsavelNomeMapped = getMappedVal(row, 'responsavel_nome', ['Nome', 'Name', 'Responsável']);
+        const alunoMapped = getMappedVal(row, 'aluno', ['Aluno', 'Estudante', 'Child', 'Student', 'Nome do Aluno']);
+        
+        // Se houver mapeamento manual, usamos ele. Caso contrário, a lógica robusta anterior.
+        let nomeItem = '';
+        if (mapping && mapping.plano) {
+          nomeItem = String(row[mapping.plano] || '').trim();
+        } else {
+          // No CSV do Wix, o plano está na coluna "Nome", mas existem várias colunas "Nome".
+          // Vamos tentar pegar o valor de "Nome" que NÃO seja o nome do responsável.
+          const nomeResponsavel = getVal(row, ['Nome']);
+          const sobrenomeResponsavel = getVal(row, ['Sobrenome']);
+          const fullNameResp = (nomeResponsavel + ' ' + sobrenomeResponsavel).trim();
+
+          // Lista de palavras que indicam que um valor é um PLANO/TURMA
+          const planKeywords = ['volei', 'xadrez', 'ballet', 'judo', 'tenis', 'futsal', 'basquete', 'teatro', 'robotica', 'funcional', 'dança', 'pickleball', 'programação', 'equipe', 'kids'];
+
+          // Busca o nome do item tentando evitar o nome do responsável
+          const possibleItemKeys = ['Produtos ou serviços', 'Item', 'Plano', 'Nome do produto', 'Descrição', 'Serviço', 'Product', 'Description'];
+          nomeItem = getVal(row, possibleItemKeys);
+
+          // Se não achou ou o que achou parece ser o nome da mãe, faz varredura profunda
+          const allEntries = Object.entries(row);
+          let foundPlanByKeyword = '';
+          let nomeColumns = [];
+
+          for (const [key, val] of allEntries) {
+            const v = String(val).trim();
+            const k = key.toLowerCase();
+            
+            // Guarda todas as colunas que tem "nome" no título
+            if (k === 'nome' || k.includes('nome')) {
+              nomeColumns.push(v);
+            }
+
+            // Se o valor contém uma palavra-chave de plano e não é o nome da mãe
+            if (v && v.length > 3 && !fuzzy(v).includes(fuzzy(nomeResponsavel)) && !fuzzy(fullNameResp).includes(fuzzy(v))) {
+              if (planKeywords.some(kw => fuzzy(v).includes(kw))) {
+                foundPlanByKeyword = v;
+              }
+            }
+          }
+
+          if (foundPlanByKeyword) {
+            nomeItem = foundPlanByKeyword;
+          } else if (nomeColumns.length >= 3) {
+            nomeItem = nomeColumns[2] || nomeColumns[nomeColumns.length - 1];
+          }
+        }
+
+        const data = getMappedVal(row, 'data', ['Data', 'Date']) || '---';
+        
+        let alunoNome = 'Não encontrado';
+        
+        if (email || responsavelNomeMapped) {
+          let resp = null;
+          if (email) {
+            const { data } = await supabase.from('responsaveis').select('id').ilike('email', email.trim()).maybeSingle();
+            resp = data;
+          }
+          
+          if (!resp && responsavelNomeMapped) {
+            const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', responsavelNomeMapped.trim()).maybeSingle();
+            resp = data;
+          }
+
+          if (resp) {
+            const { data: students } = await supabase.from('alunos').select('id, nome').eq('responsavel_id', resp.id);
+            if (students && students.length > 0) {
+              const studentIds = students.map(s => s.id);
+              const { data: enrollments } = await supabase
+                .from('matriculas')
+                .select('id, aluno_id, plano, turma, status, data_cancelamento')
+                .in('aluno_id', studentIds);
+              
+              if (enrollments) {
+                const fItem = fuzzy(nomeItem);
+                
+                // NOVA ABORDAGEM SÊNIOR: Filtro de Texto Obrigatório
+                // Se o nome do plano foi identificado, NADA mais importa se não bater com o texto.
+                let matches = [];
+                
+                if (fItem) {
+                  // 1. Tenta match exato ou contido no plano
+                  matches = enrollments.filter(e => {
+                    const fp = fuzzy(e.plano);
+                    return fp && (fp === fItem || fItem.includes(fp) || fp.includes(fItem));
+                  });
+
+                  // 2. Se não achou no campo plano, mas o texto do plano da matrícula está na linha do CSV
+                  if (matches.length === 0) {
+                    matches = enrollments.filter(e => e.plano && searchInRow(row, e.plano));
+                  }
+
+                  // 3. Se ainda não achou, tenta por palavras-chave
+                  if (matches.length === 0) {
+                    const planKeywords = ['volei', 'xadrez', 'ballet', 'judo', 'tenis', 'futsal', 'basquete', 'teatro', 'robotica', 'funcional', 'dança', 'pickleball', 'programação', 'equipe', 'kids'];
+                    const foundKeyword = planKeywords.find(kw => fItem.includes(kw));
+                    if (foundKeyword) {
+                      matches = enrollments.filter(e => {
+                        const fp = fuzzy(e.plano);
+                        return fp && fp.includes(foundKeyword);
+                      });
+                    }
+                  }
+                }
+
+                if (matches.length > 0) {
+                  let bestMatch = null;
+                  
+                  // Entre os que bateram o TEXTO, agora sim aplicamos a prioridade de status e nome
+                  const activeMatches = matches.filter(m => m.status === 'ativo' && !m.data_cancelamento);
+                  const candidates = activeMatches.length > 0 ? activeMatches : matches;
+
+                  if (candidates.length > 1) {
+                    // Se houver mapeamento de aluno, prioriza ele
+                    if (alunoMapped) {
+                      bestMatch = candidates.find(m => {
+                        const s = students.find(st => st.id === m.aluno_id);
+                        return s && (fuzzy(s.nome).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome)));
+                      });
+                    }
+                    
+                    if (!bestMatch) {
+                      bestMatch = candidates.find(m => {
+                        const s = students.find(st => st.id === m.aluno_id);
+                        return s && searchStudentInRow(row, s.nome);
+                      });
+                    }
+                  }
+
+                  if (!bestMatch) {
+                    bestMatch = candidates[0];
+                  }
+
+                  const student = students.find(s => s.id === bestMatch.aluno_id);
+                  const turmaInfo = bestMatch.turma ? ` (${bestMatch.turma})` : '';
+                  alunoNome = (student ? student.nome : 'ID: ' + bestMatch.aluno_id) + turmaInfo;
+                } else {
+                  // Se o texto não bateu, não associamos a nenhuma turma, mesmo que o aluno seja único.
+                  let matchedStudent = null;
+                  if (alunoMapped) {
+                    matchedStudent = students.find(s => fuzzy(s.nome).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome)));
+                  }
+                  
+                  if (!matchedStudent) {
+                    matchedStudent = students.find(s => searchStudentInRow(row, s.nome));
+                  }
+
+                  if (matchedStudent) {
+                    alunoNome = matchedStudent.nome + ' (Plano divergente)';
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        previewData.push({
+          Data: data,
+          Item: nomeItem || '---',
+          Responsável: email || '---',
+          Aluno: alunoNome
+        });
+      }
+
+      return res.json({ 
+        processed: payments.length, 
+        success: 0, 
+        errors: [], 
+        preview: previewData 
+      });
+    }
+
+    const results = { processed: 0, success: 0, errors: [] as any[], details: [] as any[] };
+
+    for (const row of payments) {
+      results.processed++;
+      // Add a small delay to prevent rate limiting (100ms)
+      await sleep(100);
+      try {
+        const email = getMappedVal(row, 'email', ['Email']);
+        const responsavelNomeMapped = getMappedVal(row, 'responsavel_nome', ['Nome', 'Name', 'Responsável']);
+        const alunoMapped = getMappedVal(row, 'aluno', ['Aluno', 'Estudante', 'Child', 'Student', 'Nome do Aluno']);
+        const valorStr = getMappedVal(row, 'valor', ['Valor']) || '0,00';
+        const valor = parseFloat(valorStr.replace(',', '.'));
+        const statusWix = getMappedVal(row, 'status', ['Status da transação', 'Status']);
+        const wixId = getMappedVal(row, 'transacao_id', ['ID do provedor de pagamento']);
+        
+        let nomeItem = '';
+        if (mapping && mapping.plano) {
+          nomeItem = String(row[mapping.plano] || '').trim();
+        } else {
+          // Extração robusta do nome do item (mesma lógica da preview)
+          const nomeResponsavel = getVal(row, ['Nome']);
+          const sobrenomeResponsavel = getVal(row, ['Sobrenome']);
+          const fullNameResp = (nomeResponsavel + ' ' + sobrenomeResponsavel).trim();
+          const planKeywords = ['volei', 'xadrez', 'ballet', 'judo', 'tenis', 'futsal', 'basquete', 'teatro', 'robotica', 'funcional', 'dança', 'pickleball', 'programação', 'equipe', 'kids'];
+          
+          nomeItem = getVal(row, ['Produtos ou serviços', 'Item', 'Plano', 'Nome do produto', 'Descrição', 'Serviço', 'Product', 'Description']);
+          const allEntries = Object.entries(row);
+          let foundPlanByKeyword = '';
+          let nomeColumns = [];
+          for (const [key, val] of allEntries) {
+            const v = String(val).trim();
+            const k = key.toLowerCase();
+            if (k === 'nome' || k.includes('nome')) nomeColumns.push(v);
+            if (v && v.length > 3 && !fuzzy(v).includes(fuzzy(nomeResponsavel)) && !fuzzy(fullNameResp).includes(fuzzy(v))) {
+              if (planKeywords.some(kw => fuzzy(v).includes(kw))) foundPlanByKeyword = v;
+            }
+          }
+          if (foundPlanByKeyword) nomeItem = foundPlanByKeyword;
+          else if (nomeColumns.length >= 3) nomeItem = nomeColumns[2] || nomeColumns[nomeColumns.length - 1];
+        }
+
+        const dataPagamento = formatTimestamp(getMappedVal(row, 'data', ['Data', 'Date']));
+
+        if (!email || !wixId) {
+          results.errors.push({ row: results.processed, error: `Email ou ID do Wix ausente. Email: ${email}, WixId: ${wixId}` });
+          continue;
+        }
+
+        const { data: existing } = await supabase.from('pagamentos').select('id, aluno_id, matricula_id').eq('wix_transaction_id', wixId).maybeSingle();
+        
+        // Se já existe e já tem aluno vinculado, pula
+        if (existing && existing.aluno_id) continue;
+
+        let statusSupabase = 'pendente';
+        if (statusWix === 'Bem-sucedido') statusSupabase = 'pago';
+        else if (statusWix === 'Recusado') statusSupabase = 'recusado';
+        else if (statusWix === 'Reembolsado' || statusWix === 'Parcialmente reembolsado') statusSupabase = 'reembolsado';
+
+        let responsavel = null;
+        if (email) {
+          const { data } = await supabase.from('responsaveis').select('id').ilike('email', email.trim()).maybeSingle();
+          responsavel = data;
+        }
+        
+        if (!responsavel && responsavelNomeMapped) {
+          const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', responsavelNomeMapped.trim()).maybeSingle();
+          responsavel = data;
+        }
+
+        if (!responsavel) {
+          results.errors.push({ row: results.processed, error: `Responsável não encontrado: ${email || responsavelNomeMapped}` });
+          continue;
+        }
+
+        let aluno_id = null;
+        let matricula_id = null;
+        let alunoNomeMatch = '';
+        let turmaMatch = '';
+
+        const { data: students } = await supabase.from('alunos').select('id, nome').eq('responsavel_id', responsavel.id);
+        const studentIds = students?.map(s => s.id) || [];
+
+        if (studentIds.length > 0) {
+          const { data: enrollments } = await supabase
+            .from('matriculas')
+            .select('id, aluno_id, status, plano, turma, data_cancelamento')
+            .in('aluno_id', studentIds);
+
+          if (enrollments && enrollments.length > 0) {
+            const fItem = fuzzy(nomeItem);
+            
+            // NOVA ABORDAGEM SÊNIOR: Filtro de Texto Obrigatório
+            let matches = [];
+            
+            if (fItem) {
+              matches = enrollments.filter(e => {
+                const fp = fuzzy(e.plano);
+                return fp && (fp === fItem || fItem.includes(fp) || fp.includes(fItem));
+              });
+
+              if (matches.length === 0) {
+                matches = enrollments.filter(e => e.plano && searchInRow(row, e.plano));
+              }
+
+              // 3. Se ainda não achou, tenta por palavras-chave
+              if (matches.length === 0) {
+                const planKeywords = ['volei', 'xadrez', 'ballet', 'judo', 'tenis', 'futsal', 'basquete', 'teatro', 'robotica', 'funcional', 'dança', 'pickleball', 'programação', 'equipe', 'kids'];
+                const foundKeyword = planKeywords.find(kw => fItem.includes(kw));
+                if (foundKeyword) {
+                  matches = enrollments.filter(e => {
+                    const fp = fuzzy(e.plano);
+                    return fp && fp.includes(foundKeyword);
+                  });
+                }
+              }
+            }
+
+            if (matches.length > 0) {
+              let bestMatch = null;
+              
+              const activeMatches = matches.filter(m => m.status === 'ativo' && !m.data_cancelamento);
+              const candidates = activeMatches.length > 0 ? activeMatches : matches;
+
+              if (candidates.length > 1) {
+                // Se houver mapeamento de aluno, prioriza ele
+                if (alunoMapped) {
+                  bestMatch = candidates.find(m => {
+                    const s = students.find(st => st.id === m.aluno_id);
+                    return s && (fuzzy(s.nome).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome)));
+                  });
+                }
+
+                if (!bestMatch) {
+                  bestMatch = candidates.find(m => {
+                    const s = students.find(st => st.id === m.aluno_id);
+                    return s && searchStudentInRow(row, s.nome);
+                  });
+                }
+              }
+
+              if (!bestMatch) {
+                bestMatch = candidates[0];
+              }
+              
+              if (bestMatch) {
+                matricula_id = bestMatch.id;
+                aluno_id = bestMatch.aluno_id;
+                const s = students.find(st => st.id === aluno_id);
+                alunoNomeMatch = s ? s.nome : '';
+                turmaMatch = bestMatch.turma || '';
+              }
+            } else {
+              // Se o texto não bateu, vinculamos apenas o aluno se houver certeza, mas sem matrícula.
+              let matchedStudent = null;
+              if (alunoMapped) {
+                matchedStudent = students.find(s => fuzzy(s.nome).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome)));
+              }
+              
+              if (!matchedStudent) {
+                matchedStudent = students.find(s => searchStudentInRow(row, s.nome));
+              }
+
+              if (matchedStudent) {
+                aluno_id = matchedStudent.id;
+                alunoNomeMatch = matchedStudent.nome;
+              }
+            }
+          }
+        }
+
+        const updateData: any = {
+          responsavel_id: responsavel.id,
+          aluno_id,
+          matricula_id,
+          valor,
+          status: statusSupabase,
+          wix_email: email,
+          wix_item_name: nomeItem,
+          metodo_pagamento: getVal(row, ['Método de pagamento', 'Metodo', 'Payment Method']) || 'Wix'
+        };
+
+        if (dataPagamento) {
+          updateData.created_at = dataPagamento;
+        }
+
+        if (existing) {
+          // Atualiza registro existente que estava sem aluno
+          const { error } = await supabase.from('pagamentos').update(updateData).eq('id', existing.id);
+          if (error) throw error;
+        } else {
+          // Insere novo registro
+          const { error } = await supabase.from('pagamentos').insert([{ ...updateData, wix_transaction_id: wixId }]);
+          if (error) throw error;
+        }
+        
+        results.success++;
+        results.details.push({
+          row: results.processed,
+          item: nomeItem,
+          aluno: alunoNomeMatch ? `${alunoNomeMatch}${turmaMatch ? ' (' + turmaMatch + ')' : ''}` : 'Não identificado'
+        });
+      } catch (err: any) {
+        results.errors.push({ row: results.processed, error: err.message });
+      }
+    }
+    res.json(results);
+  });
+
+  // Global API error handler
+  app.use('/api', (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error('API Error:', err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Internal Server Error',
+      details: err.stack
+    });
   });
 
   // Vite middleware for development
@@ -3059,6 +5729,14 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
     app.listen(Number(PORT), "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
+      
+      // Configurar Cron Job para sincronização automática a cada hora
+      // '0 * * * *' = No minuto 0 de cada hora
+      cron.schedule('0 * * * *', () => {
+        syncAllPendingPayments().catch(err => console.error('[Cron] Erro ao executar syncAllPendingPayments:', err));
+      });
+      
+      console.log('[Cron] Job de sincronização financeira agendado (1x por hora).');
     });
   }
 
