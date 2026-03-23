@@ -1074,9 +1074,36 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         .select('*, matriculas(*)')
         .eq('responsavel_id', id);
 
+      const flatAlunos: any[] = [];
+      students?.forEach((aluno: any) => {
+        if (aluno.matriculas && aluno.matriculas.length > 0) {
+          aluno.matriculas.forEach((mat: any) => {
+            flatAlunos.push({
+              ...aluno,
+              id: mat.id,
+              aluno_id: aluno.id,
+              turma: mat.turma,
+              unidade: mat.unidade,
+              status: mat.status,
+              data_matricula: mat.data_matricula,
+              pagarme_subscription_id: mat.pagarme_subscription_id,
+              horario: mat.horario,
+              data_cancelamento: mat.data_cancelamento
+            });
+          });
+        } else {
+          flatAlunos.push({
+            ...aluno,
+            aluno_id: aluno.id,
+            turma: null,
+            unidade: null
+          });
+        }
+      });
+
       res.json({ 
         success: true, 
-        guardian: { ...data, alunos: students || [] } 
+        guardian: { ...data, alunos: flatAlunos } 
       });
     } catch (error: any) {
       console.error("Error completing guardian profile:", error);
@@ -2525,8 +2552,19 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
     }
   });
 
+  app.get("/api/test-alunos", async (req, res) => {
+    const { data, error } = await supabase.from('alunos').select('*').limit(1);
+    res.json(data);
+  });
+
+  app.get("/api/test-tarefas", async (req, res) => {
+    const { data, error } = await supabase.from('tarefas').select('*, alunos(nome_completo)').order('created_at', { ascending: false }).limit(10);
+    res.json(data);
+  });
+
   app.post("/api/tasks/create", async (req, res) => {
     const { tipo, responsavel_id, aluno_id, matricula_id, detalhes } = req.body;
+    console.log("[Tasks] Creating task:", { tipo, responsavel_id, aluno_id, matricula_id, detalhes });
     try {
       const { data, error } = await supabase
         .from('tarefas')
@@ -2556,7 +2594,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           *,
           responsaveis(nome_completo),
           alunos(nome_completo),
-          matriculas(turma, unidade)
+          matriculas(turma, unidade, alunos(nome_completo))
         `)
         .order('created_at', { ascending: false });
       

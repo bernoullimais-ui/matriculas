@@ -877,6 +877,11 @@ export default function App() {
       return;
     }
     
+    console.log("Canceling enrollment ID:", cancelingEnrollmentId);
+    console.log("Dependents:", dependents);
+    console.log("Found dependent:", dependents.find(d => d.id === cancelingEnrollmentId));
+    console.log("Found aluno_id:", dependents.find(d => d.id === cancelingEnrollmentId)?.aluno_id);
+
     setLoading(true);
     try {
       if (step === 'portal') {
@@ -887,7 +892,9 @@ export default function App() {
           body: JSON.stringify({ 
             tipo: 'cancelamento',
             responsavel_id: formData.guardian.id,
-            aluno_id: enrollments.find(e => e.alunos.some(a => a.matriculas.some(m => m.id === cancelingEnrollmentId)))?.alunos.find(a => a.matriculas.some(m => m.id === cancelingEnrollmentId))?.id,
+            aluno_id: step === 'portal' 
+              ? dependents.find(d => d.id === cancelingEnrollmentId)?.aluno_id
+              : enrollments.find(e => e.alunos.some(a => a.matriculas.some(m => m.id === cancelingEnrollmentId)))?.alunos.find(a => a.matriculas.some(m => m.id === cancelingEnrollmentId))?.id,
             matricula_id: cancelingEnrollmentId,
             detalhes: {
               data_cancelamento: cancellationDate,
@@ -1057,12 +1064,19 @@ export default function App() {
     setLoadingTasks(true);
     try {
       const response = await fetch('/api/tasks');
-      const data = await response.json();
-      if (response.ok) {
-        setTasks(data);
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await response.json();
+        if (response.ok) {
+          setTasks(data);
+        } else {
+          setTasks({ error: data.error || 'Erro desconhecido' });
+          console.error('Error fetching tasks (server):', data.error);
+        }
       } else {
-        setTasks({ error: data.error || 'Erro desconhecido' });
-        console.error('Error fetching tasks (server):', data.error);
+        const text = await response.text();
+        setTasks({ error: text || 'Erro desconhecido' });
+        console.error('Error fetching tasks (server text):', text);
       }
     } catch (error: any) {
       setTasks({ error: error.message || 'Erro de conexão' });
@@ -1141,6 +1155,12 @@ export default function App() {
   const fetchOptions = async () => {
     try {
       const response = await fetch('/api/options');
+      const contentType = response.headers.get("content-type");
+      if (!contentType || contentType.indexOf("application/json") === -1) {
+        console.error('Error fetching options (text):', await response.text());
+        setOptions({ series: [], unidades: [], turmas: [] });
+        return;
+      }
       const data = await response.json();
       console.log('Fetched options:', data);
       if (data && Array.isArray(data.series) && Array.isArray(data.unidades) && Array.isArray(data.turmas)) {
@@ -1158,13 +1178,21 @@ export default function App() {
     setLoading(true);
     try {
       const response = await fetch('/api/enrollments');
-      const data = await response.json();
-      if (response.ok) {
-        setEnrollments(Array.isArray(data) ? data : []);
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await response.json();
+        if (response.ok) {
+          setEnrollments(Array.isArray(data) ? data : []);
+        } else {
+          console.error('API Error fetching enrollments:', data.error);
+          setEnrollments([]);
+          alert('Erro ao carregar matrículas: ' + (data.error || 'Erro desconhecido'));
+        }
       } else {
-        console.error('API Error fetching enrollments:', data.error);
+        const text = await response.text();
+        console.error('API Error fetching enrollments (text):', text);
         setEnrollments([]);
-        alert('Erro ao carregar matrículas: ' + (data.error || 'Erro desconhecido'));
+        alert('Erro ao carregar matrículas: ' + (text || 'Erro desconhecido'));
       }
     } catch (error) {
       console.error('Error fetching enrollments:', error);
@@ -1183,6 +1211,12 @@ export default function App() {
     setSearchingGuardian(true);
     try {
       const response = await fetch(`/api/guardian/${cpf}`);
+      const contentType = response.headers.get("content-type");
+      if (!contentType || contentType.indexOf("application/json") === -1) {
+        console.error('Error checking CPF (text):', await response.text());
+        return;
+      }
+      
       const data = await response.json();
       
       if (data && data.exists) {
@@ -1204,9 +1238,12 @@ export default function App() {
   const fetchPayments = async (guardianId: string) => {
     try {
       const response = await fetch(`/api/payments/${guardianId}`);
-      if (response.ok) {
+      const contentType = response.headers.get("content-type");
+      if (response.ok && contentType && contentType.indexOf("application/json") !== -1) {
         const data = await response.json();
         setPayments(data);
+      } else if (!response.ok) {
+        console.error('Error fetching payments:', await response.text());
       }
     } catch (error) {
       console.error('Error fetching payments:', error);
@@ -1226,6 +1263,13 @@ export default function App() {
           password: formData.guardian.password 
         })
       });
+      
+      const contentType = response.headers.get("content-type");
+      if (!contentType || contentType.indexOf("application/json") === -1) {
+        const text = await response.text();
+        setAccessError(text || "Erro de servidor");
+        return;
+      }
       
       const data = await response.json();
       
@@ -1278,6 +1322,13 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier: loginIdentifier, password: loginPassword })
       });
+      
+      const contentType = response.headers.get("content-type");
+      if (!contentType || contentType.indexOf("application/json") === -1) {
+        const text = await response.text();
+        setAccessError(text || "Erro de servidor");
+        return;
+      }
       
       const data = await response.json();
       
@@ -1370,6 +1421,13 @@ export default function App() {
         })
       });
 
+      const contentType = response.headers.get("content-type");
+      if (!contentType || contentType.indexOf("application/json") === -1) {
+        const text = await response.text();
+        alert(text || "Erro de servidor");
+        return;
+      }
+
       const data = await response.json();
       if (response.ok) {
         setFormData(prev => ({
@@ -1405,6 +1463,13 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier: loginIdentifier })
       });
+      
+      const contentType = response.headers.get("content-type");
+      if (!contentType || contentType.indexOf("application/json") === -1) {
+        const text = await response.text();
+        setAccessError(text || "Erro de servidor");
+        return;
+      }
       
       const data = await response.json();
       
@@ -2372,7 +2437,7 @@ export default function App() {
                                 </span>
                               </div>
                               <h3 className="font-bold text-slate-900">
-                                {task.alunos?.nome_completo || 'Aluno não identificado'}
+                                {task.alunos?.nome_completo || task.matriculas?.alunos?.nome_completo || 'Aluno não identificado'}
                               </h3>
                               <p className="text-sm text-slate-500">
                                 Responsável: {task.responsaveis?.nome_completo || 'N/A'}
@@ -2380,6 +2445,13 @@ export default function App() {
                               <div className="mt-3 text-sm bg-white/50 p-3 rounded-xl border border-slate-100">
                                 {task.tipo === 'cancelamento' ? (
                                   <>
+                                    {task.matriculas && (
+                                      <div className="mb-2">
+                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-800">
+                                          {task.matriculas.turma} • {task.matriculas.unidade}
+                                        </span>
+                                      </div>
+                                    )}
                                     <p><strong>Data:</strong> {task.detalhes?.data_cancelamento}</p>
                                     <p><strong>Justificativa:</strong> {task.detalhes?.justificativa}</p>
                                   </>
@@ -4041,6 +4113,12 @@ export default function App() {
                                           }
                                         });
                                         setTransferringEnrollmentId(mat.id);
+                                        setTransferringStudent({
+                                          id: dep.aluno_id,
+                                          nome_completo: dep.nome_completo,
+                                          serie_ano: dep.serie_ano,
+                                          data_nascimento: dep.data_nascimento
+                                        });
                                         setStep('enrollment');
                                       }}
                                       className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
