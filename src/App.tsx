@@ -450,6 +450,10 @@ export default function App() {
     unidade: '',
     professor: '',
     search: '',
+    status: '',
+    period: '',
+    startDate: '',
+    endDate: '',
     view: 'summary' as 'summary' | 'detailed'
   });
   const [newOption, setNewOption] = useState({ 
@@ -3262,9 +3266,60 @@ export default function App() {
                             ))}
                           </select>
                         </div>
-                        {(financeFilters.unidade || financeFilters.professor || financeFilters.search) && (
+                        <div className="flex-1 min-w-[200px] space-y-1">
+                          <label className="text-xs font-bold text-slate-500 uppercase">Filtrar por Status</label>
+                          <select 
+                            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                            value={financeFilters.status}
+                            onChange={e => setFinanceFilters({...financeFilters, status: e.target.value})}
+                          >
+                            <option value="">Todos os Status</option>
+                            <option value="pago">Conciliado</option>
+                            <option value="pendente">Pendente</option>
+                            <option value="cancelado">Cancelado</option>
+                            <option value="estornado">Estornado</option>
+                            <option value="falha">Falhou</option>
+                          </select>
+                        </div>
+                        <div className="flex-1 min-w-[200px] space-y-1">
+                          <label className="text-xs font-bold text-slate-500 uppercase">Período</label>
+                          <select 
+                            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                            value={financeFilters.period}
+                            onChange={e => setFinanceFilters({...financeFilters, period: e.target.value})}
+                          >
+                            <option value="">Todo o período</option>
+                            <option value="this_month">Este mês</option>
+                            <option value="last_month">Último mês</option>
+                            <option value="last_7_days">Últimos 7 dias</option>
+                            <option value="custom">Personalizado</option>
+                          </select>
+                        </div>
+                        {financeFilters.period === 'custom' && (
+                          <>
+                            <div className="flex-1 min-w-[140px] space-y-1">
+                              <label className="text-xs font-bold text-slate-500 uppercase">Data Inicial</label>
+                              <input 
+                                type="date"
+                                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                                value={financeFilters.startDate}
+                                onChange={e => setFinanceFilters({...financeFilters, startDate: e.target.value})}
+                              />
+                            </div>
+                            <div className="flex-1 min-w-[140px] space-y-1">
+                              <label className="text-xs font-bold text-slate-500 uppercase">Data Final</label>
+                              <input 
+                                type="date"
+                                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                                value={financeFilters.endDate}
+                                onChange={e => setFinanceFilters({...financeFilters, endDate: e.target.value})}
+                              />
+                            </div>
+                          </>
+                        )}
+                        {(financeFilters.unidade || financeFilters.professor || financeFilters.search || financeFilters.status || financeFilters.period) && (
                           <button 
-                            onClick={() => setFinanceFilters({...financeFilters, unidade: '', professor: '', search: ''})}
+                            onClick={() => setFinanceFilters({...financeFilters, unidade: '', professor: '', search: '', status: '', period: '', startDate: '', endDate: ''})}
                             className="px-4 py-2 text-sm font-bold text-red-500 hover:text-red-600 transition-colors flex items-center gap-1"
                           >
                             <X size={14} />
@@ -3284,7 +3339,42 @@ export default function App() {
                       {(() => {
                         const filteredPayments = financialData.pagamentos.filter(p => {
                           // If no filters, show all
-                          if (!financeFilters.unidade && !financeFilters.professor && !financeFilters.search) return true;
+                          if (!financeFilters.unidade && !financeFilters.professor && !financeFilters.search && !financeFilters.status && !financeFilters.period) return true;
+                          
+                          // Status filter
+                          if (financeFilters.status && p.status !== financeFilters.status) return false;
+                          
+                          // Period filter
+                          if (financeFilters.period) {
+                            const paymentDateStr = p.data_vencimento || p.created_at;
+                            if (!paymentDateStr) return false;
+                            
+                            const paymentDate = new Date(paymentDateStr);
+                            const today = new Date();
+                            
+                            if (financeFilters.period === 'this_month') {
+                              if (paymentDate.getMonth() !== today.getMonth() || paymentDate.getFullYear() !== today.getFullYear()) return false;
+                            } else if (financeFilters.period === 'last_month') {
+                              const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                              if (paymentDate.getMonth() !== lastMonth.getMonth() || paymentDate.getFullYear() !== lastMonth.getFullYear()) return false;
+                            } else if (financeFilters.period === 'last_7_days') {
+                              const sevenDaysAgo = new Date(today);
+                              sevenDaysAgo.setDate(today.getDate() - 7);
+                              sevenDaysAgo.setHours(0, 0, 0, 0);
+                              if (paymentDate < sevenDaysAgo) return false;
+                            } else if (financeFilters.period === 'custom') {
+                              if (financeFilters.startDate) {
+                                const [year, month, day] = financeFilters.startDate.split('-').map(Number);
+                                const start = new Date(year, month - 1, day, 0, 0, 0, 0);
+                                if (paymentDate < start) return false;
+                              }
+                              if (financeFilters.endDate) {
+                                const [year, month, day] = financeFilters.endDate.split('-').map(Number);
+                                const end = new Date(year, month - 1, day, 23, 59, 59, 999);
+                                if (paymentDate > end) return false;
+                              }
+                            }
+                          }
                           
                           const resp = p.responsaveis;
                           
@@ -3299,7 +3389,7 @@ export default function App() {
 
                           if (!matchesSearch) return false;
 
-                          // If only search filter is active and it matched, we're good
+                          // If only search and/or status and/or period filter is active and it matched, we're good
                           if (!financeFilters.unidade && !financeFilters.professor) return true;
 
                           if (!resp || !Array.isArray(resp.alunos)) return false;

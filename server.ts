@@ -3531,6 +3531,13 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         };
       });
 
+      // Sort payments by date (data_vencimento or created_at) in descending order
+      detailedPagamentos.sort((a, b) => {
+        const dateA = new Date(a.data_vencimento || a.created_at).getTime();
+        const dateB = new Date(b.data_vencimento || b.created_at).getTime();
+        return dateB - dateA;
+      });
+
       res.json({ pagamentos: detailedPagamentos, turmas: turmas });
     } catch (error: any) {
       console.error("Financial Report Error Detailed:", error);
