@@ -7349,40 +7349,40 @@ export default function App() {
           <motion.div 
             initial={{ opacity: 0, scale: 0.9, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="bg-white rounded-[32px] shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-100"
+            className="bg-white rounded-[32px] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-100"
           >
-            <div className="relative h-48 bg-emerald-600 flex items-center justify-center overflow-hidden">
+            <div className="relative h-32 md:h-48 shrink-0 bg-emerald-600 flex items-center justify-center overflow-hidden">
               <div className="absolute inset-0 opacity-20">
                 <div className="absolute -top-24 -left-24 w-64 h-64 bg-white rounded-full blur-3xl"></div>
                 <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-white rounded-full blur-3xl"></div>
               </div>
               <div className="relative flex flex-col items-center text-white text-center px-6">
-                <div className="w-20 h-20 bg-white/20 backdrop-blur-md rounded-3xl flex items-center justify-center mb-4 border border-white/30">
-                  <Sparkles size={40} className="text-white" />
+                <div className="w-12 h-12 md:w-20 md:h-20 bg-white/20 backdrop-blur-md rounded-2xl md:rounded-3xl flex items-center justify-center mb-2 md:mb-4 border border-white/30">
+                  <Sparkles className="text-white w-6 h-6 md:w-10 md:h-10" />
                 </div>
-                <h2 className="text-2xl font-black uppercase tracking-tight">Migração Concluída!</h2>
+                <h2 className="text-xl md:text-2xl font-black uppercase tracking-tight">Migração Concluída!</h2>
               </div>
               <button 
                 onClick={() => setShowWelcomeModal(false)}
-                className="absolute top-6 right-6 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white"
+                className="absolute top-4 right-4 md:top-6 md:right-6 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white"
               >
                 <X size={20} />
               </button>
             </div>
             
-            <div className="p-8 md:p-10 space-y-6">
+            <div className="p-6 md:p-10 space-y-6 overflow-y-auto">
               <div className="space-y-4">
-                <h3 className="text-xl font-bold text-slate-900 leading-tight">
+                <h3 className="text-lg md:text-xl font-bold text-slate-900 leading-tight">
                   Bem-vindo(a) ao novo Portal de Matrículas Sport for Kids!
                 </h3>
-                <p className="text-slate-600 leading-relaxed">
+                <p className="text-sm md:text-base text-slate-600 leading-relaxed">
                   Para sua comodidade, migramos todos os dados da plataforma anterior para este novo ambiente. 
                   O acesso continua sendo pelo mesmo e-mail que você já utilizava.
                 </p>
               </div>
 
-              <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 space-y-4">
-                <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest">Para realizar seu primeiro acesso:</h4>
+              <div className="bg-slate-50 rounded-2xl p-5 md:p-6 border border-slate-100 space-y-4">
+                <h4 className="text-xs md:text-sm font-black text-slate-400 uppercase tracking-widest">Para realizar seu primeiro acesso:</h4>
                 <ul className="space-y-3">
                   {[
                     "Informe seu e-mail no campo indicado;",
@@ -7390,31 +7390,31 @@ export default function App() {
                     "Você receberá uma senha temporária via WhatsApp;"
                   ].map((item, i) => (
                     <li key={i} className="flex items-start gap-3 text-slate-700">
-                      <div className="mt-1 w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0 text-emerald-600 font-bold text-[10px]">
+                      <div className="mt-0.5 md:mt-1 w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0 text-emerald-600 font-bold text-[10px]">
                         {i + 1}
                       </div>
-                      <span className="text-sm font-medium">{item}</span>
+                      <span className="text-xs md:text-sm font-medium">{item}</span>
                     </li>
                   ))}
                 </ul>
               </div>
 
-              <div className="flex items-start gap-4 p-4 bg-amber-50 rounded-2xl border border-amber-100">
-                <div className="p-2 bg-amber-100 rounded-xl text-amber-600">
-                  <Info size={20} />
+              <div className="flex items-start gap-3 md:gap-4 p-4 bg-amber-50 rounded-2xl border border-amber-100">
+                <div className="p-1.5 md:p-2 bg-amber-100 rounded-xl text-amber-600 shrink-0">
+                  <Info size={18} className="md:w-5 md:h-5" />
                 </div>
-                <p className="text-xs text-amber-800 leading-relaxed">
+                <p className="text-[11px] md:text-xs text-amber-800 leading-relaxed">
                   <strong>Importante:</strong> Após o primeiro login, solicitamos que altere essa senha para uma de sua preferência nas configurações do perfil.
                 </p>
               </div>
 
-              <p className="text-sm text-slate-500 text-center italic">
+              <p className="text-xs md:text-sm text-slate-500 text-center italic">
                 Estamos à disposição para ajudar. Se precisar de qualquer suporte, não hesite em nos contatar!
               </p>
 
               <button 
                 onClick={() => setShowWelcomeModal(false)}
-                className="w-full py-4 bg-slate-900 text-white font-black uppercase tracking-widest rounded-2xl hover:bg-slate-800 transition-all shadow-xl shadow-slate-200"
+                className="w-full py-3.5 md:py-4 bg-slate-900 text-white text-sm md:text-base font-black uppercase tracking-widest rounded-2xl hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 shrink-0 mt-4"
               >
                 Entendi, vamos lá!
               </button>
