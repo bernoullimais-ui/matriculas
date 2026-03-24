@@ -335,6 +335,65 @@ Se precisar de ajuda, entre em contato conosco.
   }
 }
 
+async function sendRecurringPaymentFailureNotification(guardianId: string, studentName: string, className: string, reason: string) {
+  try {
+    const { data: guardian, error: gError } = await supabase
+      .from('responsaveis')
+      .select('nome_completo, email, telefone')
+      .eq('id', guardianId)
+      .single();
+
+    if (gError || !guardian) {
+      console.error(`[Notificação] Erro ao buscar dados do responsável ${guardianId}:`, gError);
+      return;
+    }
+
+    const subject = "Aviso sobre o pagamento da mensalidade - Sport for Kids";
+    const whatsappMessage = `Olá, *${guardian.nome_completo}*! Tudo bem?
+
+Identificamos que não foi possível processar o pagamento da mensalidade de *${studentName}* (Turma: *${className}*).
+
+⚠️ *Motivo retornado pelo banco:* ${reason}
+
+Mas não se preocupe! Nosso sistema fará *novas tentativas automáticas* de cobrança nos próximos dias. 🔄
+
+💳 Caso você precise *atualizar o seu cartão de crédito* para que as próximas tentativas e as futuras mensalidades sejam cobradas no novo cartão, basta nos avisar por aqui ou acessar o portal do aluno.
+
+Qualquer dúvida, seguimos à disposição! 🏆`;
+
+    const htmlContent = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <h2 style="color: #e11d48;">Aviso sobre o pagamento da mensalidade</h2>
+        <p>Olá, <strong>${guardian.nome_completo}</strong>,</p>
+        <p>Gostaríamos de informar que o pagamento da mensalidade de <strong>${studentName}</strong> (Turma: <strong>${className}</strong>) não pôde ser processado com sucesso.</p>
+        <div style="background-color: #fff1f2; border-left: 4px solid #e11d48; padding: 10px; margin: 20px 0;">
+          <p style="margin: 0;"><strong>Motivo da recusa:</strong> ${reason}</p>
+        </div>
+        <h3>O que acontece agora?</h3>
+        <p>Nosso sistema está programado para realizar <strong>novas tentativas automáticas</strong> de cobrança nos próximos dias. Você não precisa se preocupar.</p>
+        <h3>Precisa trocar o cartão?</h3>
+        <p>Se o cartão cadastrado foi cancelado, expirou ou se você deseja alterá-lo para as próximas tentativas e futuras cobranças, por favor, acesse o nosso portal ou entre em contato com a nossa equipe de atendimento.</p>
+        <p>Se precisar de ajuda, estamos à disposição!</p>
+        <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+        <p style="font-size: 14px; color: #334155;">Atenciosamente,<br/><strong>Equipe Sport for Kids</strong></p>
+      </div>
+    `;
+
+    // Enviar E-mail via Brevo
+    if (guardian.email) {
+      await sendBrevoEmail(guardian.email, guardian.nome_completo, subject, htmlContent);
+    }
+
+    // Enviar WhatsApp via UTalk
+    if (guardian.telefone) {
+      await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, whatsappMessage).catch(e => console.error("Erro ao enviar WhatsApp de falha recorrente:", e));
+    }
+    
+  } catch (error) {
+    console.error("[Notificação] Erro crítico ao enviar notificação de falha recorrente:", error);
+  }
+}
+
 async function syncAllPendingPayments() {
   const secretKey = getPagarmeSecretKey();
   if (!secretKey) {
@@ -2637,11 +2696,6 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
       if (currentEnrollment?.status === 'transferido' || currentEnrollment?.status === 'cancelado') {
         return res.status(400).json({ error: "Não é possível realizar movimentações em uma matrícula transferida ou cancelada." });
-      }
-
-      const today = new Date().toISOString().split('T')[0];
-      if (cancellationDate < today) {
-        return res.status(400).json({ error: "A data de cancelamento não pode ser anterior à data de hoje." });
       }
 
       const updateData: any = {
@@ -5002,8 +5056,27 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                 .single();
 
               if (matricula && matricula.status === 'pendente') {
-                console.log(`[Webhook Pagar.me] Ativando matrícula ${paymentData.matricula_id}...`);
+                console.log(`[Webhook Pagar.me] Tentando ativar matrícula ${paymentData.matricula_id}...`);
                 
+                // Update matricula status to 'ativo' and set data_matricula ONLY if it is currently 'pendente'
+                const { data: updatedMatricula, error: updateError } = await supabase
+                  .from('matriculas')
+                  .update({ 
+                    status: 'ativo',
+                    data_matricula: new Date().toISOString()
+                  })
+                  .eq('id', paymentData.matricula_id)
+                  .eq('status', 'pendente')
+                  .select()
+                  .maybeSingle();
+
+                if (!updatedMatricula) {
+                  console.log(`[Webhook Pagar.me] Matrícula ${paymentData.matricula_id} já foi ativada por outro evento. Ignorando notificações duplicadas.`);
+                  return res.status(200).json({ received: true, message: "Matrícula já ativada" });
+                }
+
+                console.log(`[Webhook Pagar.me] Matrícula ${paymentData.matricula_id} ativada com sucesso. Preparando notificações...`);
+
                 // Fetch class data for values
                 const { data: classData } = await supabase
                   .from('turmas_complementares')
@@ -5025,15 +5098,6 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                 const descontoTaxaZero = valorSistema * 0.10;
                 const valorCheio = valorSistema;
                 const valorMatricula = firstPayment?.valor || valorSistema;
-
-                // Update matricula status to 'ativo' and set data_matricula
-                await supabase
-                  .from('matriculas')
-                  .update({ 
-                    status: 'ativo',
-                    data_matricula: new Date().toISOString()
-                  })
-                  .eq('id', paymentData.matricula_id);
 
                 // Fetch guardian and student details for notifications
                 const { data: guardian } = await supabase
@@ -5207,6 +5271,28 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
                   (event.type === 'charge.antifraud_reproval' || event.type === 'charge.antifraud_reproved' ? "Reprovado pelo sistema de antifraude." : "Transação recusada pela operadora do cartão.");
 
                 await sendPaymentFailureNotification(
+                  paymentData.responsavel_id,
+                  student?.nome_completo || "Estudante",
+                  matricula.turma || "Turma não identificada",
+                  failureReason
+                );
+              } else if (matricula && matricula.status === 'ativo') {
+                console.log(`[Webhook Pagar.me] Falha em pagamento recorrente da matrícula ${paymentData.matricula_id}. Enviando notificação...`);
+                
+                const { data: student } = await supabase
+                  .from('alunos')
+                  .select('nome_completo')
+                  .eq('id', matricula.aluno_id)
+                  .single();
+
+                const failureReason = 
+                  data.last_transaction?.gateway_response?.errors?.[0]?.message || 
+                  data.last_transaction?.acquirer_message || 
+                  data.antifraud_response?.message ||
+                  data.message ||
+                  (event.type === 'charge.antifraud_reproval' || event.type === 'charge.antifraud_reproved' ? "Reprovado pelo sistema de antifraude." : "Transação recusada pela operadora do cartão.");
+
+                await sendRecurringPaymentFailureNotification(
                   paymentData.responsavel_id,
                   student?.nome_completo || "Estudante",
                   matricula.turma || "Turma não identificada",

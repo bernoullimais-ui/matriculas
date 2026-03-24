@@ -405,6 +405,7 @@ export default function App() {
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [showNotifyModal, setShowNotifyModal] = useState<{ isOpen: boolean, item: any | null }>({ isOpen: false, item: null });
+  const [approveCancelModal, setApproveCancelModal] = useState<{ isOpen: boolean, task: any | null, date: string }>({ isOpen: false, task: null, date: '' });
   const [isSavingTerms, setIsSavingTerms] = useState(false);
   const [pagarmeSoftDescriptor, setPagarmeSoftDescriptor] = useState('SportForKids');
   const [pagarmeSoftDescriptorBernoulli, setPagarmeSoftDescriptorBernoulli] = useState('BernoulliMais');
@@ -871,7 +872,7 @@ export default function App() {
     if (!cancelingEnrollmentId) return;
 
     const today = new Date().toISOString().split('T')[0];
-    if (cancellationDate < today) {
+    if (step === 'portal' && cancellationDate < today) {
       setErrorMessage('A data de cancelamento não pode ser anterior à data de hoje.');
       return;
     }
@@ -1090,8 +1091,18 @@ export default function App() {
     }
   };
 
-  const handleApproveTask = async (task: any) => {
-    if (!window.confirm('Deseja realmente aprovar esta solicitação?')) return;
+  const handleApproveTask = async (task: any, customCancellationDate?: string) => {
+    if (task.tipo === 'cancelamento' && !customCancellationDate) {
+      setApproveCancelModal({
+        isOpen: true,
+        task: task,
+        date: task.detalhes.data_cancelamento || new Date().toISOString().split('T')[0]
+      });
+      return;
+    }
+
+    if (task.tipo !== 'cancelamento' && !window.confirm('Deseja realmente aprovar esta solicitação?')) return;
+    
     setLoading(true);
     try {
       let endpoint = '';
@@ -1100,7 +1111,7 @@ export default function App() {
         endpoint = '/api/enrollment/cancel';
         body = {
           enrollmentId: task.matricula_id,
-          cancellationDate: task.detalhes.data_cancelamento,
+          cancellationDate: customCancellationDate || task.detalhes.data_cancelamento,
           justificativa: task.detalhes.justificativa
         };
       } else if (task.tipo === 'transferencia') {
@@ -6453,7 +6464,7 @@ export default function App() {
                       type="date" 
                       className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-red-500 outline-none transition-all"
                       value={cancellationDate}
-                      min={new Date().toISOString().split('T')[0]}
+                      min={step === 'portal' ? new Date().toISOString().split('T')[0] : undefined}
                       onChange={e => setCancellationDate(e.target.value)}
                     />
                   </div>
@@ -7433,6 +7444,74 @@ export default function App() {
           </motion.div>
         </div>
       )}
+      {/* Approve Cancellation Modal */}
+      {approveCancelModal.isOpen && approveCancelModal.task && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+          >
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <Calendar size={24} className="text-emerald-600" />
+                Aprovar Cancelamento
+              </h3>
+              <button 
+                onClick={() => setApproveCancelModal({ isOpen: false, task: null, date: '' })}
+                className="text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <p className="text-slate-600 text-sm">
+                Selecione a data efetiva do cancelamento. Esta data será usada para calcular os valores proporcionais.
+              </p>
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Data do Cancelamento
+                </label>
+                <input
+                  type="date"
+                  value={approveCancelModal.date}
+                  onChange={(e) => setApproveCancelModal({ ...approveCancelModal, date: e.target.value })}
+                  className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                />
+              </div>
+              
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
+                <AlertCircle className="text-amber-600 shrink-0" size={20} />
+                <div className="text-sm text-amber-800">
+                  <p className="font-medium mb-1">Atenção</p>
+                  <p>A data solicitada pelo cliente foi: <strong>{approveCancelModal.task.detalhes?.data_cancelamento?.split('-').reverse().join('/')}</strong></p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+              <button 
+                onClick={() => setApproveCancelModal({ isOpen: false, task: null, date: '' })}
+                className="px-4 py-2 text-slate-600 font-medium hover:bg-slate-200 rounded-xl transition-all"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={() => {
+                  handleApproveTask(approveCancelModal.task, approveCancelModal.date);
+                  setApproveCancelModal({ isOpen: false, task: null, date: '' });
+                }}
+                className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
+              >
+                Confirmar e Processar
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {/* Welcome Message Modal */}
       {showWelcomeModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
