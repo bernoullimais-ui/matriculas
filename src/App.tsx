@@ -6049,56 +6049,8 @@ export default function App() {
                       </div>
                       <div>
                         <h2 className="text-2xl font-semibold">Método de Pagamento</h2>
-                        <p className="text-slate-500 text-sm">Escolha como deseja pagar as mensalidades recorrentes.</p>
+                        <p className="text-slate-500 text-sm">Cobrança automática mensal no cartão de crédito.</p>
                       </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <label 
-                        className={`flex items-center gap-4 p-5 rounded-2xl border-2 cursor-pointer transition-all ${
-                          formData.paymentMethod === 'credit_card' 
-                            ? 'border-purple-600 bg-purple-50/50' 
-                            : 'border-slate-100 hover:border-slate-200'
-                        }`}
-                      >
-                        <input 
-                          type="radio" 
-                          name="payment" 
-                          className="hidden"
-                          checked={formData.paymentMethod === 'credit_card'}
-                          onChange={() => setFormData({...formData, paymentMethod: 'credit_card'})}
-                        />
-                        <div className="p-2 bg-white rounded-lg shadow-sm">
-                          <CreditCard className="text-purple-600" size={20} />
-                        </div>
-                        <div className="flex-1">
-                          <p className="font-semibold">Cartão de Crédito (Recorrente)</p>
-                          <p className="text-xs text-slate-500">Cobrança automática mensal sem ocupar o limite total.</p>
-                        </div>
-                      </label>
-
-                      <label 
-                        className={`flex items-center gap-4 p-5 rounded-2xl border-2 cursor-pointer transition-all ${
-                          formData.paymentMethod === 'pix' 
-                            ? 'border-emerald-600 bg-emerald-50/50' 
-                            : 'border-slate-100 hover:border-slate-200'
-                        }`}
-                      >
-                        <input 
-                          type="radio" 
-                          name="payment" 
-                          className="hidden"
-                          checked={formData.paymentMethod === 'pix'}
-                          onChange={() => setFormData({...formData, paymentMethod: 'pix'})}
-                        />
-                        <div className="p-2 bg-white rounded-lg shadow-sm">
-                          <QrCode className="text-emerald-600" size={20} />
-                        </div>
-                        <div className="flex-1">
-                          <p className="font-semibold">PIX (Mensal)</p>
-                          <p className="text-xs text-slate-500">Você receberá o QR Code mensalmente por e-mail e WhatsApp.</p>
-                        </div>
-                      </label>
                     </div>
 
                     {formData.paymentMethod === 'credit_card' && (
