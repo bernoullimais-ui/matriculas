@@ -126,7 +126,7 @@ export default function App() {
   const [isImporting, setIsImporting] = useState(false);
   const [importEncoding, setImportEncoding] = useState('UTF-8');
   const [importFile, setImportFile] = useState<File | null>(null);
-  const [importType, setImportType] = useState<'matriculas' | 'aulas_experimentais' | 'ocorrencias' | 'presencas' | 'pagamentos_wix'>('matriculas');
+  const [importType, setImportType] = useState<'matriculas' | 'aulas_experimentais' | 'ocorrencias' | 'presencas' | 'pagamentos_wix' | 'pagamentos_pagseguro'>('matriculas');
   const [wixMapping, setWixMapping] = useState<{
     email: string;
     responsavel_nome: string;
@@ -159,17 +159,20 @@ export default function App() {
         Papa.parse(content, {
           header: true,
           skipEmptyLines: 'greedy',
-          transformHeader: (header) => {
+          transformHeader: (header, index) => {
             // Remove BOM and trim
-            return header.replace(/^\ufeff/i, '').trim();
+            const clean = header.replace(/^\ufeff/i, '').trim();
+            if (importType === 'pagamentos_wix') {
+              // For WIX, we append the index to handle duplicate column names (like "Nome", "Email", etc.)
+              return `idx${index}_${clean}`;
+            }
+            return clean;
           },
           complete: (results) => {
             console.log('PapaParse Results:', results);
             
             if (importType === 'pagamentos_wix' && results.meta.fields) {
-              setCsvHeaders(results.meta.fields);
-              setTempWixData(results.data);
-              setShowMappingModal(true);
+              processMappedData(results.data);
               return;
             }
 
@@ -223,6 +226,8 @@ export default function App() {
         endpoint = '/api/admin/import-presencas';
       } else if (type === 'pagamentos_wix') {
         endpoint = '/api/admin/import-wix-payments';
+      } else if (type === 'pagamentos_pagseguro') {
+        endpoint = '/api/admin/import-pagseguro-payments';
       }
       
       const response = await fetch(endpoint, {
@@ -230,7 +235,9 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: type === 'pagamentos_wix' 
           ? JSON.stringify({ payments: dataToPreview, preview: true, mapping: wixMapping })
-          : JSON.stringify({ rows: dataToPreview, preview: true })
+          : type === 'pagamentos_pagseguro'
+            ? JSON.stringify({ payments: dataToPreview, preview: true })
+            : JSON.stringify({ rows: dataToPreview, preview: true })
       });
       
       const text = await response.text();
@@ -257,7 +264,7 @@ export default function App() {
   };
 
   const processMappedData = (rawData: any[]) => {
-    if (importType === 'aulas_experimentais' || importType === 'ocorrencias' || importType === 'presencas' || importType === 'pagamentos_wix') {
+    if (importType === 'aulas_experimentais' || importType === 'ocorrencias' || importType === 'presencas' || importType === 'pagamentos_wix' || importType === 'pagamentos_pagseguro') {
       // For these types, just keep the raw data as the server handles the mapping
       setImportData(rawData);
       setImportResults(null);
@@ -330,6 +337,8 @@ export default function App() {
         endpoint = '/api/admin/import-presencas';
       } else if (importType === 'pagamentos_wix') {
         endpoint = '/api/admin/import-wix-payments';
+      } else if (importType === 'pagamentos_pagseguro') {
+        endpoint = '/api/admin/import-pagseguro-payments';
       }
       
       const response = await fetch(endpoint, {
@@ -337,7 +346,9 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: importType === 'pagamentos_wix' 
           ? JSON.stringify({ payments: importData, mapping: wixMapping }) 
-          : JSON.stringify({ rows: importData })
+          : importType === 'pagamentos_pagseguro'
+            ? JSON.stringify({ payments: importData })
+            : JSON.stringify({ rows: importData })
       });
       
       const text = await response.text();
@@ -387,6 +398,10 @@ export default function App() {
       headers = [
         'Data', 'Unidade', 'Turma', 'Estudante', 'Status', 'Observação', 'Alarme', 'Timestamp Inclusão'
       ];
+    } else if (importType === 'pagamentos_wix') {
+      headers = ['ID do Pagamento', 'Data', 'Nome', 'Email', 'Valor', 'Status'];
+    } else if (importType === 'pagamentos_pagseguro') {
+      headers = ['Documento', 'Estabelecimento', 'Nome Cliente', 'E-mail Cliente', 'Código da Transação', 'Data da Transação', 'Data prevista de liberação', 'Data do cancelamento', 'Bandeira', 'Forma de Pagamento', 'Parcela', 'Valor Bruto', 'Valor Taxa', 'Valor Repasse', 'Valor Líquido', 'Status', 'Número do Cartão', 'Código NSU', 'Código de Autorização', 'Identificação da Maquininha', 'Código da Venda', 'Código Referência', 'Nome Comprador', 'E-mail Comprador', 'Código TX ID (PIX)', 'ID Split'];
     }
     const csvContent = headers.join(';') + '\n'; // Use semicolon as delimiter
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -455,7 +470,9 @@ export default function App() {
     period: '',
     startDate: '',
     endDate: '',
-    view: 'summary' as 'summary' | 'detailed'
+    view: 'summary' as 'summary' | 'detailed',
+    paymentMethod: 'geral',
+    wixType: ''
   });
   const [newOption, setNewOption] = useState({ 
     type: 'series', 
@@ -569,6 +586,17 @@ export default function App() {
 
   const [transferringEnrollmentId, setTransferringEnrollmentId] = useState<string | null>(null);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  
+  const [pixClickCount, setPixClickCount] = useState(0);
+  const [showPixOption, setShowPixOption] = useState(false);
+
+  const handlePixSecretClick = () => {
+    const newCount = pixClickCount + 1;
+    setPixClickCount(newCount);
+    if (newCount >= 5) {
+      setShowPixOption(true);
+    }
+  };
   
   const passwordInputRef = useRef<HTMLInputElement>(null);
 
@@ -2657,6 +2685,7 @@ export default function App() {
                             <option value="ocorrencias">Ocorrências</option>
                             <option value="presencas">Presenças</option>
                             <option value="pagamentos_wix">Pagamentos WIX</option>
+                            <option value="pagamentos_pagseguro">Pagamentos PagSeguro</option>
                           </select>
                         </div>
                         <div className="text-left">
@@ -2755,14 +2784,14 @@ export default function App() {
                                 <thead>
                                   <tr className="border-b border-slate-100">
                                     <th className="px-3 py-2 text-left text-slate-400 font-medium">
-                                      {importType === 'pagamentos_wix' ? 'Data' : 'Nome do Aluno'}
+                                      {importType === 'pagamentos_wix' || importType === 'pagamentos_pagseguro' ? 'Data' : 'Nome do Aluno'}
                                     </th>
                                     <th className="px-3 py-2 text-left text-slate-400 font-medium">
                                       {importType === 'ocorrencias' 
                                         ? 'Observação' 
                                         : importType === 'presencas'
                                           ? 'Status'
-                                          : importType === 'pagamentos_wix'
+                                          : importType === 'pagamentos_wix' || importType === 'pagamentos_pagseguro'
                                             ? 'Item / Aluno'
                                             : 'Responsável'}
                                     </th>
@@ -2772,18 +2801,18 @@ export default function App() {
                                   {(importPreviewResults?.preview || importData.slice(0, 3)).map((row, i) => (
                                     <tr key={i} className="border-b border-slate-50 last:border-0">
                                       <td className="px-3 py-2 text-slate-700 font-medium truncate max-w-[150px]">
-                                        {importType === 'pagamentos_wix'
-                                          ? (row.Data || '---')
+                                        {importType === 'pagamentos_wix' || importType === 'pagamentos_pagseguro'
+                                          ? (row.data || row.Data || '---')
                                           : importType === 'matriculas' 
                                             ? (row.aluno_nome || row['aluno_nome'] || Object.entries(row).find(([k]) => ['aluno', 'estudante'].includes(k.trim().toLowerCase()))?.[1] as string || '---')
                                             : (Object.entries(row).find(([k]) => ['estudante', 'aluno'].includes(k.trim().toLowerCase()))?.[1] as string || '---')}
                                       </td>
                                       <td className="px-3 py-2 text-slate-500 truncate max-w-[250px]">
-                                        {importType === 'pagamentos_wix'
+                                        {importType === 'pagamentos_wix' || importType === 'pagamentos_pagseguro'
                                           ? (
                                             <div className="flex flex-col">
-                                              <span className="font-bold text-slate-700">{row.Item || '---'}</span>
-                                              <span className="text-[9px] text-blue-600">{row.Aluno || '---'}</span>
+                                              <span className="font-bold text-slate-700">{row.item || row.Item || row.valor || '---'}</span>
+                                              <span className="text-[9px] text-blue-600">{row.aluno || row.Aluno || '---'}</span>
                                             </div>
                                           )
                                           : importType === 'matriculas'
@@ -3211,11 +3240,57 @@ export default function App() {
                 </>
               ) : adminTab === 'finance' ? (
                 <div className="space-y-6">
+                  {/* Sub-Tabs */}
+                  <div className="flex border-b border-slate-200">
+                    <button
+                      onClick={() => setFinanceFilters({ ...financeFilters, paymentMethod: 'geral' })}
+                      className={`px-6 py-3 text-sm font-bold transition-all border-b-2 ${financeFilters.paymentMethod === 'geral' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                    >
+                      Geral
+                    </button>
+                    <button
+                      onClick={() => setFinanceFilters({ ...financeFilters, paymentMethod: 'pagarme' })}
+                      className={`px-6 py-3 text-sm font-bold transition-all border-b-2 ${financeFilters.paymentMethod === 'pagarme' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                    >
+                      Pagar.Me
+                    </button>
+                    <button
+                      onClick={() => setFinanceFilters({ ...financeFilters, paymentMethod: 'pix' })}
+                      className={`px-6 py-3 text-sm font-bold transition-all border-b-2 ${financeFilters.paymentMethod === 'pix' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                    >
+                      PIX
+                    </button>
+                    <button
+                      onClick={() => setFinanceFilters({ ...financeFilters, paymentMethod: 'pagseguro' })}
+                      className={`px-6 py-3 text-sm font-bold transition-all border-b-2 ${financeFilters.paymentMethod === 'pagseguro' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                    >
+                      Pagseguro
+                    </button>
+                    <button
+                      onClick={() => setFinanceFilters({ ...financeFilters, paymentMethod: 'wix' })}
+                      className={`px-6 py-3 text-sm font-bold transition-all border-b-2 ${financeFilters.paymentMethod === 'wix' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                    >
+                      WIX
+                    </button>
+                  </div>
+
                   {/* Filters */}
                   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                       <h3 className="text-lg font-bold text-slate-900">Relatórios Financeiros</h3>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
+                        <button 
+                          onClick={() => setFinanceFilters({...financeFilters, status: 'pago', view: 'detailed'})}
+                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${financeFilters.status === 'pago' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}
+                        >
+                          Conciliados
+                        </button>
+                        <button 
+                          onClick={() => setFinanceFilters({...financeFilters, status: 'pendente', view: 'detailed'})}
+                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${financeFilters.status === 'pendente' ? 'bg-amber-600 text-white border-amber-600' : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'}`}
+                        >
+                          Pendentes
+                        </button>
                         <button 
                           onClick={handleSyncPayments}
                           disabled={loading}
@@ -3306,6 +3381,20 @@ export default function App() {
                             <option value="custom">Personalizado</option>
                           </select>
                         </div>
+                        {financeFilters.paymentMethod === 'wix' && (
+                          <div className="flex-1 min-w-[200px] space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Filtrar por Tipo WIX</label>
+                            <select 
+                              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                              value={financeFilters.wixType}
+                              onChange={e => setFinanceFilters({...financeFilters, wixType: e.target.value})}
+                            >
+                              <option value="">Todos os Tipos</option>
+                              <option value="Pricing Plans">Assinatura</option>
+                              <option value="Loja Virtual">Loja Virtual</option>
+                            </select>
+                          </div>
+                        )}
                         {financeFilters.period === 'custom' && (
                           <>
                             <div className="flex-1 min-w-[140px] space-y-1">
@@ -3328,9 +3417,9 @@ export default function App() {
                             </div>
                           </>
                         )}
-                        {(financeFilters.unidade || financeFilters.professor || financeFilters.search || financeFilters.status || financeFilters.period) && (
+                        {(financeFilters.unidade || financeFilters.professor || financeFilters.search || financeFilters.status || financeFilters.period || financeFilters.wixType) && (
                           <button 
-                            onClick={() => setFinanceFilters({...financeFilters, unidade: '', professor: '', search: '', status: '', period: '', startDate: '', endDate: ''})}
+                            onClick={() => setFinanceFilters({...financeFilters, unidade: '', professor: '', search: '', status: '', period: '', startDate: '', endDate: '', wixType: ''})}
                             className="px-4 py-2 text-sm font-bold text-red-500 hover:text-red-600 transition-colors flex items-center gap-1"
                           >
                             <X size={14} />
@@ -3349,18 +3438,74 @@ export default function App() {
                     <div className="space-y-6">
                       {(() => {
                         const filteredPayments = financialData.pagamentos.filter(p => {
+                          // Payment Method Filter
+                          if (financeFilters.paymentMethod !== 'geral') {
+                            if (financeFilters.paymentMethod === 'pix') {
+                              if (p.metodo_pagamento !== 'pix') return false;
+                            } else if (financeFilters.paymentMethod === 'pagarme') {
+                              // Pagar.me usually means credit card or has pagarme id
+                              if (p.metodo_pagamento !== 'cartao_credito' && !p.pagarme) return false;
+                            } else if (financeFilters.paymentMethod === 'pagseguro') {
+                              if (p.metodo_pagamento !== 'pagseguro') return false;
+                            } else if (financeFilters.paymentMethod === 'wix') {
+                              if (p.metodo_pagamento !== 'wix') return false;
+                              
+                              // Wix Type Filter
+                              if (financeFilters.wixType) {
+                                const tp = (p.tipo_pedido || '').toUpperCase().trim();
+                                if (financeFilters.wixType === 'Loja Virtual') {
+                                  if (tp !== 'ECOM PLATAFORMA' && tp !== 'ECOM PLATFORM' && tp !== 'LOJA VIRTUAL') return false;
+                                } else if (financeFilters.wixType === 'Pricing Plans') {
+                                  if (tp !== 'PRICING PLANS' && tp !== 'ASSINATURA') return false;
+                                } else if (tp !== financeFilters.wixType.toUpperCase().trim()) {
+                                  return false;
+                                }
+                              }
+                            }
+                          }
+
                           // If no filters, show all
                           if (!financeFilters.unidade && !financeFilters.professor && !financeFilters.search && !financeFilters.status && !financeFilters.period) return true;
                           
                           // Status filter
-                          if (financeFilters.status && p.status !== financeFilters.status) return false;
+                          if (financeFilters.status) {
+                            if (financeFilters.status === 'pendente') {
+                              if (p.status !== 'pendente' && p.status !== 'falha') return false;
+                            } else if (p.status !== financeFilters.status) {
+                              return false;
+                            }
+                          }
                           
                           // Period filter
                           if (financeFilters.period) {
-                            const paymentDateStr = p.data_vencimento || p.created_at;
+                            const paymentDateStr = (p.data_vencimento && p.data_vencimento.trim()) || p.created_at;
                             if (!paymentDateStr) return false;
                             
-                            const paymentDate = new Date(paymentDateStr);
+                            let paymentDate = new Date(paymentDateStr);
+                            
+                            // Manual parse if needed for filtering
+                            if (isNaN(paymentDate.getTime()) && typeof paymentDateStr === 'string') {
+                              if (paymentDateStr.includes('/')) {
+                                const parts = paymentDateStr.split(' ')[0].split('/');
+                                if (parts.length === 3) {
+                                  const day = parseInt(parts[0]);
+                                  const month = parseInt(parts[1]) - 1;
+                                  const year = parts[2].length === 2 ? 2000 + parseInt(parts[2]) : parseInt(parts[2]);
+                                  paymentDate = new Date(year, month, day);
+                                }
+                              } else if (paymentDateStr.includes('-')) {
+                                const parts = paymentDateStr.split('T')[0].split('-');
+                                if (parts.length === 3) {
+                                  const year = parseInt(parts[0]);
+                                  const month = parseInt(parts[1]) - 1;
+                                  const day = parseInt(parts[2]);
+                                  paymentDate = new Date(year, month, day);
+                                }
+                              }
+                            }
+
+                            if (isNaN(paymentDate.getTime())) return false;
+                            
                             const today = new Date();
                             
                             if (financeFilters.period === 'this_month') {
@@ -3450,22 +3595,65 @@ export default function App() {
                           .filter(p => p.status === 'pendente' || p.status === 'falha')
                           .reduce((acc, curr) => acc + Number(curr.valor), 0);
 
+                        // Sort by date descending
+                        const sortedPayments = [...filteredPayments].sort((a, b) => {
+                          const getDate = (p: any) => {
+                            const dStr = (p.data_vencimento && p.data_vencimento.trim()) || p.created_at;
+                            if (!dStr) return new Date(0);
+                            
+                            let d = new Date(dStr);
+                            if (isNaN(d.getTime()) && typeof dStr === 'string') {
+                              if (dStr.includes('/')) {
+                                const parts = dStr.split(' ')[0].split('/');
+                                if (parts.length === 3) {
+                                  const day = parseInt(parts[0]);
+                                  const month = parseInt(parts[1]) - 1;
+                                  const year = parts[2].length === 2 ? 2000 + parseInt(parts[2]) : parseInt(parts[2]);
+                                  d = new Date(year, month, day);
+                                }
+                              } else if (dStr.includes('-')) {
+                                const parts = dStr.split('T')[0].split('-');
+                                if (parts.length === 3) {
+                                  const year = parseInt(parts[0]);
+                                  const month = parseInt(parts[1]) - 1;
+                                  const day = parseInt(parts[2]);
+                                  d = new Date(year, month, day);
+                                }
+                              }
+                            }
+                            return isNaN(d.getTime()) ? new Date(0) : d;
+                          };
+                          return getDate(b).getTime() - getDate(a).getTime();
+                        });
+
                         return (
                           <>
                             {financeFilters.view === 'summary' ? (
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <button 
+                                  onClick={() => setFinanceFilters({...financeFilters, status: 'pago', view: 'detailed'})}
+                                  className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:border-emerald-300 hover:shadow-md transition-all text-left"
+                                >
                                   <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Receita (Paga)</p>
                                   <p className="text-3xl font-bold text-emerald-600">
                                     R$ {totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                   </p>
-                                </div>
-                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                  <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
+                                    <ExternalLink size={12} /> Ver detalhes conciliados
+                                  </p>
+                                </button>
+                                <button 
+                                  onClick={() => setFinanceFilters({...financeFilters, status: 'pendente', view: 'detailed'})}
+                                  className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:border-amber-300 hover:shadow-md transition-all text-left"
+                                >
                                   <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Pendente</p>
                                   <p className="text-3xl font-bold text-amber-600">
                                     R$ {totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                   </p>
-                                </div>
+                                  <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
+                                    <ExternalLink size={12} /> Ver detalhes pendentes
+                                  </p>
+                                </button>
                                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
                                   <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Transações</p>
                                   <div className="flex items-baseline gap-2">
@@ -3474,6 +3662,9 @@ export default function App() {
                                       <p className="text-xs text-slate-400 font-medium">de {financialData.pagamentos.length}</p>
                                     )}
                                   </div>
+                                  <p className="text-xs text-slate-400 mt-2">
+                                    Total de registros filtrados
+                                  </p>
                                 </div>
                               </div>
                             ) : (
@@ -3484,6 +3675,9 @@ export default function App() {
                                       <tr className="bg-slate-50 border-b border-slate-200">
                                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Data</th>
                                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Responsável</th>
+                                        {financeFilters.paymentMethod === 'wix' && (
+                                          <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Tipo</th>
+                                        )}
                                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Estudante</th>
                                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Unidade</th>
                                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Turma</th>
@@ -3493,21 +3687,24 @@ export default function App() {
                                       </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                      {filteredPayments.length === 0 ? (
+                                      {sortedPayments.length === 0 ? (
                                         <tr>
-                                          <td colSpan={8} className="px-6 py-10 text-center text-slate-400 italic">
+                                          <td colSpan={financeFilters.paymentMethod === 'wix' ? 9 : 8} className="px-6 py-10 text-center text-slate-400 italic">
                                             Nenhum pagamento encontrado com os filtros selecionados.
                                           </td>
                                         </tr>
                                       ) : (
-                                        filteredPayments.map((pag, idx) => {
+                                        sortedPayments.map((pag, idx) => {
                                           // Get the relevant student and enrollment info
                                           const studentsInfo = pag.responsaveis?.alunos?.flatMap((a: any) => {
                                             const filteredMatriculas = a.matriculas?.filter((m: any) => {
-                                              if (m.data_cancelamento) return false;
-                                              
-                                              // CRITICAL: If the payment is linked to a specific enrollment, ONLY show that one
-                                              if (pag.matricula_id && m.id !== pag.matricula_id) return false;
+                                              // If the payment is linked to a specific enrollment, ONLY show that one and ignore cancellation status
+                                              if (pag.matricula_id) {
+                                                return String(m.id).trim() === String(pag.matricula_id).trim();
+                                              }
+
+                                              // Otherwise, filter out cancelled enrollments
+                                              if (m.data_cancelamento && m.data_cancelamento.trim()) return false;
 
                                               if (financeFilters.unidade || financeFilters.professor) {
                                                 const matchesUnidade = !financeFilters.unidade || 
@@ -3547,11 +3744,60 @@ export default function App() {
                                           return (
                                             <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
                                               <td className="px-6 py-4 text-sm text-slate-600 whitespace-nowrap">
-                                                {new Date(pag.data_vencimento || pag.created_at).toLocaleDateString()}
+                                                {(() => {
+                                                  const d = (pag.data_vencimento && pag.data_vencimento.trim()) || pag.created_at;
+                                                  if (!d) return 'N/A';
+                                                  
+                                                  // Tenta parse normal
+                                                  let date = new Date(d);
+                                                  
+                                                  // Se falhar e for string dd/mm/aaaa, tenta parse manual
+                                                  if (isNaN(date.getTime()) && typeof d === 'string') {
+                                                    if (d.includes('/')) {
+                                                      const datePart = d.split(' ')[0];
+                                                      const parts = datePart.split('/');
+                                                      if (parts.length === 3) {
+                                                        const day = parseInt(parts[0]);
+                                                        const month = parseInt(parts[1]) - 1;
+                                                        const year = parts[2].length === 2 ? 2000 + parseInt(parts[2]) : parseInt(parts[2]);
+                                                        date = new Date(year, month, day);
+                                                      }
+                                                    } else if (d.includes('-')) {
+                                                      // Tenta parse de YYYY-MM-DD
+                                                      const datePart = d.split('T')[0];
+                                                      const parts = datePart.split('-');
+                                                      if (parts.length === 3) {
+                                                        const year = parseInt(parts[0]);
+                                                        const month = parseInt(parts[1]) - 1;
+                                                        const day = parseInt(parts[2]);
+                                                        date = new Date(year, month, day);
+                                                      }
+                                                    }
+                                                  }
+
+                                                  if (isNaN(date.getTime())) {
+                                                    console.warn('Invalid date detected for payment:', pag.id, d);
+                                                    return 'N/A';
+                                                  }
+                                                  return date.toLocaleDateString('pt-BR');
+                                                })()}
                                               </td>
                                               <td className="px-6 py-4">
                                                 <p className="font-medium text-slate-900 text-sm">{pag.responsaveis?.nome_completo}</p>
                                               </td>
+                                              {financeFilters.paymentMethod === 'wix' && (
+                                                <td className="px-6 py-4">
+                                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                                    (pag.tipo_pedido || '').toUpperCase().trim() === 'PRICING PLANS' ? 'bg-blue-50 text-blue-700 border border-blue-100' : 
+                                                    ['ECOM PLATAFORMA', 'ECOM PLATFORM', 'LOJA VIRTUAL'].includes((pag.tipo_pedido || '').toUpperCase().trim()) ? 'bg-purple-50 text-purple-700 border border-purple-100' :
+                                                    'bg-slate-50 text-slate-600 border border-slate-100'
+                                                  }`}>
+                                                    {(pag.tipo_pedido || '').toUpperCase().trim() === 'PRICING PLANS' ? 'Assinatura' : 
+                                                     ['ECOM PLATAFORMA', 'ECOM PLATFORM', 'LOJA VIRTUAL'].includes((pag.tipo_pedido || '').toUpperCase().trim()) ? 'Loja Virtual' : 
+                                                     pag.tipo_pedido || 'N/A'}
+                                                  </span>
+                                                </td>
+                                              )}
                                               <td className="px-6 py-4">
                                                 <div className="flex flex-col gap-1">
                                                   {displayInfo.map((si: any, sidx: number) => (
@@ -4234,7 +4480,7 @@ export default function App() {
                                     >
                                       <Trash2 size={16} />
                                     </button>
-                                    {mat.pagarme_subscription_id && (
+                                    {mat.pagarme_subscription_id && !payments.some(p => p.matricula_id === mat.id && p.metodo_pagamento === 'pix') && (
                                       <button 
                                         onClick={() => {
                                           setSelectedEnrollmentForCard(mat.id);
@@ -4651,12 +4897,12 @@ export default function App() {
                         </div>
 
                         <div className="space-y-4">
-                          {groupedDependents.flatMap(dep => dep.matriculasAtivas).filter(mat => mat.pagarme_subscription_id).length === 0 ? (
+                          {groupedDependents.flatMap(dep => dep.matriculasAtivas).filter(mat => mat.pagarme_subscription_id && !payments.some(p => p.matricula_id === mat.id && p.metodo_pagamento === 'pix')).length === 0 ? (
                             <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 text-center">
                               <p className="text-sm text-slate-400 italic">Nenhuma assinatura ativa com cartão de crédito encontrada.</p>
                             </div>
                           ) : (
-                            groupedDependents.flatMap(dep => dep.matriculasAtivas).filter(mat => mat.pagarme_subscription_id).map((mat: any) => (
+                            groupedDependents.flatMap(dep => dep.matriculasAtivas).filter(mat => mat.pagarme_subscription_id && !payments.some(p => p.matricula_id === mat.id && p.metodo_pagamento === 'pix')).map((mat: any) => (
                               <div key={mat.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 shadow-sm gap-4">
                                 <div className="flex items-center gap-4">
                                   <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600">
@@ -6048,10 +6294,65 @@ export default function App() {
                         <CreditCard className="text-purple-600" size={24} />
                       </div>
                       <div>
-                        <h2 className="text-2xl font-semibold">Método de Pagamento</h2>
+                        <h2 
+                          className="text-2xl font-semibold cursor-default select-none"
+                          onClick={handlePixSecretClick}
+                        >
+                          Método de Pagamento
+                        </h2>
                         <p className="text-slate-500 text-sm">Cobrança automática mensal no cartão de crédito.</p>
                       </div>
                     </div>
+
+                    {showPixOption && (
+                      <div className="space-y-4 mb-6">
+                        <label 
+                          className={`flex items-center gap-4 p-5 rounded-2xl border-2 cursor-pointer transition-all ${
+                            formData.paymentMethod === 'credit_card' 
+                              ? 'border-purple-600 bg-purple-50/50' 
+                              : 'border-slate-100 hover:border-slate-200'
+                          }`}
+                        >
+                          <input 
+                            type="radio" 
+                            name="payment" 
+                            className="hidden"
+                            checked={formData.paymentMethod === 'credit_card'}
+                            onChange={() => setFormData({...formData, paymentMethod: 'credit_card'})}
+                          />
+                          <div className="p-2 bg-white rounded-lg shadow-sm">
+                            <CreditCard className="text-purple-600" size={20} />
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-semibold">Cartão de Crédito (Recorrente)</p>
+                            <p className="text-xs text-slate-500">Cobrança automática mensal sem ocupar o limite total.</p>
+                          </div>
+                        </label>
+
+                        <label 
+                          className={`flex items-center gap-4 p-5 rounded-2xl border-2 cursor-pointer transition-all ${
+                            formData.paymentMethod === 'pix' 
+                              ? 'border-emerald-600 bg-emerald-50/50' 
+                              : 'border-slate-100 hover:border-slate-200'
+                          }`}
+                        >
+                          <input 
+                            type="radio" 
+                            name="payment" 
+                            className="hidden"
+                            checked={formData.paymentMethod === 'pix'}
+                            onChange={() => setFormData({...formData, paymentMethod: 'pix'})}
+                          />
+                          <div className="p-2 bg-white rounded-lg shadow-sm">
+                            <QrCode className="text-emerald-600" size={20} />
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-semibold">PIX (Mensal)</p>
+                            <p className="text-xs text-slate-500">Você receberá o QR Code mensalmente por e-mail e WhatsApp.</p>
+                          </div>
+                        </label>
+                      </div>
+                    )}
 
                     {formData.paymentMethod === 'credit_card' && (
                       <div className="mt-6 p-6 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">

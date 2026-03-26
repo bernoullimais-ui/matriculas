@@ -165,13 +165,55 @@ async function sendBrevoEmail(
   subject: string, 
   htmlContent: string, 
   attachments?: { content: string, name: string }[],
-  senderName: string = "Sport for Kids",
-  senderEmail: string = "adm@sportforkids.com.br"
+  unidadeName?: string
 ) {
   const apiKey = process.env.BREVO_API_KEY;
   if (!apiKey) {
     console.warn("BREVO_API_KEY not configured. Skipping email.");
     return;
+  }
+
+  let senderName = "Sport for Kids";
+  let senderEmail = "adm@sportforkids.com.br";
+
+  // Logic to fetch credentials based on unidade
+  if (unidadeName) {
+    try {
+      // 1. Find identidade from unidades_mapping
+      const { data: mappingData } = await supabase
+        .from('unidades_mapping')
+        .select('identidade')
+        .eq('nome', unidadeName.trim())
+        .maybeSingle();
+      
+      let identidadeName = mappingData?.identidade;
+      
+      if (!identidadeName) {
+        const { data: fallbackMapping } = await supabase
+          .from('unidades_mapping')
+          .select('identidade')
+          .eq('nome_unidade', unidadeName.trim())
+          .maybeSingle();
+        identidadeName = fallbackMapping?.identidade;
+      }
+
+      if (identidadeName) {
+        // 2. Find credentials from identidades table
+        const { data: idData } = await supabase
+          .from('identidades')
+          .select('nome_remetente, email_remetente')
+          .eq('nome', identidadeName)
+          .maybeSingle();
+        
+        if (idData) {
+          if (idData.nome_remetente) senderName = idData.nome_remetente;
+          if (idData.email_remetente) senderEmail = idData.email_remetente;
+          console.log(`[Email] Using sender for identity: ${identidadeName} (Unit: ${unidadeName})`);
+        }
+      }
+    } catch (err) {
+      console.warn("[Email] Error fetching identity credentials, using defaults:", err);
+    }
   }
 
   try {
@@ -202,15 +244,57 @@ async function sendBrevoEmail(
   }
 }
 
-async function sendWhatsAppMessage(toPhone: string, contactName: string, message: string) {
+async function sendWhatsAppMessage(toPhone: string, contactName: string, message: string, unidadeName?: string) {
   if (!toPhone) {
     console.error("Cannot send WhatsApp message: toPhone is empty");
     return;
   }
-  const utalkToken = process.env.UTALK_TOKEN || "sfk-api-token-2026-03-12-2094-03-30--47482FB3C78CF7D176AB52761A3374A558374940DE977AD9EB7F5EE12163C662";
-  const utalkFrom = process.env.UTALK_FROM_PHONE || "+557130457777";
-  const utalkOrgId = process.env.UTALK_ORGANIZATION_ID || "aZhaeS9bnyeDpiMs";
+  
+  let utalkToken = process.env.UTALK_TOKEN || "sfk-api-token-2026-03-12-2094-03-30--47482FB3C78CF7D176AB52761A3374A558374940DE977AD9EB7F5EE12163C662";
+  let utalkFrom = process.env.UTALK_FROM_PHONE || "+557130457777";
+  let utalkOrgId = process.env.UTALK_ORGANIZATION_ID || "aZhaeS9bnyeDpiMs";
   const utalkUrl = process.env.UTALK_URL || "https://app-utalk.umbler.com/api/v1/messages/simplified/";
+
+  // Logic to fetch credentials based on unidade
+  if (unidadeName) {
+    try {
+      // 1. Find identidade from unidades_mapping
+      const { data: mappingData } = await supabase
+        .from('unidades_mapping')
+        .select('identidade')
+        .eq('nome', unidadeName.trim())
+        .maybeSingle();
+      
+      let identidadeName = mappingData?.identidade;
+      
+      if (!identidadeName) {
+        const { data: fallbackMapping } = await supabase
+          .from('unidades_mapping')
+          .select('identidade')
+          .eq('nome_unidade', unidadeName.trim())
+          .maybeSingle();
+        identidadeName = fallbackMapping?.identidade;
+      }
+
+      if (identidadeName) {
+        // 2. Find credentials from identidades table
+        const { data: idData } = await supabase
+          .from('identidades')
+          .select('utalk_token, utalk_from_phone, utalk_organization_id')
+          .eq('nome', identidadeName)
+          .maybeSingle();
+        
+        if (idData) {
+          if (idData.utalk_token) utalkToken = idData.utalk_token;
+          if (idData.utalk_from_phone) utalkFrom = idData.utalk_from_phone;
+          if (idData.utalk_organization_id) utalkOrgId = idData.utalk_organization_id;
+          console.log(`[WhatsApp] Using credentials for identity: ${identidadeName} (Unit: ${unidadeName})`);
+        }
+      }
+    } catch (err) {
+      console.warn("[WhatsApp] Error fetching identity credentials, using defaults:", err);
+    }
+  }
 
   // Clean phone number (remove non-digits, ensure it starts with +55)
   let phone = toPhone.replace(/\D/g, '');
@@ -279,7 +363,7 @@ async function sendWhatsAppMessage(toPhone: string, contactName: string, message
   }
 }
 
-async function sendPaymentFailureNotification(guardianId: string, studentName: string, className: string, reason: string) {
+async function sendPaymentFailureNotification(guardianId: string, studentName: string, className: string, reason: string, unidadeName?: string) {
   try {
     const { data: guardian, error: gError } = await supabase
       .from('responsaveis')
@@ -292,11 +376,35 @@ async function sendPaymentFailureNotification(guardianId: string, studentName: s
       return;
     }
 
+    let identidade = `na *Sport for Kids*${unidadeName ? ` (${unidadeName})` : ''}`;
+    if (unidadeName) {
+      const { data: mappingData } = await supabase
+        .from('unidades_mapping')
+        .select('identidade')
+        .eq('nome', unidadeName.trim())
+        .limit(1)
+        .maybeSingle();
+      
+      if (mappingData && mappingData.identidade) {
+        identidade = mappingData.identidade;
+      } else {
+        const { data: fallbackMapping } = await supabase
+          .from('unidades_mapping')
+          .select('identidade')
+          .eq('nome_unidade', unidadeName.trim())
+          .limit(1)
+          .maybeSingle();
+        if (fallbackMapping && fallbackMapping.identidade) {
+          identidade = fallbackMapping.identidade;
+        }
+      }
+    }
+
     const subject = "Falha no Pagamento da Matrícula - Sport for Kids";
     const message = `
 Olá ${guardian.nome_completo},
 
-Infelizmente, o pagamento da matrícula de ${studentName} na turma ${className} não pôde ser processado.
+Infelizmente, o pagamento da matrícula de ${studentName} na turma ${className} ${identidade} não pôde ser processado.
 
 Motivo: ${reason}
 
@@ -309,7 +417,7 @@ Se precisar de ajuda, entre em contato conosco.
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
         <h2 style="color: #e11d48;">Falha no Pagamento da Matrícula</h2>
         <p>Olá <strong>${guardian.nome_completo}</strong>,</p>
-        <p>Infelizmente, o pagamento da matrícula de <strong>${studentName}</strong> na turma <strong>${className}</strong> não pôde ser processado.</p>
+        <p>Infelizmente, o pagamento da matrícula de <strong>${studentName}</strong> na turma <strong>${className}</strong> ${identidade} não pôde ser processado.</p>
         <div style="background-color: #fff1f2; border-left: 4px solid #e11d48; padding: 10px; margin: 20px 0;">
           <p style="margin: 0;"><strong>Motivo:</strong> ${reason}</p>
         </div>
@@ -322,12 +430,12 @@ Se precisar de ajuda, entre em contato conosco.
 
     // Enviar E-mail via Brevo
     if (guardian.email) {
-      await sendBrevoEmail(guardian.email, guardian.nome_completo, subject, htmlContent);
+      await sendBrevoEmail(guardian.email, guardian.nome_completo, subject, htmlContent, undefined, unidadeName);
     }
 
     // Enviar WhatsApp via UTalk
     if (guardian.telefone) {
-      await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, message).catch(e => console.error("Erro ao enviar WhatsApp de falha:", e));
+      await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, message, unidadeName).catch(e => console.error("Erro ao enviar WhatsApp de falha:", e));
     }
     
   } catch (error) {
@@ -335,7 +443,7 @@ Se precisar de ajuda, entre em contato conosco.
   }
 }
 
-async function sendRecurringPaymentFailureNotification(guardianId: string, studentName: string, className: string, reason: string) {
+async function sendRecurringPaymentFailureNotification(guardianId: string, studentName: string, className: string, reason: string, unidadeName?: string) {
   try {
     const { data: guardian, error: gError } = await supabase
       .from('responsaveis')
@@ -348,10 +456,34 @@ async function sendRecurringPaymentFailureNotification(guardianId: string, stude
       return;
     }
 
+    let identidade = `na *Sport for Kids*${unidadeName ? ` (${unidadeName})` : ''}`;
+    if (unidadeName) {
+      const { data: mappingData } = await supabase
+        .from('unidades_mapping')
+        .select('identidade')
+        .eq('nome', unidadeName.trim())
+        .limit(1)
+        .maybeSingle();
+      
+      if (mappingData && mappingData.identidade) {
+        identidade = mappingData.identidade;
+      } else {
+        const { data: fallbackMapping } = await supabase
+          .from('unidades_mapping')
+          .select('identidade')
+          .eq('nome_unidade', unidadeName.trim())
+          .limit(1)
+          .maybeSingle();
+        if (fallbackMapping && fallbackMapping.identidade) {
+          identidade = fallbackMapping.identidade;
+        }
+      }
+    }
+
     const subject = "Aviso sobre o pagamento da mensalidade - Sport for Kids";
     const whatsappMessage = `Olá, *${guardian.nome_completo}*! Tudo bem?
 
-Identificamos que não foi possível processar o pagamento da mensalidade de *${studentName}* (Turma: *${className}*).
+Identificamos que não foi possível processar o pagamento da mensalidade de *${studentName}* (Turma: *${className}* ${identidade}).
 
 ⚠️ *Motivo retornado pelo banco:* ${reason}
 
@@ -365,7 +497,7 @@ Qualquer dúvida, seguimos à disposição! 🏆`;
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
         <h2 style="color: #e11d48;">Aviso sobre o pagamento da mensalidade</h2>
         <p>Olá, <strong>${guardian.nome_completo}</strong>,</p>
-        <p>Gostaríamos de informar que o pagamento da mensalidade de <strong>${studentName}</strong> (Turma: <strong>${className}</strong>) não pôde ser processado com sucesso.</p>
+        <p>Gostaríamos de informar que o pagamento da mensalidade de <strong>${studentName}</strong> (Turma: <strong>${className}</strong> ${identidade}) não pôde ser processado com sucesso.</p>
         <div style="background-color: #fff1f2; border-left: 4px solid #e11d48; padding: 10px; margin: 20px 0;">
           <p style="margin: 0;"><strong>Motivo da recusa:</strong> ${reason}</p>
         </div>
@@ -381,12 +513,12 @@ Qualquer dúvida, seguimos à disposição! 🏆`;
 
     // Enviar E-mail via Brevo
     if (guardian.email) {
-      await sendBrevoEmail(guardian.email, guardian.nome_completo, subject, htmlContent);
+      await sendBrevoEmail(guardian.email, guardian.nome_completo, subject, htmlContent, undefined, unidadeName);
     }
 
     // Enviar WhatsApp via UTalk
     if (guardian.telefone) {
-      await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, whatsappMessage).catch(e => console.error("Erro ao enviar WhatsApp de falha recorrente:", e));
+      await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, whatsappMessage, unidadeName).catch(e => console.error("Erro ao enviar WhatsApp de falha recorrente:", e));
     }
     
   } catch (error) {
@@ -726,13 +858,14 @@ async function createPagarmeSubscription(data: {
     phone: string;
     address?: string;
   };
-  card: {
+  card?: {
     number: string;
     holderName: string;
     expMonth: string;
     expYear: string;
     cvv: string;
   };
+  paymentMethod?: 'pix' | 'credit_card';
   amount: number; // in cents
   description: string;
   code: string; // Reference ID for webhook
@@ -811,14 +944,15 @@ async function createPagarmeSubscription(data: {
     console.error('Error parsing address:', e);
   }
 
+  const paymentMethod = data.paymentMethod || 'credit_card';
+
   const payload: any = {
     code: data.code,
-    payment_method: "credit_card",
+    payment_method: paymentMethod,
     interval: "month",
     interval_count: 1,
     billing_type: "prepaid",
     installments: 1,
-    statement_descriptor: (data.softDescriptor || "SportForKids").substring(0, 13),
     cycles: data.cycles,
     start_at: data.start_at,
     customer: {
@@ -833,14 +967,6 @@ async function createPagarmeSubscription(data: {
           number: phoneNumber
         }
       }
-    },
-    card: {
-      number: data.card.number.replace(/\D/g, ''),
-      holder_name: data.card.holderName.substring(0, 64),
-      exp_month: parseInt(data.card.expMonth, 10),
-      exp_year: parseInt(data.card.expYear.length === 2 ? `20${data.card.expYear}` : data.card.expYear, 10),
-      cvv: data.card.cvv,
-      billing_address: billingAddress
     },
     metadata: {
       payment_id: data.code
@@ -857,6 +983,23 @@ async function createPagarmeSubscription(data: {
       }
     ]
   };
+
+  if (paymentMethod === 'credit_card' && data.card) {
+    payload.statement_descriptor = (data.softDescriptor || "SportForKids").substring(0, 13);
+    payload.card = {
+      number: data.card.number.replace(/\D/g, ''),
+      holder_name: data.card.holderName.substring(0, 64),
+      exp_month: parseInt(data.card.expMonth, 10),
+      exp_year: parseInt(data.card.expYear.length === 2 ? `20${data.card.expYear}` : data.card.expYear, 10),
+      cvv: data.card.cvv,
+      billing_address: billingAddress
+    };
+  } else if (paymentMethod === 'pix') {
+    // Adiciona configuração de expiração do PIX na assinatura
+    payload.pix = {
+      expires_in: 86400 // 24 horas para pagar cada ciclo
+    };
+  }
 
   // Adiciona IP se disponível para ajudar no antifraude
   if (data.ip) {
@@ -1338,7 +1481,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
   app.post("/api/guardian/recover-password", async (req, res) => {
     const { cpf, identifier } = req.body;
     try {
-      let query = supabase.from('responsaveis').select('nome_completo, telefone, senha');
+      let query = supabase.from('responsaveis').select('id, nome_completo, telefone, senha');
       
       if (identifier) {
         const isEmail = identifier.includes('@');
@@ -1366,10 +1509,37 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         return res.status(400).json({ error: "Telefone não cadastrado para este responsável. Entre em contato com o suporte." });
       }
 
+      // Try to find a unit for this guardian to use the correct WhatsApp sender
+      let unitName: string | undefined;
+      try {
+        const { data: students } = await supabase
+          .from('alunos')
+          .select('id')
+          .eq('responsavel_id', data.id);
+        
+        if (students && students.length > 0) {
+          const studentIds = students.map(s => s.id);
+          const { data: mat } = await supabase
+            .from('matriculas')
+            .select('unidade')
+            .in('aluno_id', studentIds)
+            .eq('status', 'ativo')
+            .limit(1)
+            .maybeSingle();
+          
+          if (mat) {
+            unitName = mat.unidade;
+          }
+        }
+      } catch (err) {
+        console.warn("Error finding unit for password recovery:", err);
+      }
+
       await sendWhatsAppMessage(
         data.telefone,
         data.nome_completo,
-        `Olá *${data.nome_completo}*, sua senha de acesso ao *Sport for Kids* é: ${data.senha}`
+        `Olá *${data.nome_completo}*, sua senha de acesso ao *Sport for Kids* é: ${data.senha}`,
+        unitName
       );
 
       res.json({ success: true, message: "Senha enviada para o WhatsApp cadastrado" });
@@ -2256,39 +2426,13 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         const softDescriptor = await getSetting(softDescriptorKey, defaultSoftDescriptor);
         
         try {
-          if (paymentMethod === 'pix') {
-            console.log(`[Pagar.me] Criando pedido PIX para ${guardian.name}, valor: ${valorCobrado}`);
-            const order = await createPagarmeOrder({
-              customer: {
-                name: guardian.name,
-                email: guardian.email,
-                cpf: guardian.cpf,
-                phone: guardian.phone,
-                address: guardian.address
-              },
-              amount: Math.round(valorCobrado * 100), // convert to cents
-              paymentMethod: 'pix',
-              description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
-              code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_pix_${Date.now()}`,
-              softDescriptor,
-              ip: clientIp
-            });
-            paymentInfo = order;
-            console.log("Pagar.me PIX order created successfully:", order.id);
-            
-            // Salva o ID do pedido no primeiro pagamento
-            if (order && order.id && firstPaymentId) {
-              await supabase
-                .from('pagamentos')
-                .update({ pagarme: order.id })
-                .eq('id', firstPaymentId);
-            }
-          } else if (paymentMethod === 'credit_card' && req.body.card) {
+          if (paymentMethod === 'pix' || (paymentMethod === 'credit_card' && req.body.card)) {
             const today = new Date();
             const isBeforeStart = inicioAulas && today < inicioAulas;
+            const needsSplit = (isBeforeStart || paymentMethod === 'pix') && installments.length > 1;
             
-            if (isBeforeStart && installments.length > 1) {
-              console.log(`[Pagar.me] Matrícula antecipada detectada. Cobrando matrícula hoje e agendando assinatura para ${installments[1].data_vencimento}`);
+            if (needsSplit) {
+              console.log(`[Pagar.me] Split detectado (PIX ou Matrícula Antecipada). Cobrando matrícula hoje e agendando assinatura para ${installments[1].data_vencimento}`);
               
               // 1. Cobra a Matrícula como um Pedido Avulso (Order)
               const order = await createPagarmeOrder({
@@ -2301,7 +2445,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                 },
                 card: req.body.card,
                 amount: Math.round(valorCobrado * 100),
-                paymentMethod: 'credit_card',
+                paymentMethod: paymentMethod,
                 description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
                 code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}`,
                 softDescriptor,
@@ -2318,6 +2462,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                   address: guardian.address
                 },
                 card: req.body.card,
+                paymentMethod: paymentMethod,
                 amount: Math.round(valorCobrado * 100),
                 description: `Mensalidade - ${student.name} (${student.turmaComplementar})`,
                 code: firstPaymentId ? `${firstPaymentId}_sub_${Date.now()}` : `sub_${Date.now()}`,
@@ -2340,9 +2485,45 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                     if (error) console.log("Nota: Erro ao salvar ID da assinatura na matrícula.");
                   });
               }
+
+              // Salva o ID do pedido no primeiro pagamento
+              if (order && order.id && firstPaymentId) {
+                await supabase
+                  .from('pagamentos')
+                  .update({ pagarme: order.id })
+                  .eq('id', firstPaymentId);
+              }
+            } else if (paymentMethod === 'pix' && installments.length === 1) {
+              // Apenas um pedido avulso PIX
+              console.log(`[Pagar.me] Criando pedido PIX único para ${guardian.name}, valor: ${valorCobrado}`);
+              const order = await createPagarmeOrder({
+                customer: {
+                  name: guardian.name,
+                  email: guardian.email,
+                  cpf: guardian.cpf,
+                  phone: guardian.phone,
+                  address: guardian.address
+                },
+                amount: Math.round(valorCobrado * 100), // convert to cents
+                paymentMethod: 'pix',
+                description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
+                code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_pix_${Date.now()}`,
+                softDescriptor,
+                ip: clientIp
+              });
+              paymentInfo = order;
+              console.log("Pagar.me PIX order created successfully:", order.id);
+              
+              // Salva o ID do pedido no primeiro pagamento
+              if (order && order.id && firstPaymentId) {
+                await supabase
+                  .from('pagamentos')
+                  .update({ pagarme: order.id })
+                  .eq('id', firstPaymentId);
+              }
             } else {
-              // Fluxo padrão: Assinatura começa hoje
-              console.log(`Creating Pagar.me subscription for ${guardian.name}, amount: ${valorCobrado}`);
+              // Fluxo padrão (Cartão iniciando hoje): Assinatura começa hoje
+              console.log(`Creating Pagar.me subscription for ${guardian.name}, amount: ${valorCobrado}, method: ${paymentMethod}`);
               const subscription = await createPagarmeSubscription({
                 customer: {
                   name: guardian.name,
@@ -2352,6 +2533,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                   address: guardian.address
                 },
                 card: req.body.card,
+                paymentMethod: paymentMethod,
                 amount: Math.round(valorCobrado * 100), // convert to cents
                 description: `Mensalidade - ${student.name} (${student.turmaComplementar})`,
                 code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
@@ -2407,7 +2589,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
             guardianId,
             student.name,
             student.turmaComplementar,
-            failureReason
+            failureReason,
+            student.unidade
           );
 
           // We continue anyway, as the enrollment was successful in the DB
@@ -2725,7 +2908,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
       // If one enrollment is cancelled and only one remains, the next payment loses the discount
       const { data: enrollmentData } = await supabase
         .from('matriculas')
-        .select('aluno_id, turma')
+        .select('aluno_id, turma, unidade')
         .eq('id', enrollmentId)
         .single();
       
@@ -2882,8 +3065,32 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
             .single();
 
           if (guardianData && guardianData.telefone) {
-            const msg = `Olá *${guardianData.nome_completo}*! Confirmamos o cancelamento da matrícula de *${studentData.nome_completo}* da turma *${enrollmentData.turma}*. Os débitos mensais referentes a esta matrícula foram cessados. Agradecemos o tempo que estiveram conosco! Caso possamos ajudar em qualquer necessidade, nos sinalize.`;
-            await sendWhatsAppMessage(guardianData.telefone, guardianData.nome_completo, msg)
+            let identidade = `na *Sport for Kids* (${enrollmentData.unidade})`;
+            if (enrollmentData.unidade) {
+              const { data: mappingData } = await supabase
+                .from('unidades_mapping')
+                .select('identidade')
+                .eq('nome', enrollmentData.unidade.trim())
+                .limit(1)
+                .maybeSingle();
+              
+              if (mappingData && mappingData.identidade) {
+                identidade = mappingData.identidade;
+              } else {
+                const { data: fallbackMapping } = await supabase
+                  .from('unidades_mapping')
+                  .select('identidade')
+                  .eq('nome_unidade', enrollmentData.unidade.trim())
+                  .limit(1)
+                  .maybeSingle();
+                if (fallbackMapping && fallbackMapping.identidade) {
+                  identidade = fallbackMapping.identidade;
+                }
+              }
+            }
+            
+            const msg = `Olá *${guardianData.nome_completo}*! Confirmamos o cancelamento da matrícula de *${studentData.nome_completo}* da turma *${enrollmentData.turma}* ${identidade}. Os débitos mensais referentes a esta matrícula foram cessados. Agradecemos o tempo que estiveram conosco! Caso possamos ajudar em qualquer necessidade, nos sinalize.`;
+            await sendWhatsAppMessage(guardianData.telefone, guardianData.nome_completo, msg, enrollmentData.unidade)
               .catch(e => console.error("Erro ao enviar WhatsApp de cancelamento:", e));
           }
         }
@@ -3096,8 +3303,32 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           .single();
 
         if (guardianData && guardianData.telefone) {
-          const msg = `Olá *${guardianData.nome_completo}*! Confirmamos a transferência da matrícula de *${studentData.nome_completo}* da turma *${oldEnrollment.turma}* para *${newTurma}*. Seguimos a disposição para qualquer necessidade..`;
-          await sendWhatsAppMessage(guardianData.telefone, guardianData.nome_completo, msg)
+          let identidade = `na *Sport for Kids* (${oldEnrollment.unidade})`;
+          if (oldEnrollment.unidade) {
+            const { data: mappingData } = await supabase
+              .from('unidades_mapping')
+              .select('identidade')
+              .eq('nome', oldEnrollment.unidade.trim())
+              .limit(1)
+              .maybeSingle();
+            
+            if (mappingData && mappingData.identidade) {
+              identidade = mappingData.identidade;
+            } else {
+              const { data: fallbackMapping } = await supabase
+                .from('unidades_mapping')
+                .select('identidade')
+                .eq('nome_unidade', oldEnrollment.unidade.trim())
+                .limit(1)
+                .maybeSingle();
+              if (fallbackMapping && fallbackMapping.identidade) {
+                identidade = fallbackMapping.identidade;
+              }
+            }
+          }
+          
+          const msg = `Olá *${guardianData.nome_completo}*! Confirmamos a transferência da matrícula de *${studentData.nome_completo}* da turma *${oldEnrollment.turma}* para *${newTurma}* ${identidade}. Seguimos a disposição para qualquer necessidade..`;
+          await sendWhatsAppMessage(guardianData.telefone, guardianData.nome_completo, msg, oldEnrollment.unidade)
             .catch(e => console.error("Erro ao enviar WhatsApp de transferência:", e));
         }
       }
@@ -3388,7 +3619,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
       const message = `Olá *${item.responsavel1}*, acabou de surgir uma vaga disponível para *${item.estudante}* na turma *${item.turma}* que estavam aguardando! a matrícula já pode ser realizada!`;
       
-      await sendWhatsAppMessage(whatsapp, item.responsavel1, message);
+      await sendWhatsAppMessage(whatsapp, item.responsavel1, message, item.unidade);
       
       console.log(`[Notify] Updating waitlist item ${waitlistId} to 'chamado'`);
       
@@ -3511,16 +3742,20 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
       // Fetch all necessary data separately to avoid complex join issues
       const [
         pRes,
+        wRes,
+        psRes,
         rRes,
         aRes,
         mRes,
         tResInitial
       ] = await Promise.all([
-        supabase.from('pagamentos').select('*'),
-        supabase.from('responsaveis').select('id, nome_completo'),
-        supabase.from('alunos').select('id, nome_completo, responsavel_id, turma_escolar'),
-        supabase.from('matriculas').select('*'), // Fetch all columns to include professor if it exists
-        supabase.from('turmas_complementares').select('id, nome, professor, unidade_nome')
+        supabase.from('pagamentos').select('*').limit(10000),
+        supabase.from('pagamentos_wix').select('*').limit(10000),
+        supabase.from('pagamentos_pagseguro').select('*').limit(10000),
+        supabase.from('responsaveis').select('id, nome_completo').limit(10000),
+        supabase.from('alunos').select('id, nome_completo, responsavel_id, turma_escolar').limit(10000),
+        supabase.from('matriculas').select('*').limit(10000), // Fetch all columns to include professor if it exists
+        supabase.from('turmas_complementares').select('id, nome, professor, unidade_nome').limit(10000)
       ]);
 
       let tRes = tResInitial;
@@ -3536,29 +3771,118 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
       }
 
       if (pRes.error) { console.error("Pagamentos Fetch Error:", pRes.error); throw new Error(`Pagamentos: ${getErrorMessage(pRes.error)}`); }
+      if (wRes.error) { console.error("Wix Pagamentos Fetch Error:", wRes.error); } // Don't throw if Wix fails, just log
+      if (psRes.error) { console.error("PagSeguro Pagamentos Fetch Error:", psRes.error); }
       if (rRes.error) { console.error("Responsaveis Fetch Error:", rRes.error); throw new Error(`Responsaveis: ${getErrorMessage(rRes.error)}`); }
       if (aRes.error) { console.error("Alunos Fetch Error:", aRes.error); throw new Error(`Alunos: ${getErrorMessage(aRes.error)}`); }
       if (mRes.error) { console.error("Matriculas Fetch Error:", mRes.error); throw new Error(`Matriculas: ${getErrorMessage(mRes.error)}`); }
       if (tRes.error) { console.error("Turmas Fetch Error:", tRes.error); throw new Error(`Turmas: ${getErrorMessage(tRes.error)}`); }
 
       const pagamentos = pRes.data || [];
+      const pagamentosWix = wRes.data || [];
+      const pagamentosPagSeguro = psRes.data || [];
       const responsaveis = rRes.data || [];
       const alunos = aRes.data || [];
-      const matriculas = mRes.data || [];
+      const rawMatriculas = mRes.data || [];
       const turmas = tRes.data || [];
 
-      console.log(`Data fetched: ${pagamentos.length} payments, ${responsaveis.length} guardians, ${alunos.length} students, ${matriculas.length} enrollments, ${turmas.length} classes.`);
+      // Enrich matriculas with class info if missing
+      const matriculas = rawMatriculas.map(m => {
+        if (!m.unidade || !m.turma) {
+          const t = turmas.find(tr => String(tr.id) === String(m.turma_id));
+          if (t) {
+            return {
+              ...m,
+              unidade: m.unidade || t.unidade_nome,
+              turma: m.turma || t.nome
+            };
+          }
+        }
+        return m;
+      });
+
+      console.log(`Data fetched: ${pagamentos.length} payments, ${pagamentosWix.length} Wix payments, ${pagamentosPagSeguro.length} PagSeguro payments, ${responsaveis.length} guardians, ${alunos.length} students, ${matriculas.length} enrollments, ${turmas.length} classes.`);
+
+      // Map Wix payments to common format
+      const mappedWix = pagamentosWix.map(w => {
+        let dataVenc = (w.data_pagamento_gmt_03 && w.data_pagamento_gmt_03.trim()) || w.created_at;
+        
+        // Se a data for no formato dd/mm/aaaa (com ou sem hora), tenta converter para ISO
+        if (typeof dataVenc === 'string' && dataVenc.includes('/')) {
+          const datePart = dataVenc.split(' ')[0]; // Pega apenas a parte da data se houver hora
+          const parts = datePart.split('/');
+          if (parts.length === 3) {
+            const day = parts[0].padStart(2, '0');
+            const month = parts[1].padStart(2, '0');
+            let year = parts[2];
+            if (year.length === 2) year = `20${year}`;
+            dataVenc = `${year}-${month}-${day}T12:00:00Z`;
+          }
+        }
+
+        return {
+          ...w,
+          id: w.id,
+          responsavel_id: w.responsavel_id,
+          matricula_id: w.matricula_id,
+          aluno_id: w.aluno_id,
+          valor: w.valor,
+          status: (w.status_transacao || '').toLowerCase().includes('bem-sucedido') ? 'pago' : 
+                  (w.status_transacao || '').toLowerCase().includes('recusado') ? 'falha' : 
+                  (w.status_transacao || '').toLowerCase() === 'pago' ? 'pago' : 'pendente',
+          metodo_pagamento: 'wix',
+          data_vencimento: dataVenc || w.created_at,
+          created_at: w.created_at,
+          tipo_pedido: w.tipo_pedido,
+          is_wix: true
+        };
+      });
+
+      // Map PagSeguro payments to common format
+      const mappedPagSeguro = pagamentosPagSeguro.map(ps => {
+        let dataVenc = ps.data_transacao || ps.created_at;
+        
+        // Se a data for no formato dd/mm/aaaa (com ou sem hora), tenta converter para ISO
+        if (typeof dataVenc === 'string' && dataVenc.includes('/')) {
+          const datePart = dataVenc.split(' ')[0]; // Pega apenas a parte da data se houver hora
+          const parts = datePart.split('/');
+          if (parts.length === 3) {
+            const day = parts[0].padStart(2, '0');
+            const month = parts[1].padStart(2, '0');
+            let year = parts[2];
+            if (year.length === 2) year = `20${year}`;
+            dataVenc = `${year}-${month}-${day}T12:00:00Z`;
+          }
+        }
+
+        return {
+          ...ps,
+          id: ps.id,
+          responsavel_id: ps.responsavel_id,
+          matricula_id: ps.matricula_id,
+          aluno_id: ps.aluno_id,
+          valor: ps.valor_bruto,
+          status: (ps.status || '').toLowerCase().includes('aprovad') || (ps.status || '').toLowerCase().includes('paga') || (ps.status || '').toLowerCase().includes('disponivel') ? 'pago' : 
+                  (ps.status || '').toLowerCase().includes('cancelad') || (ps.status || '').toLowerCase().includes('devolvida') ? 'estornado' : 'pendente',
+          metodo_pagamento: 'pagseguro',
+          data_vencimento: dataVenc || ps.created_at,
+          created_at: ps.created_at,
+          is_pagseguro: true
+        };
+      });
+
+      const allPagamentos = [...pagamentos, ...mappedWix, ...mappedPagSeguro];
 
       // Join the data in memory
-      const detailedPagamentos = pagamentos.map(p => {
-        const resp = responsaveis.find(r => r.id === p.responsavel_id);
+      const detailedPagamentos = allPagamentos.map(p => {
+        const resp = responsaveis.find(r => String(r.id) === String(p.responsavel_id));
         let respAlunos = [];
 
         // If payment is linked to a specific enrollment, use it
         if (p.matricula_id) {
-          const mat = matriculas.find(m => m.id === p.matricula_id);
+          const mat = matriculas.find(m => String(m.id).trim() === String(p.matricula_id).trim());
           if (mat) {
-            const aluno = alunos.find(a => a.id === mat.aluno_id);
+            const aluno = alunos.find(a => String(a.id).trim() === String(mat.aluno_id).trim());
             if (aluno) {
               respAlunos = [{
                 ...aluno,
@@ -3566,13 +3890,26 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
               }];
             }
           }
-        } else {
-          // Fallback: link to all students of the guardian (old behavior)
+        } 
+        
+        // If still no students found, try by aluno_id if present (common in Wix)
+        if (respAlunos.length === 0 && p.aluno_id) {
+          const aluno = alunos.find(a => String(a.id).trim() === String(p.aluno_id).trim());
+          if (aluno) {
+            respAlunos = [{
+              ...aluno,
+              matriculas: matriculas.filter(m => String(m.aluno_id).trim() === String(aluno.id).trim())
+            }];
+          }
+        }
+
+        // Final fallback: link to all students of the guardian (old behavior)
+        if (respAlunos.length === 0 && p.responsavel_id) {
           respAlunos = alunos
-            .filter(a => a.responsavel_id === p.responsavel_id)
+            .filter(a => String(a.responsavel_id) === String(p.responsavel_id))
             .map(a => ({
               ...a,
-              matriculas: matriculas.filter(m => m.aluno_id === a.id)
+              matriculas: matriculas.filter(m => String(m.aluno_id) === String(a.id))
             }));
         }
 
@@ -3592,6 +3929,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         return dateB - dateA;
       });
 
+      console.log(`Sending financial report with ${detailedPagamentos.length} payments and ${turmas.length} classes.`);
       res.json({ pagamentos: detailedPagamentos, turmas: turmas });
     } catch (error: any) {
       console.error("Financial Report Error Detailed:", error);
@@ -4933,6 +5271,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           }
         }
 
+        let originalCode = paymentId;
         if (paymentId && paymentId.includes('_') && !paymentId.startsWith('enroll_') && !paymentId.startsWith('or_') && !paymentId.startsWith('ch_') && !paymentId.startsWith('sub_') && !paymentId.startsWith('in_')) {
           paymentId = paymentId.split('_')[0];
         }
@@ -4969,11 +5308,13 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
           const status = isPaid ? 'pago' : (isCanceled ? 'cancelado' : (isRefunded ? 'estornado' : 'falha'));
 
-          // Check if it's a recurring payment (cycle > 1)
+          // Check if it's a recurring payment (cycle > 1) OR a split subscription (cycle 1 is the 2nd payment)
           const invoice = data.invoice || (data.charges && data.charges[0] && data.charges[0].invoice) || (event.type === 'invoice.paid' ? data : null);
           const isSubscription = (invoice && invoice.subscription_id) || event.type.startsWith('subscription.');
           const cycle = invoice ? invoice.cycle : (data.current_cycle || 1);
           let targetPaymentId = paymentId;
+          
+          const isSplitSubscription = originalCode && originalCode.includes('_sub_');
 
           // 1. Tenta atualização completa
           const updatePayload: any = { 
@@ -5000,8 +5341,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
               (event.type === 'charge.antifraud_reproval' || event.type === 'charge.antifraud_reproved' ? "Reprovado pelo sistema de antifraude." : "Transação recusada pela operadora do cartão.");
           }
 
-          if (isSubscription && cycle > 1) {
-            console.log(`[Webhook Pagar.me] Pagamento recorrente detectado. Ciclo: ${cycle}`);
+          if (isSubscription && (cycle > 1 || isSplitSubscription)) {
+            console.log(`[Webhook Pagar.me] Pagamento recorrente ou split detectado. Ciclo: ${cycle}, Split: ${isSplitSubscription}`);
             // Find the original payment to get matricula_id
             const { data: originalPayment } = await supabase
               .from('pagamentos')
@@ -5121,9 +5462,29 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                     const studentFirstName = student?.nome_completo 
                       ? student.nome_completo.trim().split(' ')[0] 
                       : 'seu filho(a)';
-                    const identidade = matricula.unidade === 'Colégio Bernoulli' 
-                      ? "*no B+*" 
-                      : `na *Sport for Kids* (${matricula.unidade})`;
+                    let identidade = `na *Sport for Kids* (${matricula.unidade})`;
+                    if (matricula.unidade) {
+                      const { data: mappingData } = await supabase
+                        .from('unidades_mapping')
+                        .select('identidade')
+                        .eq('nome', matricula.unidade.trim())
+                        .limit(1)
+                        .maybeSingle();
+                      
+                      if (mappingData && mappingData.identidade) {
+                        identidade = mappingData.identidade;
+                      } else {
+                        const { data: fallbackMapping } = await supabase
+                          .from('unidades_mapping')
+                          .select('identidade')
+                          .eq('nome_unidade', matricula.unidade.trim())
+                          .limit(1)
+                          .maybeSingle();
+                        if (fallbackMapping && fallbackMapping.identidade) {
+                          identidade = fallbackMapping.identidade;
+                        }
+                      }
+                    }
 
                     const whatsappMsg = `Olá,*${guardianFirstName}* Que alegria ter vocês com a gente! 🎉
 A matrícula de *${studentFirstName}* em *${matricula.turma}* ${identidade} foi confirmada com sucesso. Já estamos preparando tudo para que essa jornada seja incrível.🏆
@@ -5133,7 +5494,8 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
                     await sendWhatsAppMessage(
                       guardian.telefone,
                       guardian.nome_completo,
-                      whatsappMsg
+                      whatsappMsg,
+                      matricula.unidade
                     ).catch(e => console.error("Erro ao enviar WhatsApp de confirmação:", e));
                   }
 
@@ -5220,7 +5582,8 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
                         guardian.nome_completo,
                         "Confirmação de Matrícula - Sport for Kids",
                         emailHtml,
-                        [{ content: base64Pdf, name: 'Contrato_SportForKids.pdf' }]
+                        [{ content: base64Pdf, name: 'Contrato_SportForKids.pdf' }],
+                        matricula.unidade
                       );
                     } catch (emailError) {
                       console.error("Erro ao gerar PDF ou enviar email de confirmação:", emailError);
@@ -5242,7 +5605,7 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
             if (paymentData && paymentData.matricula_id) {
               const { data: matricula } = await supabase
                 .from('matriculas')
-                .select('status, turma, aluno_id')
+                .select('status, turma, aluno_id, unidade')
                 .eq('id', paymentData.matricula_id)
                 .single();
 
@@ -5274,7 +5637,8 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
                   paymentData.responsavel_id,
                   student?.nome_completo || "Estudante",
                   matricula.turma || "Turma não identificada",
-                  failureReason
+                  failureReason,
+                  matricula.unidade
                 );
               } else if (matricula && matricula.status === 'ativo') {
                 console.log(`[Webhook Pagar.me] Falha em pagamento recorrente da matrícula ${paymentData.matricula_id}. Enviando notificação...`);
@@ -5296,7 +5660,8 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
                   paymentData.responsavel_id,
                   student?.nome_completo || "Estudante",
                   matricula.turma || "Turma não identificada",
-                  failureReason
+                  failureReason,
+                  matricula.unidade
                 );
               }
             }
@@ -5447,161 +5812,119 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
     if (preview) {
       const previewData = [];
       const sample = payments.slice(0, 10);
+
+      // Função auxiliar para pegar valor por índice (mesma lógica do import final)
+      const getByIdx = (row: any, idx: number) => {
+        const entry = Object.entries(row).find(([k]) => k.startsWith(`idx${idx}_`));
+        return entry ? String(entry[1]).trim() : '';
+      };
+
+      // Cálculo de totais para a pré-visualização (Novos vs Existentes)
+      const allWixIds = payments.map(p => getByIdx(p, 1)).filter(id => !!id);
+      let existingIds = new Set<string>();
+      
+      if (allWixIds.length > 0) {
+        // Busca em lotes de 500 para evitar limites de query
+        for (let i = 0; i < allWixIds.length; i += 500) {
+          const chunk = allWixIds.slice(i, i + 500);
+          const { data: existing } = await supabase
+            .from('pagamentos_wix')
+            .select('id_provedor_pagamento')
+            .in('id_provedor_pagamento', chunk);
+          existing?.forEach(p => existingIds.add(p.id_provedor_pagamento));
+        }
+      }
+
+      const skippedCount = existingIds.size;
+      const successCount = payments.length - skippedCount;
       
       for (const row of sample) {
-        const email = getMappedVal(row, 'email', ['Email']);
-        const responsavelNomeMapped = getMappedVal(row, 'responsavel_nome', ['Nome', 'Name', 'Responsável']);
-        const alunoMapped = getMappedVal(row, 'aluno', ['Aluno', 'Estudante', 'Child', 'Student', 'Nome do Aluno']);
+        const email = getByIdx(row, 26); // Email (Cobrança)
+        const responsavelNome = getByIdx(row, 16); // Nome (Cobrança)
+        const responsavelSobrenome = getByIdx(row, 17); // Sobrenome (Cobrança)
+        const fullNameResp = (responsavelNome + ' ' + responsavelSobrenome).trim();
         
-        // Se houver mapeamento manual, usamos ele. Caso contrário, a lógica robusta anterior.
-        let nomeItem = '';
-        if (mapping && mapping.plano) {
-          nomeItem = String(row[mapping.plano] || '').trim();
-        } else {
-          // No CSV do Wix, o plano está na coluna "Nome", mas existem várias colunas "Nome".
-          // Vamos tentar pegar o valor de "Nome" que NÃO seja o nome do responsável.
-          const nomeResponsavel = getVal(row, ['Nome']);
-          const sobrenomeResponsavel = getVal(row, ['Sobrenome']);
-          const fullNameResp = (nomeResponsavel + ' ' + sobrenomeResponsavel).trim();
+        const wixId = getByIdx(row, 1);
+        const isExisting = existingIds.has(wixId);
 
-          // Lista de palavras que indicam que um valor é um PLANO/TURMA
+        // Identificação do Item/Plano
+        let nomeItem = getByIdx(row, 45); // Produto/Serviço
+        if (!nomeItem) {
+          // Fallback: Varredura profunda se a coluna 45 estiver vazia
           const planKeywords = ['volei', 'xadrez', 'ballet', 'judo', 'tenis', 'futsal', 'basquete', 'teatro', 'robotica', 'funcional', 'dança', 'pickleball', 'programação', 'equipe', 'kids'];
-
-          // Busca o nome do item tentando evitar o nome do responsável
-          const possibleItemKeys = ['Produtos ou serviços', 'Item', 'Plano', 'Nome do produto', 'Descrição', 'Serviço', 'Product', 'Description'];
-          nomeItem = getVal(row, possibleItemKeys);
-
-          // Se não achou ou o que achou parece ser o nome da mãe, faz varredura profunda
           const allEntries = Object.entries(row);
-          let foundPlanByKeyword = '';
-          let nomeColumns = [];
-
           for (const [key, val] of allEntries) {
             const v = String(val).trim();
-            const k = key.toLowerCase();
-            
-            // Guarda todas as colunas que tem "nome" no título
-            if (k === 'nome' || k.includes('nome')) {
-              nomeColumns.push(v);
+            if (v && v.length > 3 && !fuzzy(v).includes(fuzzy(responsavelNome)) && planKeywords.some(kw => fuzzy(v).includes(kw))) {
+              nomeItem = v;
+              break;
             }
-
-            // Se o valor contém uma palavra-chave de plano e não é o nome da mãe
-            if (v && v.length > 3 && !fuzzy(v).includes(fuzzy(nomeResponsavel)) && !fuzzy(fullNameResp).includes(fuzzy(v))) {
-              if (planKeywords.some(kw => fuzzy(v).includes(kw))) {
-                foundPlanByKeyword = v;
-              }
-            }
-          }
-
-          if (foundPlanByKeyword) {
-            nomeItem = foundPlanByKeyword;
-          } else if (nomeColumns.length >= 3) {
-            nomeItem = nomeColumns[2] || nomeColumns[nomeColumns.length - 1];
           }
         }
 
-        const data = getMappedVal(row, 'data', ['Data', 'Date']) || '---';
-        
+        const dataStr = getMappedVal(row, 'data', ['Data do Pagamento', 'Data', 'Date', 'Pagamento']) || '---';
         let alunoNome = 'Não encontrado';
         
-        if (email || responsavelNomeMapped) {
+        if (email || fullNameResp) {
           let resp = null;
           if (email) {
             const { data } = await supabase.from('responsaveis').select('id').ilike('email', email.trim()).maybeSingle();
             resp = data;
           }
           
-          if (!resp && responsavelNomeMapped) {
-            const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', responsavelNomeMapped.trim()).maybeSingle();
+          if (!resp && fullNameResp) {
+            const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', fullNameResp).maybeSingle();
             resp = data;
           }
 
           if (resp) {
-            const { data: students } = await supabase.from('alunos').select('id, nome').eq('responsavel_id', resp.id);
+            const { data: students } = await supabase.from('alunos').select('id, nome_completo').eq('responsavel_id', resp.id);
             if (students && students.length > 0) {
               const studentIds = students.map(s => s.id);
               const { data: enrollments } = await supabase
                 .from('matriculas')
-                .select('id, aluno_id, plano, turma, status, data_cancelamento')
+                .select('id, aluno_id, plano, turma, status, data_cancelamento, turma_id')
                 .in('aluno_id', studentIds);
               
               if (enrollments) {
                 const fItem = fuzzy(nomeItem);
-                
-                // NOVA ABORDAGEM SÊNIOR: Filtro de Texto Obrigatório
-                // Se o nome do plano foi identificado, NADA mais importa se não bater com o texto.
                 let matches = [];
                 
                 if (fItem) {
-                  // 1. Tenta match exato ou contido no plano
                   matches = enrollments.filter(e => {
                     const fp = fuzzy(e.plano);
                     return fp && (fp === fItem || fItem.includes(fp) || fp.includes(fItem));
                   });
 
-                  // 2. Se não achou no campo plano, mas o texto do plano da matrícula está na linha do CSV
                   if (matches.length === 0) {
-                    matches = enrollments.filter(e => e.plano && searchInRow(row, e.plano));
-                  }
-
-                  // 3. Se ainda não achou, tenta por palavras-chave
-                  if (matches.length === 0) {
-                    const planKeywords = ['volei', 'xadrez', 'ballet', 'judo', 'tenis', 'futsal', 'basquete', 'teatro', 'robotica', 'funcional', 'dança', 'pickleball', 'programação', 'equipe', 'kids'];
-                    const foundKeyword = planKeywords.find(kw => fItem.includes(kw));
-                    if (foundKeyword) {
-                      matches = enrollments.filter(e => {
-                        const fp = fuzzy(e.plano);
-                        return fp && fp.includes(foundKeyword);
-                      });
+                    const allEntries = Object.entries(row);
+                    for (const [k, v] of allEntries) {
+                      const valStr = String(v).trim();
+                      const foundKeyword = enrollments.find(e => e.plano && valStr.toLowerCase().includes(e.plano.toLowerCase()))?.plano;
+                      if (foundKeyword) {
+                        matches = enrollments.filter(e => fuzzy(e.plano).includes(fuzzy(foundKeyword)));
+                        break;
+                      }
                     }
                   }
                 }
 
                 if (matches.length > 0) {
                   let bestMatch = null;
-                  
-                  // Entre os que bateram o TEXTO, agora sim aplicamos a prioridade de status e nome
                   const activeMatches = matches.filter(m => m.status === 'ativo' && !m.data_cancelamento);
                   const candidates = activeMatches.length > 0 ? activeMatches : matches;
 
-                  if (candidates.length > 1) {
-                    // Se houver mapeamento de aluno, prioriza ele
-                    if (alunoMapped) {
-                      bestMatch = candidates.find(m => {
-                        const s = students.find(st => st.id === m.aluno_id);
-                        return s && (fuzzy(s.nome).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome)));
-                      });
-                    }
-                    
-                    if (!bestMatch) {
-                      bestMatch = candidates.find(m => {
-                        const s = students.find(st => st.id === m.aluno_id);
-                        return s && searchStudentInRow(row, s.nome);
-                      });
-                    }
-                  }
+                  // Tenta achar o aluno pelo nome no CSV
+                  bestMatch = candidates.find(m => {
+                    const s = students.find(st => st.id === m.aluno_id);
+                    return s && searchStudentInRow(row, s.nome_completo);
+                  });
 
-                  if (!bestMatch) {
-                    bestMatch = candidates[0];
-                  }
+                  if (!bestMatch) bestMatch = candidates[0];
 
                   const student = students.find(s => s.id === bestMatch.aluno_id);
                   const turmaInfo = bestMatch.turma ? ` (${bestMatch.turma})` : '';
-                  alunoNome = (student ? student.nome : 'ID: ' + bestMatch.aluno_id) + turmaInfo;
-                } else {
-                  // Se o texto não bateu, não associamos a nenhuma turma, mesmo que o aluno seja único.
-                  let matchedStudent = null;
-                  if (alunoMapped) {
-                    matchedStudent = students.find(s => fuzzy(s.nome).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome)));
-                  }
-                  
-                  if (!matchedStudent) {
-                    matchedStudent = students.find(s => searchStudentInRow(row, s.nome));
-                  }
-
-                  if (matchedStudent) {
-                    alunoNome = matchedStudent.nome + ' (Plano divergente)';
-                  }
+                  alunoNome = (student ? student.nome_completo : 'ID: ' + bestMatch.aluno_id) + turmaInfo;
                 }
               }
             }
@@ -5609,16 +5932,17 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
         }
 
         previewData.push({
-          Data: data,
-          Item: nomeItem || '---',
-          Responsável: email || '---',
-          Aluno: alunoNome
+          Data: dataStr,
+          Item: nomeItem,
+          Aluno: alunoNome,
+          status: isExisting ? 'existente' : 'novo'
         });
       }
 
       return res.json({ 
         processed: payments.length, 
-        success: 0, 
+        success: successCount, 
+        skipped: skippedCount,
         errors: [], 
         preview: previewData 
       });
@@ -5628,6 +5952,25 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
 
     for (const row of payments) {
       results.processed++;
+
+      const getByIdx = (idx: number) => {
+        const entry = Object.entries(row).find(([k]) => k.startsWith(`idx${idx}_`));
+        return entry ? String(entry[1]).trim() : '';
+      };
+
+      const parseWixDate = (dateStr: string) => {
+        if (!dateStr || !dateStr.trim()) return null;
+        const datePart = dateStr.trim().split(' ')[0]; // Pega apenas a parte da data se houver hora
+        const parts = datePart.split('/');
+        if (parts.length === 3) {
+          const day = parts[0].padStart(2, '0');
+          const month = parts[1].padStart(2, '0');
+          let year = parts[2];
+          if (year.length === 2) year = `20${year}`;
+          return `${year}-${month}-${day}T12:00:00Z`;
+        }
+        return null;
+      };
       // Add a small delay to prevent rate limiting (100ms)
       await sleep(100);
       try {
@@ -5672,15 +6015,12 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
           continue;
         }
 
-        const { data: existing } = await supabase.from('pagamentos').select('id, aluno_id, matricula_id').eq('wix_transaction_id', wixId).maybeSingle();
-        
-        // Se já existe e já tem aluno vinculado, pula
-        if (existing && existing.aluno_id) continue;
-
-        let statusSupabase = 'pendente';
-        if (statusWix === 'Bem-sucedido') statusSupabase = 'pago';
-        else if (statusWix === 'Recusado') statusSupabase = 'recusado';
-        else if (statusWix === 'Reembolsado' || statusWix === 'Parcialmente reembolsado') statusSupabase = 'reembolsado';
+        // Verifica se já foi importado na nova tabela pagamentos_wix
+        const { data: existingWix } = await supabase.from('pagamentos_wix').select('id').eq('id_provedor_pagamento', wixId).maybeSingle();
+        if (existingWix) {
+          results.success++; // Consideramos sucesso pois já está no banco
+          continue;
+        }
 
         let responsavel = null;
         if (email) {
@@ -5698,132 +6038,468 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
           continue;
         }
 
+        const tipoPedido = getByIdx(43);
+        const isPricingPlan = tipoPedido === 'Pricing Plans';
+
         let aluno_id = null;
         let matricula_id = null;
+        let turma_id = null;
         let alunoNomeMatch = '';
         let turmaMatch = '';
 
-        const { data: students } = await supabase.from('alunos').select('id, nome').eq('responsavel_id', responsavel.id);
-        const studentIds = students?.map(s => s.id) || [];
+        if (isPricingPlan) {
+          const { data: students } = await supabase.from('alunos').select('id, nome_completo').eq('responsavel_id', responsavel.id);
+          const studentIds = students?.map(s => s.id) || [];
 
-        if (studentIds.length > 0) {
-          const { data: enrollments } = await supabase
-            .from('matriculas')
-            .select('id, aluno_id, status, plano, turma, data_cancelamento')
-            .in('aluno_id', studentIds);
+          if (studentIds.length > 0) {
+            const { data: enrollments } = await supabase
+              .from('matriculas')
+              .select('id, aluno_id, status, plano, turma, data_cancelamento, turma_id')
+              .in('aluno_id', studentIds);
 
-          if (enrollments && enrollments.length > 0) {
-            const fItem = fuzzy(nomeItem);
-            
-            // NOVA ABORDAGEM SÊNIOR: Filtro de Texto Obrigatório
-            let matches = [];
-            
-            if (fItem) {
-              matches = enrollments.filter(e => {
-                const fp = fuzzy(e.plano);
-                return fp && (fp === fItem || fItem.includes(fp) || fp.includes(fItem));
-              });
+            if (enrollments && enrollments.length > 0) {
+              const fItem = fuzzy(nomeItem);
+              
+              // NOVA ABORDAGEM SÊNIOR: Filtro de Texto Obrigatório
+              let matches = [];
+              
+              if (fItem) {
+                matches = enrollments.filter(e => {
+                  const fp = fuzzy(e.plano);
+                  return fp && (fp === fItem || fItem.includes(fp) || fp.includes(fItem));
+                });
 
-              if (matches.length === 0) {
-                matches = enrollments.filter(e => e.plano && searchInRow(row, e.plano));
-              }
+                if (matches.length === 0) {
+                  matches = enrollments.filter(e => e.plano && searchInRow(row, e.plano));
+                }
 
-              // 3. Se ainda não achou, tenta por palavras-chave
-              if (matches.length === 0) {
-                const planKeywords = ['volei', 'xadrez', 'ballet', 'judo', 'tenis', 'futsal', 'basquete', 'teatro', 'robotica', 'funcional', 'dança', 'pickleball', 'programação', 'equipe', 'kids'];
-                const foundKeyword = planKeywords.find(kw => fItem.includes(kw));
-                if (foundKeyword) {
-                  matches = enrollments.filter(e => {
-                    const fp = fuzzy(e.plano);
-                    return fp && fp.includes(foundKeyword);
-                  });
+                // 3. Se ainda não achou, tenta por palavras-chave
+                if (matches.length === 0) {
+                  const planKeywords = ['volei', 'xadrez', 'ballet', 'judo', 'tenis', 'futsal', 'basquete', 'teatro', 'robotica', 'funcional', 'dança', 'pickleball', 'programação', 'equipe', 'kids'];
+                  const foundKeyword = planKeywords.find(kw => fItem.includes(kw));
+                  if (foundKeyword) {
+                    matches = enrollments.filter(e => {
+                      const fp = fuzzy(e.plano);
+                      return fp && fp.includes(foundKeyword);
+                    });
+                  }
                 }
               }
-            }
 
-            if (matches.length > 0) {
-              let bestMatch = null;
-              
-              const activeMatches = matches.filter(m => m.status === 'ativo' && !m.data_cancelamento);
-              const candidates = activeMatches.length > 0 ? activeMatches : matches;
+              if (matches.length > 0) {
+                let bestMatch = null;
+                
+                const activeMatches = matches.filter(m => m.status === 'ativo' && !m.data_cancelamento);
+                const candidates = activeMatches.length > 0 ? activeMatches : matches;
 
-              if (candidates.length > 1) {
-                // Se houver mapeamento de aluno, prioriza ele
-                if (alunoMapped) {
-                  bestMatch = candidates.find(m => {
-                    const s = students.find(st => st.id === m.aluno_id);
-                    return s && (fuzzy(s.nome).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome)));
-                  });
+                if (candidates.length > 1) {
+                  // Se houver mapeamento de aluno, prioriza ele
+                  if (alunoMapped) {
+                    bestMatch = candidates.find(m => {
+                      const s = students.find(st => st.id === m.aluno_id);
+                      return s && (fuzzy(s.nome_completo).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome_completo)));
+                    });
+                  }
+
+                  if (!bestMatch) {
+                    bestMatch = candidates.find(m => {
+                      const s = students.find(st => st.id === m.aluno_id);
+                      return s && searchStudentInRow(row, s.nome_completo);
+                    });
+                  }
                 }
 
                 if (!bestMatch) {
-                  bestMatch = candidates.find(m => {
-                    const s = students.find(st => st.id === m.aluno_id);
-                    return s && searchStudentInRow(row, s.nome);
-                  });
+                  bestMatch = candidates[0];
                 }
-              }
+                
+                if (bestMatch) {
+                  matricula_id = bestMatch.id;
+                  aluno_id = bestMatch.aluno_id;
+                  turma_id = bestMatch.turma_id;
+                  const s = students.find(st => st.id === aluno_id);
+                  alunoNomeMatch = s ? s.nome_completo : '';
+                  turmaMatch = bestMatch.turma || '';
+                }
+              } else {
+                // Se o texto não bateu, vinculamos apenas o aluno se houver certeza, mas sem matrícula.
+                let matchedStudent = null;
+                if (alunoMapped) {
+                  matchedStudent = students.find(s => fuzzy(s.nome_completo).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome_completo)));
+                }
+                
+                if (!matchedStudent) {
+                  matchedStudent = students.find(s => searchStudentInRow(row, s.nome_completo));
+                }
 
-              if (!bestMatch) {
-                bestMatch = candidates[0];
-              }
-              
-              if (bestMatch) {
-                matricula_id = bestMatch.id;
-                aluno_id = bestMatch.aluno_id;
-                const s = students.find(st => st.id === aluno_id);
-                alunoNomeMatch = s ? s.nome : '';
-                turmaMatch = bestMatch.turma || '';
-              }
-            } else {
-              // Se o texto não bateu, vinculamos apenas o aluno se houver certeza, mas sem matrícula.
-              let matchedStudent = null;
-              if (alunoMapped) {
-                matchedStudent = students.find(s => fuzzy(s.nome).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome)));
-              }
-              
-              if (!matchedStudent) {
-                matchedStudent = students.find(s => searchStudentInRow(row, s.nome));
-              }
-
-              if (matchedStudent) {
-                aluno_id = matchedStudent.id;
-                alunoNomeMatch = matchedStudent.nome;
+                if (matchedStudent) {
+                  aluno_id = matchedStudent.id;
+                  alunoNomeMatch = matchedStudent.nome_completo;
+                }
               }
             }
           }
         }
 
-        const updateData: any = {
+        // Mapeamento exaustivo usando índices para evitar colisões de nomes duplicados (Nome, Email, etc.)
+        // O frontend envia as chaves no formato idxN_NomeColuna
+        
+        const dataPagamentoStr = getMappedVal(row, 'data', ['Data do Pagamento', 'Data', 'Date', 'Pagamento']);
+        const dataTransacaoStr = getMappedVal(row, 'data_transacao', ['Data da transação', 'Transaction Date', 'Transação']);
+
+        const wixRowData: any = {
+          data_pagamento_gmt_03: parseWixDate(dataPagamentoStr),
+          id_provedor_pagamento: wixId,
+          data_transacao_gmt_03: parseWixDate(dataTransacaoStr),
+          moeda: getByIdx(3),
+          valor: valor,
+          taxa_processamento: parseFloat((getByIdx(5) || '0').replace(',', '.')),
+          taxa_servico: parseFloat((getByIdx(6) || '0').replace(',', '.')),
+          liquido: parseFloat((getByIdx(7) || '0').replace(',', '.')),
+          status_transacao: statusWix,
+          tipo_pagamento: getByIdx(9),
+          valor_reembolso: parseFloat((getByIdx(10) || '0').replace(',', '.')),
+          parcelas: parseInt(getByIdx(11) || '0'),
+          provedor_pagamento: getByIdx(12),
+          conta_comerciante: getByIdx(13),
+          metodo_pagamento: getByIdx(14),
+          dados_cartao: getByIdx(15),
+          
+          // Detalhes da Cobrança (Índices 16 a 29)
+          cobranca_nome: getByIdx(16),
+          cobranca_sobrenome: getByIdx(17),
+          cobranca_endereco: getByIdx(18),
+          cobranca_rua: getByIdx(19),
+          cobranca_numero: getByIdx(20),
+          cobranca_cidade: getByIdx(21),
+          cobranca_empresa: getByIdx(22),
+          cobranca_codigo_pais: getByIdx(23),
+          cobranca_estado: getByIdx(24),
+          cobranca_cep: getByIdx(25),
+          cobranca_email: getByIdx(26),
+          cobranca_telefone: getByIdx(27),
+          cobranca_fax: getByIdx(28),
+          cobranca_cpf_cnpj: getByIdx(29),
+
+          // Detalhes da Entrega (Índices 30 a 42)
+          entrega_nome: getByIdx(30),
+          entrega_sobrenome: getByIdx(31),
+          entrega_endereco: getByIdx(32),
+          entrega_rua: getByIdx(33),
+          entrega_numero: getByIdx(34),
+          entrega_cidade: getByIdx(35),
+          entrega_empresa: getByIdx(36),
+          entrega_codigo_pais: getByIdx(37),
+          entrega_estado: getByIdx(38),
+          entrega_cep: getByIdx(39),
+          entrega_email: getByIdx(40),
+          entrega_telefone: getByIdx(41),
+          entrega_fax: getByIdx(42),
+          
+          // Informações do Pedido (Índices 43 a 49)
+          tipo_pedido: tipoPedido,
+          id_pedido: getByIdx(44),
+          produto_nome: getByIdx(45) || nomeItem,
+          quantidade: parseInt(getByIdx(46) || '0'),
+          desconto: parseFloat((getByIdx(47) || '0').replace(',', '.')),
+          envio: parseFloat((getByIdx(48) || '0').replace(',', '.')),
+          imposto: parseFloat((getByIdx(49) || '0').replace(',', '.')),
+
+          // Assinatura (Índices 50 a 54)
+          assinatura_ciclo_cobranca: getByIdx(50),
+          assinatura_frequencia: getByIdx(51),
+          assinatura_intervalo: getByIdx(52),
+          assinatura_status: getByIdx(53),
+          assinatura_motivo: getByIdx(54),
+
+          // Chargebacks (Índices 55 a 57)
+          chargeback_status: getByIdx(55),
+          chargeback_data_envio: getByIdx(56),
+          chargeback_prazo_disputa: getByIdx(57),
+          
+          // IDs vinculados ao sistema
           responsavel_id: responsavel.id,
           aluno_id,
           matricula_id,
-          valor,
-          status: statusSupabase,
-          wix_email: email,
-          wix_item_name: nomeItem,
-          metodo_pagamento: getVal(row, ['Método de pagamento', 'Metodo', 'Payment Method']) || 'Wix'
+          turma_id
         };
 
-        if (dataPagamento) {
-          updateData.created_at = dataPagamento;
+        // Insere na nova tabela pagamentos_wix
+        let { error } = await supabase.from('pagamentos_wix').insert([wixRowData]);
+        
+        // Fallback: Se as colunas de associação não existirem no banco (erro 42703), tenta sem elas
+        if (error && error.code === '42703') {
+          console.warn('Colunas de associação ausentes no banco. Tentando importação simplificada...');
+          const simplifiedData = { ...wixRowData };
+          delete simplifiedData.responsavel_id;
+          delete simplifiedData.aluno_id;
+          delete simplifiedData.matricula_id;
+          delete simplifiedData.turma_id;
+          
+          const retry = await supabase.from('pagamentos_wix').insert([simplifiedData]);
+          error = retry.error;
         }
 
-        if (existing) {
-          // Atualiza registro existente que estava sem aluno
-          const { error } = await supabase.from('pagamentos').update(updateData).eq('id', existing.id);
-          if (error) throw error;
-        } else {
-          // Insere novo registro
-          const { error } = await supabase.from('pagamentos').insert([{ ...updateData, wix_transaction_id: wixId }]);
-          if (error) throw error;
-        }
+        if (error) throw error;
         
         results.success++;
         results.details.push({
           row: results.processed,
           item: nomeItem,
           aluno: alunoNomeMatch ? `${alunoNomeMatch}${turmaMatch ? ' (' + turmaMatch + ')' : ''}` : 'Não identificado'
+        });
+      } catch (err: any) {
+        results.errors.push({ row: results.processed, error: err.message });
+      }
+    }
+    res.json(results);
+  });
+
+  app.post("/api/admin/import-pagseguro-payments", express.json({ limit: '10mb' }), async (req, res) => {
+    const { payments, preview } = req.body;
+    if (!Array.isArray(payments)) {
+      return res.status(400).json({ error: 'Formato inválido. Esperado um array de pagamentos.' });
+    }
+
+    const fuzzy = (s: any) => {
+      if (!s) return '';
+      return String(s)
+        .replace(/[\u0000-\u001F\u007F-\u009F\uFEFF]/g, '')
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]/gi, '')
+        .toLowerCase()
+        .trim();
+    };
+
+    const getVal = (row: any, keys: string[]) => {
+      const entries = Object.entries(row);
+      const cleanKey = (s: string) => s.replace(/[\u0000-\u001F\u007F-\u009F\uFEFF]/g, '').toLowerCase().trim();
+      
+      for (const key of keys) {
+        const ck = cleanKey(key);
+        const found = entries.find(([k]) => cleanKey(k) === ck);
+        if (found) return String(found[1]).trim();
+      }
+      for (const key of keys) {
+        const ck = cleanKey(key);
+        const found = entries.find(([k]) => cleanKey(k).includes(ck));
+        if (found) return String(found[1]).trim();
+      }
+      return '';
+    };
+
+    const parseDate = (dateStr: string) => {
+      if (!dateStr || dateStr === '---' || dateStr === '-') return null;
+      // Format: 26/02/2026 12:27
+      const parts = dateStr.split(' ');
+      const dateParts = parts[0].split('/');
+      if (dateParts.length === 3) {
+        const day = dateParts[0];
+        const month = dateParts[1];
+        const year = dateParts[2];
+        const time = parts[1] || '00:00';
+        return `${year}-${month}-${day}T${time}:00Z`;
+      }
+      return null;
+    };
+
+    const parseAmount = (val: string) => {
+      if (!val) return 0;
+      return parseFloat(val.replace(/\./g, '').replace(',', '.'));
+    };
+
+    if (preview) {
+      const previewData = [];
+      const sample = payments.slice(0, 10);
+
+      const allIds = payments.map(p => getVal(p, ['Código da Transação', 'Codigo da Transacao', 'Transaction ID'])).filter(id => !!id);
+      let existingIds = new Set<string>();
+      
+      if (allIds.length > 0) {
+        for (let i = 0; i < allIds.length; i += 500) {
+          const chunk = allIds.slice(i, i + 500);
+          const { data: existing } = await supabase
+            .from('pagamentos_pagseguro')
+            .select('id_transacao')
+            .in('id_transacao', chunk);
+          existing?.forEach(p => existingIds.add(p.id_transacao));
+        }
+      }
+
+      const skippedCount = existingIds.size;
+      const successCount = payments.length - skippedCount;
+      
+      for (const row of sample) {
+        const email = getVal(row, ['E-mail Cliente', 'Email Cliente', 'E-mail Comprador', 'Email Comprador']);
+        const nome = getVal(row, ['Nome Cliente', 'Nome Cliente', 'Nome Comprador', 'Nome Comprador']);
+        const transacaoId = getVal(row, ['Código da Transação', 'Codigo da Transacao']);
+        const isExisting = existingIds.has(transacaoId);
+
+        const dataStr = getVal(row, ['Data da Transação', 'Data da Transacao']) || '---';
+        let alunoNome = 'Não encontrado';
+        
+        if (email || nome) {
+          let resp = null;
+          if (email) {
+            const { data } = await supabase.from('responsaveis').select('id').ilike('email', email.trim()).maybeSingle();
+            resp = data;
+          }
+          
+          if (!resp && nome) {
+            const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', nome).maybeSingle();
+            resp = data;
+          }
+
+          if (resp) {
+            const { data: students } = await supabase.from('alunos').select('id, nome_completo').eq('responsavel_id', resp.id);
+            if (students && students.length > 0) {
+              alunoNome = students.map(s => s.nome_completo).join(', ');
+            }
+          }
+        }
+
+        const rawStatus = getVal(row, ['Status']);
+        const mappedStatus = (rawStatus || '').toLowerCase().includes('aprovad') || (rawStatus || '').toLowerCase().includes('paga') || (rawStatus || '').toLowerCase().includes('disponivel') ? 'Conciliado' : 
+                            (rawStatus || '').toLowerCase().includes('cancelad') || (rawStatus || '').toLowerCase().includes('devolvida') ? 'Estornado' : rawStatus;
+
+        previewData.push({
+          data: dataStr,
+          valor: getVal(row, ['Valor Bruto']),
+          responsavel: nome,
+          email: email,
+          aluno: alunoNome,
+          status: mappedStatus,
+          isExisting
+        });
+      }
+
+      return res.json({
+        preview: previewData,
+        total: payments.length,
+        success: successCount,
+        skipped: skippedCount
+      });
+    }
+
+    // Final Import
+    const results = { processed: 0, success: 0, errors: [] as any[], details: [] as any[] };
+
+    for (const row of payments) {
+      results.processed++;
+      try {
+        const transacaoId = getVal(row, ['Código da Transação', 'Codigo da Transacao']);
+        if (!transacaoId) throw new Error('Código da Transação ausente');
+
+        const { data: existing } = await supabase
+          .from('pagamentos_pagseguro')
+          .select('id')
+          .eq('id_transacao', transacaoId)
+          .maybeSingle();
+
+        if (existing) {
+          continue; // Skip existing
+        }
+
+        const email = getVal(row, ['E-mail Cliente', 'Email Cliente', 'E-mail Comprador', 'Email Comprador']);
+        const nome = getVal(row, ['Nome Cliente', 'Nome Cliente', 'Nome Comprador', 'Nome Comprador']);
+        
+        let responsavel: any = null;
+        let aluno_id = null;
+        let matricula_id = null;
+        let turma_id = null;
+        let alunoNomeMatch = '';
+
+        if (email || nome) {
+          if (email) {
+            const { data } = await supabase.from('responsaveis').select('*').ilike('email', email.trim()).maybeSingle();
+            responsavel = data;
+          }
+          if (!responsavel && nome) {
+            const { data } = await supabase.from('responsaveis').select('*').ilike('nome_completo', nome).maybeSingle();
+            responsavel = data;
+          }
+        }
+
+        if (responsavel) {
+          const { data: students } = await supabase.from('alunos').select('*').eq('responsavel_id', responsavel.id);
+          if (students && students.length > 0) {
+            const studentIds = students.map(s => s.id);
+            const { data: enrollments } = await supabase
+              .from('matriculas')
+              .select('*')
+              .in('aluno_id', studentIds);
+
+            if (enrollments && enrollments.length > 0) {
+              // Try to match by reference or something?
+              // For now, take the most recent active enrollment
+              const active = enrollments.find(e => e.status === 'ativo' && !e.data_cancelamento);
+              const bestMatch = active || enrollments[0];
+              
+              matricula_id = bestMatch.id;
+              aluno_id = bestMatch.aluno_id;
+              turma_id = bestMatch.turma_id;
+              const s = students.find(st => st.id === aluno_id);
+              alunoNomeMatch = s ? s.nome_completo : '';
+            } else {
+              aluno_id = students[0].id;
+              alunoNomeMatch = students[0].nome_completo;
+            }
+          }
+        }
+
+        const rowData = {
+          documento: getVal(row, ['Documento']),
+          estabelecimento: getVal(row, ['Estabelecimento']),
+          nome_cliente: getVal(row, ['Nome Cliente']),
+          email_cliente: getVal(row, ['E-mail Cliente']),
+          id_transacao: transacaoId,
+          data_transacao: parseDate(getVal(row, ['Data da Transação', 'Data da Transacao'])),
+          data_liberacao: parseDate(getVal(row, ['Data prevista de liberação', 'Data prevista de liberacao'])),
+          data_cancelamento: parseDate(getVal(row, ['Data do cancelamento'])),
+          bandeira: getVal(row, ['Bandeira']),
+          forma_pagamento: getVal(row, ['Forma de Pagamento', 'Forma de Pagamento']),
+          parcela: getVal(row, ['Parcela']),
+          valor_bruto: parseAmount(getVal(row, ['Valor Bruto'])),
+          valor_taxa: parseAmount(getVal(row, ['Valor Taxa'])),
+          valor_repasse: parseAmount(getVal(row, ['Valor Repasse'])),
+          valor_liquido: parseAmount(getVal(row, ['Valor Líquido', 'Valor Liquido'])),
+          status: getVal(row, ['Status']),
+          numero_cartao: getVal(row, ['Número do Cartão', 'Numero do Cartao']),
+          nsu: getVal(row, ['Código NSU', 'Codigo NSU']),
+          codigo_autorizacao: getVal(row, ['Código de Autorização', 'Codigo de Autorizacao']),
+          id_maquininha: getVal(row, ['Identificação da Maquininha', 'Identificacao da Maquininha']),
+          codigo_venda: getVal(row, ['Código da Venda', 'Codigo da Venda']),
+          codigo_referencia: getVal(row, ['Código Referência', 'Codigo Referencia']),
+          nome_comprador: getVal(row, ['Nome Comprador']),
+          email_comprador: getVal(row, ['E-mail Comprador']),
+          txid_pix: getVal(row, ['Código TX ID (PIX)', 'Codigo TX ID (PIX)']),
+          id_split: getVal(row, ['ID Split']),
+          responsavel_id: responsavel?.id,
+          aluno_id,
+          matricula_id,
+          turma_id
+        };
+
+        let { error } = await supabase.from('pagamentos_pagseguro').insert([rowData]);
+        
+        if (error && error.code === '42703') {
+          const simplifiedData = { ...rowData };
+          delete (simplifiedData as any).responsavel_id;
+          delete (simplifiedData as any).aluno_id;
+          delete (simplifiedData as any).matricula_id;
+          delete (simplifiedData as any).turma_id;
+          const retry = await supabase.from('pagamentos_pagseguro').insert([simplifiedData]);
+          error = retry.error;
+        }
+
+        if (error) throw error;
+        
+        results.success++;
+        results.details.push({
+          row: results.processed,
+          transacao: transacaoId,
+          aluno: alunoNomeMatch || 'Não identificado'
         });
       } catch (err: any) {
         results.errors.push({ row: results.processed, error: err.message });
