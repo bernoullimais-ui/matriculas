@@ -5154,6 +5154,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         event.type === 'order.payment_failed' ||
         event.type === 'invoice.paid' ||
         event.type === 'invoice.payment_failed' ||
+        event.type === 'invoice.created' ||
         event.type === 'subscription.created' ||
         event.type === 'subscription.updated' ||
         event.type === 'subscription.canceled' ||
@@ -5300,16 +5301,17 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
             event.type === 'invoice.canceled';
 
           const isRefunded = event.type === 'charge.refunded';
+          const isCreated = event.type === 'invoice.created';
           
-          if (!isPaid && !isFailed && !isCanceled && !isRefunded) {
-            console.log(`[Webhook Pagar.me] Evento ignorado (não é pago, falha, cancelamento nem estorno). Status: ${data.status}`);
+          if (!isPaid && !isFailed && !isCanceled && !isRefunded && !isCreated) {
+            console.log(`[Webhook Pagar.me] Evento ignorado (não é pago, falha, cancelamento, estorno nem criação). Status: ${data.status}`);
             return res.status(200).json({ received: true });
           }
 
-          const status = isPaid ? 'pago' : (isCanceled ? 'cancelado' : (isRefunded ? 'estornado' : 'falha'));
+          const status = isPaid ? 'pago' : (isCanceled ? 'cancelado' : (isRefunded ? 'estornado' : (isCreated ? 'pendente' : 'falha')));
 
           // Check if it's a recurring payment (cycle > 1) OR a split subscription (cycle 1 is the 2nd payment)
-          const invoice = data.invoice || (data.charges && data.charges[0] && data.charges[0].invoice) || (event.type === 'invoice.paid' ? data : null);
+          const invoice = data.invoice || (data.charges && data.charges[0] && data.charges[0].invoice) || (event.type === 'invoice.paid' || event.type === 'invoice.created' ? data : null);
           const isSubscription = (invoice && invoice.subscription_id) || event.type.startsWith('subscription.');
           const cycle = invoice ? invoice.cycle : (data.current_cycle || 1);
           let targetPaymentId = paymentId;
@@ -5354,7 +5356,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
               // Find the next pending payment for this matricula
               const { data: nextPayment } = await supabase
                 .from('pagamentos')
-                .select('id')
+                .select('id, data_vencimento')
                 .eq('matricula_id', originalPayment.matricula_id)
                 .eq('status', 'pendente')
                 .order('data_vencimento', { ascending: true })
@@ -5380,6 +5382,55 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
             await supabase.from('pagamentos').update({ status: status }).eq('id', targetPaymentId);
           }
           
+          if (isCreated) {
+            // Se for uma nova fatura de assinatura PIX, envia o QR Code
+            const invoiceData = data; // data é a fatura
+            const order = invoiceData.order;
+            const charge = order?.charges?.[0];
+            const lastTransaction = charge?.last_transaction;
+            
+            if (lastTransaction && lastTransaction.transaction_type === 'pix') {
+              const qrCodeUrl = lastTransaction.qr_code_url;
+              const qrCode = lastTransaction.qr_code;
+              
+              // Busca dados do responsável para enviar WhatsApp
+              const { data: paymentData } = await supabase
+                .from('pagamentos')
+                .select('responsavel_id, matricula_id, data_vencimento')
+                .eq('id', targetPaymentId)
+                .single();
+              
+              if (paymentData && paymentData.responsavel_id) {
+                const { data: guardian } = await supabase
+                  .from('responsaveis')
+                  .select('nome_completo, telefone')
+                  .eq('id', paymentData.responsavel_id)
+                  .single();
+                
+                if (guardian && guardian.telefone) {
+                  const { data: matricula } = await supabase
+                    .from('matriculas')
+                    .select('aluno_id, unidade')
+                    .eq('id', paymentData.matricula_id)
+                    .single();
+                  
+                  const { data: student } = await supabase
+                    .from('alunos')
+                    .select('nome_completo')
+                    .eq('id', matricula?.aluno_id)
+                    .single();
+                  
+                  const vencimentoStr = paymentData.data_vencimento ? new Date(paymentData.data_vencimento).toLocaleDateString('pt-BR') : 'não informada';
+                  const msg = `Olá, *${guardian.nome_completo}*! Sua mensalidade de *${student?.nome_completo || 'seu filho(a)'}* com vencimento em *${vencimentoStr}* foi gerada.\n\nVocê pode pagar via PIX utilizando o QR Code abaixo:\n\n${qrCodeUrl}\n\nOu copie e cole o código:\n\n${qrCode}`;
+                  
+                  await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, msg, matricula?.unidade)
+                    .catch(e => console.error("[Webhook Pagar.me] Erro ao enviar QR Code PIX:", e));
+                }
+              }
+            }
+            return res.status(200).json({ received: true });
+          }
+
           if (isPaid) {
             // 2. Notificações e Ativação de Matrícula
             const { data: paymentData } = await supabase
@@ -6331,31 +6382,43 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
       const successCount = payments.length - skippedCount;
       
       for (const row of sample) {
-        const email = getVal(row, ['E-mail Cliente', 'Email Cliente', 'E-mail Comprador', 'Email Comprador']);
-        const nome = getVal(row, ['Nome Cliente', 'Nome Cliente', 'Nome Comprador', 'Nome Comprador']);
+        const emailComprador = getVal(row, ['E-mail Comprador', 'Email Comprador']);
+        const emailCliente = getVal(row, ['E-mail Cliente', 'Email Cliente']);
+        const nomeComprador = getVal(row, ['Nome Comprador', 'Nome Comprador']);
+        const nomeCliente = getVal(row, ['Nome Cliente', 'Nome Cliente']);
+        
         const transacaoId = getVal(row, ['Código da Transação', 'Codigo da Transacao']);
         const isExisting = existingIds.has(transacaoId);
 
         const dataStr = getVal(row, ['Data da Transação', 'Data da Transacao']) || '---';
         let alunoNome = 'Não encontrado';
         
-        if (email || nome) {
-          let resp = null;
-          if (email) {
-            const { data } = await supabase.from('responsaveis').select('id').ilike('email', email.trim()).maybeSingle();
-            resp = data;
-          }
-          
-          if (!resp && nome) {
-            const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', nome).maybeSingle();
-            resp = data;
-          }
+        let resp = null;
+        // Prioritize email_comprador as requested
+        if (emailComprador) {
+          const { data } = await supabase.from('responsaveis').select('id').ilike('email', emailComprador.trim()).maybeSingle();
+          resp = data;
+        }
+        
+        if (!resp && emailCliente) {
+          const { data } = await supabase.from('responsaveis').select('id').ilike('email', emailCliente.trim()).maybeSingle();
+          resp = data;
+        }
 
-          if (resp) {
-            const { data: students } = await supabase.from('alunos').select('id, nome_completo').eq('responsavel_id', resp.id);
-            if (students && students.length > 0) {
-              alunoNome = students.map(s => s.nome_completo).join(', ');
-            }
+        if (!resp && nomeComprador) {
+          const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', nomeComprador).maybeSingle();
+          resp = data;
+        }
+
+        if (!resp && nomeCliente) {
+          const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', nomeCliente).maybeSingle();
+          resp = data;
+        }
+
+        if (resp) {
+          const { data: students } = await supabase.from('alunos').select('id, nome_completo').eq('responsavel_id', resp.id);
+          if (students && students.length > 0) {
+            alunoNome = students.map(s => s.nome_completo).join(', ');
           }
         }
 
@@ -6366,8 +6429,8 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
         previewData.push({
           data: dataStr,
           valor: getVal(row, ['Valor Bruto']),
-          responsavel: nome,
-          email: email,
+          responsavel: nomeComprador || nomeCliente,
+          email: emailComprador || emailCliente,
           aluno: alunoNome,
           status: mappedStatus,
           isExisting
@@ -6383,13 +6446,17 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
     }
 
     // Final Import
-    const results = { processed: 0, success: 0, errors: [] as any[], details: [] as any[] };
+    const results = { processed: 0, success: 0, skipped: 0, errors: [] as any[], details: [] as any[] };
+    console.log(`Starting final import for ${payments.length} PagSeguro payments`);
 
     for (const row of payments) {
       results.processed++;
       try {
         const transacaoId = getVal(row, ['Código da Transação', 'Codigo da Transacao']);
-        if (!transacaoId) throw new Error('Código da Transação ausente');
+        if (!transacaoId) {
+          console.warn(`Row ${results.processed}: Missing transaction ID. Available keys: ${Object.keys(row).join(', ')}`);
+          throw new Error('Código da Transação ausente');
+        }
 
         const { data: existing } = await supabase
           .from('pagamentos_pagseguro')
@@ -6398,11 +6465,14 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
           .maybeSingle();
 
         if (existing) {
+          results.skipped++;
           continue; // Skip existing
         }
 
-        const email = getVal(row, ['E-mail Cliente', 'Email Cliente', 'E-mail Comprador', 'Email Comprador']);
-        const nome = getVal(row, ['Nome Cliente', 'Nome Cliente', 'Nome Comprador', 'Nome Comprador']);
+        const emailComprador = getVal(row, ['E-mail Comprador', 'Email Comprador']);
+        const emailCliente = getVal(row, ['E-mail Cliente', 'Email Cliente']);
+        const nomeComprador = getVal(row, ['Nome Comprador', 'Nome Comprador']);
+        const nomeCliente = getVal(row, ['Nome Cliente', 'Nome Cliente']);
         
         let responsavel: any = null;
         let aluno_id = null;
@@ -6410,15 +6480,25 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
         let turma_id = null;
         let alunoNomeMatch = '';
 
-        if (email || nome) {
-          if (email) {
-            const { data } = await supabase.from('responsaveis').select('*').ilike('email', email.trim()).maybeSingle();
-            responsavel = data;
-          }
-          if (!responsavel && nome) {
-            const { data } = await supabase.from('responsaveis').select('*').ilike('nome_completo', nome).maybeSingle();
-            responsavel = data;
-          }
+        // Prioritize email_comprador as requested
+        if (emailComprador) {
+          const { data } = await supabase.from('responsaveis').select('*').ilike('email', emailComprador.trim()).maybeSingle();
+          responsavel = data;
+        }
+        
+        if (!responsavel && emailCliente) {
+          const { data } = await supabase.from('responsaveis').select('*').ilike('email', emailCliente.trim()).maybeSingle();
+          responsavel = data;
+        }
+
+        if (!responsavel && nomeComprador) {
+          const { data } = await supabase.from('responsaveis').select('*').ilike('nome_completo', nomeComprador).maybeSingle();
+          responsavel = data;
+        }
+
+        if (!responsavel && nomeCliente) {
+          const { data } = await supabase.from('responsaveis').select('*').ilike('nome_completo', nomeCliente).maybeSingle();
+          responsavel = data;
         }
 
         if (responsavel) {
