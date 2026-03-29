@@ -1220,7 +1220,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         }
       });
       
-      const hasActiveEnrollments = flatAlunos.some(a => a.status === 'ativo');
+      const hasActiveEnrollments = flatAlunos.some(a => (a.status || '').toLowerCase() === 'ativo');
 
       res.json({
         ...data,
@@ -1429,7 +1429,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           }
         });
         
-        const hasActiveEnrollments = flatAlunos.some(a => a.status === 'ativo');
+        const hasActiveEnrollments = flatAlunos.some(a => (a.status || '').toLowerCase() === 'ativo');
 
         res.json({
           ...data,
@@ -3352,7 +3352,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         supabase.from('responsaveis').select('id, nome_completo'),
         supabase.from('alunos').select('id, nome_completo, serie_ano, responsavel_id, data_nascimento'),
         supabase.from('matriculas').select('id, aluno_id, turma, unidade, status, data_cancelamento, data_matricula, plano'),
-        supabase.from('pagamentos').select('responsavel_id, status, metodo_pagamento')
+        supabase.from('pagamentos').select('responsavel_id, matricula_id, status, metodo_pagamento, data_vencimento')
       ]);
 
       if (rError) throw rError;
@@ -3855,6 +3855,16 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           }
         }
 
+        const statusLower = (ps.status || '').toLowerCase();
+        let normalizedStatus = 'pendente';
+        if (statusLower.includes('aprovad') || statusLower.includes('paga') || statusLower.includes('disponivel') || statusLower.includes('conciliado')) {
+          normalizedStatus = 'pago';
+        } else if (statusLower.includes('cancelad') || statusLower.includes('devolvida') || statusLower.includes('estornado')) {
+          normalizedStatus = 'cancelado';
+        } else if (statusLower.includes('falhou') || statusLower.includes('recusado')) {
+          normalizedStatus = 'falha';
+        }
+
         return {
           ...ps,
           id: ps.id,
@@ -3862,8 +3872,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           matricula_id: ps.matricula_id,
           aluno_id: ps.aluno_id,
           valor: ps.valor_bruto,
-          status: (ps.status || '').toLowerCase().includes('aprovad') || (ps.status || '').toLowerCase().includes('paga') || (ps.status || '').toLowerCase().includes('disponivel') ? 'pago' : 
-                  (ps.status || '').toLowerCase().includes('cancelad') || (ps.status || '').toLowerCase().includes('devolvida') ? 'estornado' : 'pendente',
+          status: normalizedStatus,
           metodo_pagamento: 'pagseguro',
           data_vencimento: dataVenc || ps.created_at,
           created_at: ps.created_at,
@@ -5691,7 +5700,7 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
                   failureReason,
                   matricula.unidade
                 );
-              } else if (matricula && matricula.status === 'ativo') {
+              } else if (matricula && (matricula.status || '').toLowerCase() === 'ativo') {
                 console.log(`[Webhook Pagar.me] Falha em pagamento recorrente da matrícula ${paymentData.matricula_id}. Enviando notificação...`);
                 
                 const { data: student } = await supabase
@@ -5962,7 +5971,7 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
 
                 if (matches.length > 0) {
                   let bestMatch = null;
-                  const activeMatches = matches.filter(m => m.status === 'ativo' && !m.data_cancelamento);
+                  const activeMatches = matches.filter(m => (m.status || '').toLowerCase() === 'ativo' && !m.data_cancelamento);
                   const candidates = activeMatches.length > 0 ? activeMatches : matches;
 
                   // Tenta achar o aluno pelo nome no CSV
@@ -6140,7 +6149,7 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
               if (matches.length > 0) {
                 let bestMatch = null;
                 
-                const activeMatches = matches.filter(m => m.status === 'ativo' && !m.data_cancelamento);
+                const activeMatches = matches.filter(m => (m.status || '').toLowerCase() === 'ativo' && !m.data_cancelamento);
                 const candidates = activeMatches.length > 0 ? activeMatches : matches;
 
                 if (candidates.length > 1) {
@@ -6285,7 +6294,7 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
           delete simplifiedData.responsavel_id;
           delete simplifiedData.aluno_id;
           delete simplifiedData.matricula_id;
-          delete simplifiedData.turma_id;
+          delete (simplifiedData as any).turma_id;
           
           const retry = await supabase.from('pagamentos_wix').insert([simplifiedData]);
           error = retry.error;
@@ -6308,20 +6317,21 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
 
   app.post("/api/admin/import-pagseguro-payments", express.json({ limit: '10mb' }), async (req, res) => {
     const { payments, preview } = req.body;
-    if (!Array.isArray(payments)) {
-      return res.status(400).json({ error: 'Formato inválido. Esperado um array de pagamentos.' });
-    }
+    
+    console.log(`[PagSeguro Import] Received ${payments?.length || 0} rows. Preview: ${preview}`);
 
-    const fuzzy = (s: any) => {
-      if (!s) return '';
-      return String(s)
-        .replace(/[\u0000-\u001F\u007F-\u009F\uFEFF]/g, '')
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9]/gi, '')
-        .toLowerCase()
-        .trim();
+    const results: any = {
+      processed: 0,
+      success: 0,
+      skipped: 0,
+      errors: [],
+      details: []
     };
+
+    if (!payments || !Array.isArray(payments) || payments.length === 0) {
+      console.warn('[PagSeguro Import] No payments provided in request body');
+      return res.json(results);
+    }
 
     const getVal = (row: any, keys: string[]) => {
       const entries = Object.entries(row);
@@ -6346,79 +6356,86 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
       const parts = dateStr.split(' ');
       const dateParts = parts[0].split('/');
       if (dateParts.length === 3) {
-        const day = dateParts[0];
-        const month = dateParts[1];
+        const day = dateParts[0].padStart(2, '0');
+        const month = dateParts[1].padStart(2, '0');
         const year = dateParts[2];
-        const time = parts[1] || '00:00';
+        const time = parts[1] || '12:00';
         return `${year}-${month}-${day}T${time}:00Z`;
       }
-      return null;
+      return dateStr;
     };
 
     const parseAmount = (val: string) => {
       if (!val) return 0;
-      return parseFloat(val.replace(/\./g, '').replace(',', '.'));
+      return parseFloat(val.replace(/[R$\s]/g, '').replace(/\./g, '').replace(',', '.')) || 0;
     };
 
-    if (preview) {
-      const previewData = [];
-      const sample = payments.slice(0, 10);
-
-      const allIds = payments.map(p => getVal(p, ['Código da Transação', 'Codigo da Transacao', 'Transaction ID'])).filter(id => !!id);
-      let existingIds = new Set<string>();
-      
-      if (allIds.length > 0) {
-        for (let i = 0; i < allIds.length; i += 500) {
-          const chunk = allIds.slice(i, i + 500);
-          const { data: existing } = await supabase
-            .from('pagamentos_pagseguro')
-            .select('id_transacao')
-            .in('id_transacao', chunk);
-          existing?.forEach(p => existingIds.add(p.id_transacao));
+    for (const row of payments) {
+      results.processed++;
+      try {
+        if (results.processed === 1) {
+          console.log(`[PagSeguro Import] Row 1 keys:`, Object.keys(row));
         }
-      }
 
-      const skippedCount = existingIds.size;
-      const successCount = payments.length - skippedCount;
-      
-      for (const row of sample) {
+        const transacaoId = getVal(row, ['Código da Transação', 'Codigo da Transacao', 'Transaction ID', 'ID da Transação', 'ID Transação']);
+        if (!transacaoId) {
+          console.warn(`Row ${results.processed}: Missing transaction ID. Keys: ${Object.keys(row).join(', ')}`);
+          throw new Error('Código da Transação ausente ou coluna não identificada');
+        }
+
+        // Check if already exists
+        const { data: existing } = await supabase
+          .from('pagamentos_pagseguro')
+          .select('id')
+          .eq('id_transacao', transacaoId)
+          .maybeSingle();
+
+        if (existing && !preview) {
+          results.skipped++;
+          continue;
+        }
+
+        // Try to identify responsible and student
         const emailComprador = getVal(row, ['E-mail Comprador', 'Email Comprador']);
         const emailCliente = getVal(row, ['E-mail Cliente', 'Email Cliente']);
-        const nomeComprador = getVal(row, ['Nome Comprador', 'Nome Comprador']);
-        const nomeCliente = getVal(row, ['Nome Cliente', 'Nome Cliente']);
+        const nomeComprador = getVal(row, ['Nome Comprador']);
+        const nomeCliente = getVal(row, ['Nome Cliente']);
         
-        const transacaoId = getVal(row, ['Código da Transação', 'Codigo da Transacao']);
-        const isExisting = existingIds.has(transacaoId);
-
-        const dataStr = getVal(row, ['Data da Transação', 'Data da Transacao']) || '---';
-        let alunoNome = 'Não encontrado';
-        
-        let resp = null;
-        // Prioritize email_comprador as requested
-        if (emailComprador) {
-          const { data } = await supabase.from('responsaveis').select('id').ilike('email', emailComprador.trim()).maybeSingle();
-          resp = data;
-        }
-        
-        if (!resp && emailCliente) {
-          const { data } = await supabase.from('responsaveis').select('id').ilike('email', emailCliente.trim()).maybeSingle();
-          resp = data;
+        let responsavel = null;
+        const targetEmail = (emailComprador || emailCliente || '').trim();
+        if (targetEmail) {
+          const { data } = await supabase.from('responsaveis').select('id, nome_completo').ilike('email', targetEmail).maybeSingle();
+          responsavel = data;
         }
 
-        if (!resp && nomeComprador) {
-          const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', nomeComprador).maybeSingle();
-          resp = data;
+        const targetName = (nomeComprador || nomeCliente || '').trim();
+        if (!responsavel && targetName) {
+          // Fuzzy match by name
+          const { data } = await supabase.from('responsaveis').select('id, nome_completo').ilike('nome_completo', targetName).maybeSingle();
+          responsavel = data;
         }
 
-        if (!resp && nomeCliente) {
-          const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', nomeCliente).maybeSingle();
-          resp = data;
-        }
+        let aluno_id = null;
+        let matricula_id = null;
+        let turma_id = null;
+        let alunoNomeMatch = null;
+        let turmaMatch = null;
 
-        if (resp) {
-          const { data: students } = await supabase.from('alunos').select('id, nome_completo').eq('responsavel_id', resp.id);
+        if (responsavel) {
+          // Find students for this responsible
+          const { data: students } = await supabase.from('alunos').select('id, nome_completo').eq('responsavel_id', responsavel.id);
           if (students && students.length > 0) {
-            alunoNome = students.map(s => s.nome_completo).join(', ');
+            aluno_id = students[0].id;
+            alunoNomeMatch = students[0].nome_completo;
+
+            if (aluno_id) {
+              const { data: mats } = await supabase.from('matriculas').select('id, turma, turma_id').eq('aluno_id', aluno_id).eq('status', 'ativo').maybeSingle();
+              if (mats) {
+                matricula_id = mats.id;
+                turma_id = mats.turma_id;
+                turmaMatch = mats.turma;
+              }
+            }
           }
         }
 
@@ -6426,113 +6443,23 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
         const mappedStatus = (rawStatus || '').toLowerCase().includes('aprovad') || (rawStatus || '').toLowerCase().includes('paga') || (rawStatus || '').toLowerCase().includes('disponivel') ? 'Conciliado' : 
                             (rawStatus || '').toLowerCase().includes('cancelad') || (rawStatus || '').toLowerCase().includes('devolvida') ? 'Estornado' : rawStatus;
 
-        previewData.push({
-          data: dataStr,
-          valor: getVal(row, ['Valor Bruto']),
-          responsavel: nomeComprador || nomeCliente,
-          email: emailComprador || emailCliente,
-          aluno: alunoNome,
-          status: mappedStatus,
-          isExisting
-        });
-      }
-
-      return res.json({
-        preview: previewData,
-        total: payments.length,
-        success: successCount,
-        skipped: skippedCount
-      });
-    }
-
-    // Final Import
-    const results = { processed: 0, success: 0, skipped: 0, errors: [] as any[], details: [] as any[] };
-    console.log(`Starting final import for ${payments.length} PagSeguro payments`);
-
-    for (const row of payments) {
-      results.processed++;
-      try {
-        const transacaoId = getVal(row, ['Código da Transação', 'Codigo da Transacao']);
-        if (!transacaoId) {
-          console.warn(`Row ${results.processed}: Missing transaction ID. Available keys: ${Object.keys(row).join(', ')}`);
-          throw new Error('Código da Transação ausente');
-        }
-
-        const { data: existing } = await supabase
-          .from('pagamentos_pagseguro')
-          .select('id')
-          .eq('id_transacao', transacaoId)
-          .maybeSingle();
-
-        if (existing) {
-          results.skipped++;
-          continue; // Skip existing
-        }
-
-        const emailComprador = getVal(row, ['E-mail Comprador', 'Email Comprador']);
-        const emailCliente = getVal(row, ['E-mail Cliente', 'Email Cliente']);
-        const nomeComprador = getVal(row, ['Nome Comprador', 'Nome Comprador']);
-        const nomeCliente = getVal(row, ['Nome Cliente', 'Nome Cliente']);
-        
-        let responsavel: any = null;
-        let aluno_id = null;
-        let matricula_id = null;
-        let turma_id = null;
-        let alunoNomeMatch = '';
-
-        // Prioritize email_comprador as requested
-        if (emailComprador) {
-          const { data } = await supabase.from('responsaveis').select('*').ilike('email', emailComprador.trim()).maybeSingle();
-          responsavel = data;
-        }
-        
-        if (!responsavel && emailCliente) {
-          const { data } = await supabase.from('responsaveis').select('*').ilike('email', emailCliente.trim()).maybeSingle();
-          responsavel = data;
-        }
-
-        if (!responsavel && nomeComprador) {
-          const { data } = await supabase.from('responsaveis').select('*').ilike('nome_completo', nomeComprador).maybeSingle();
-          responsavel = data;
-        }
-
-        if (!responsavel && nomeCliente) {
-          const { data } = await supabase.from('responsaveis').select('*').ilike('nome_completo', nomeCliente).maybeSingle();
-          responsavel = data;
-        }
-
-        if (responsavel) {
-          const { data: students } = await supabase.from('alunos').select('*').eq('responsavel_id', responsavel.id);
-          if (students && students.length > 0) {
-            const studentIds = students.map(s => s.id);
-            const { data: enrollments } = await supabase
-              .from('matriculas')
-              .select('*')
-              .in('aluno_id', studentIds);
-
-            if (enrollments && enrollments.length > 0) {
-              // Try to match by reference or something?
-              // For now, take the most recent active enrollment
-              const active = enrollments.find(e => e.status === 'ativo' && !e.data_cancelamento);
-              const bestMatch = active || enrollments[0];
-              
-              matricula_id = bestMatch.id;
-              aluno_id = bestMatch.aluno_id;
-              turma_id = bestMatch.turma_id;
-              const s = students.find(st => st.id === aluno_id);
-              alunoNomeMatch = s ? s.nome_completo : '';
-            } else {
-              aluno_id = students[0].id;
-              alunoNomeMatch = students[0].nome_completo;
-            }
-          }
+        if (preview) {
+          results.success++;
+          results.details.push({
+            row: results.processed,
+            item: transacaoId,
+            aluno: alunoNomeMatch ? `${alunoNomeMatch}${turmaMatch ? ' (' + turmaMatch + ')' : ''}` : 'Não identificado',
+            status: mappedStatus,
+            responsavel: responsavel?.nome_completo || targetName || 'Não identificado'
+          });
+          continue;
         }
 
         const rowData = {
           documento: getVal(row, ['Documento']),
           estabelecimento: getVal(row, ['Estabelecimento']),
           nome_cliente: getVal(row, ['Nome Cliente']),
-          email_cliente: getVal(row, ['E-mail Cliente']),
+          email_cliente: getVal(row, ['E-mail Cliente', 'Email Cliente']),
           id_transacao: transacaoId,
           data_transacao: parseDate(getVal(row, ['Data da Transação', 'Data da Transacao'])),
           data_liberacao: parseDate(getVal(row, ['Data prevista de liberação', 'Data prevista de liberacao'])),
@@ -6544,7 +6471,7 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
           valor_taxa: parseAmount(getVal(row, ['Valor Taxa'])),
           valor_repasse: parseAmount(getVal(row, ['Valor Repasse'])),
           valor_liquido: parseAmount(getVal(row, ['Valor Líquido', 'Valor Liquido'])),
-          status: getVal(row, ['Status']),
+          status: rawStatus,
           numero_cartao: getVal(row, ['Número do Cartão', 'Numero do Cartao']),
           nsu: getVal(row, ['Código NSU', 'Codigo NSU']),
           codigo_autorizacao: getVal(row, ['Código de Autorização', 'Codigo de Autorizacao']),
@@ -6578,13 +6505,15 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
         results.success++;
         results.details.push({
           row: results.processed,
-          transacao: transacaoId,
-          aluno: alunoNomeMatch || 'Não identificado'
+          item: transacaoId,
+          aluno: alunoNomeMatch ? `${alunoNomeMatch}${turmaMatch ? ' (' + turmaMatch + ')' : ''}` : 'Não identificado'
         });
       } catch (err: any) {
-        results.errors.push({ row: results.processed, error: err.message });
+        console.error(`[PagSeguro Import] Error on row ${results.processed}:`, err.message);
+        results.errors.push({ row: results.processed, error: err.message, data: row });
       }
     }
+    console.log(`[PagSeguro Import] Finished. Success: ${results.success}, Errors: ${results.errors.length}`);
     res.json(results);
   });
 

@@ -68,7 +68,7 @@ interface Enrollment {
       data_trancamento_fim?: string;
     }[];
   }[];
-  pagamentos: { status: string; metodo_pagamento: string }[];
+  pagamentos: { status: string; metodo_pagamento: string; data_vencimento?: string }[];
 }
 
 export default function App() {
@@ -171,6 +171,10 @@ export default function App() {
           complete: (results) => {
             console.log('PapaParse Results:', results);
             
+            if (results.data.length === 0) {
+              console.warn('PapaParse returned no data rows.');
+            }
+
             if (importType === 'pagamentos_wix' && results.meta.fields) {
               processMappedData(results.data);
               return;
@@ -2208,7 +2212,7 @@ export default function App() {
       }
     }
 
-    const result = matchesUnit && matchesGrade && matchesAge && (t.status === 'ativo' || !t.status);
+    const result = matchesUnit && matchesGrade && matchesAge && ((t.status || 'ativo').toLowerCase() === 'ativo');
     
     if (formData.student.unidade && formData.student.grade) {
       console.log(`Checking Turma: ${t.nome}`, { 
@@ -3054,13 +3058,48 @@ export default function App() {
                     <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
                       <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Pagamentos Pendentes</p>
                       <p className="text-3xl font-bold text-amber-600">
-                        {enrollments.filter(e => e.pagamentos[0]?.status === 'pendente').length}
+                        {enrollments.filter(e => {
+                          const p = e.pagamentos?.[0];
+                          if (!p) return false;
+                          const isPaid = p.status?.toLowerCase() === 'pago';
+                          const isCancelled = p.status?.toLowerCase() === 'cancelado';
+                          if (isPaid || isCancelled) return false;
+                          
+                          // If not paid or cancelled, check if it's overdue
+                          if (p.data_vencimento) {
+                            const dueDate = new Date(p.data_vencimento);
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            return dueDate < today;
+                          }
+                          return true; // Assume pending if no due date
+                        }).length}
+                      </p>
+                    </div>
+                    <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                      <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">A Vencer</p>
+                      <p className="text-3xl font-bold text-blue-600">
+                        {enrollments.filter(e => {
+                          const p = e.pagamentos?.[0];
+                          if (!p) return false;
+                          const isPaid = p.status?.toLowerCase() === 'pago';
+                          const isCancelled = p.status?.toLowerCase() === 'cancelado';
+                          if (isPaid || isCancelled) return false;
+                          
+                          if (p.data_vencimento) {
+                            const dueDate = new Date(p.data_vencimento);
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            return dueDate >= today;
+                          }
+                          return false;
+                        }).length}
                       </p>
                     </div>
                     <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
                       <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Conciliados (PIX/Cartão)</p>
                       <p className="text-3xl font-bold text-emerald-600">
-                        {enrollments.filter(e => e.pagamentos[0]?.status === 'pago').length}
+                        {enrollments.filter(e => e.pagamentos?.[0]?.status?.toLowerCase() === 'pago').length}
                       </p>
                     </div>
                   </div>
@@ -3111,9 +3150,9 @@ export default function App() {
                                     <p className="text-[10px] text-slate-500 uppercase">{mat.unidade}</p>
                                     <div className="mt-1">
                                       <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase inline-block ${
-                                        mat.status === 'ativo' || !mat.status ? 'bg-emerald-100 text-emerald-700' :
-                                        mat.status === 'transferido' ? 'bg-blue-100 text-blue-700' : 
-                                        mat.status === 'cancelado' ? 'bg-red-100 text-red-700' :
+                                        (mat.status || 'ativo').trim().toLowerCase() === 'ativo' ? 'bg-emerald-100 text-emerald-700' :
+                                        (mat.status || '').trim().toLowerCase() === 'transferido' ? 'bg-blue-100 text-blue-700' : 
+                                        (mat.status || '').trim().toLowerCase() === 'cancelado' ? 'bg-red-100 text-red-700' :
                                         'bg-amber-100 text-amber-700'
                                       }`}>
                                         {mat.status || 'ativo'}
@@ -3136,27 +3175,48 @@ export default function App() {
                                   </td>
                                   <td className="px-6 py-4">
                                     <div className="flex flex-col gap-1">
-                                      <div className="flex items-center gap-2">
-                                        {enrollment.pagamentos[0]?.metodo_pagamento === 'pix' ? (
-                                          <QrCode size={14} className="text-emerald-600" />
-                                        ) : (
-                                          <CreditCard size={14} className="text-purple-600" />
-                                        )}
-                                        <span className="text-xs font-medium capitalize">
-                                          {enrollment.pagamentos[0]?.metodo_pagamento?.replace('_', ' ') || 'N/A'}
-                                        </span>
-                                      </div>
-                                      <span className={`inline-flex items-center w-fit px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                        enrollment.pagamentos[0]?.status === 'pago' 
-                                          ? 'bg-emerald-100 text-emerald-800' 
-                                          : enrollment.pagamentos[0]?.status === 'cancelado'
-                                          ? 'bg-red-100 text-red-800'
-                                          : 'bg-amber-100 text-amber-800'
-                                      }`}>
-                                        {enrollment.pagamentos[0]?.status === 'pago' ? 'Conciliado' : 
-                                         enrollment.pagamentos[0]?.status === 'cancelado' ? 'Cancelado' : 
-                                         'Pendente'}
-                                      </span>
+                                      {(() => {
+                                        const enrollmentPayment = enrollment.pagamentos?.find((p: any) => p.matricula_id === mat.id) || enrollment.pagamentos?.[0];
+                                        const isPaid = enrollmentPayment?.status?.toLowerCase() === 'pago';
+                                        const isCancelled = enrollmentPayment?.status?.toLowerCase() === 'cancelado';
+                                        
+                                        let statusLabel = 'Pendente';
+                                        let statusColor = 'bg-amber-100 text-amber-800';
+                                        
+                                        if (isPaid) {
+                                          statusLabel = 'Conciliado';
+                                          statusColor = 'bg-emerald-100 text-emerald-800';
+                                        } else if (isCancelled) {
+                                          statusLabel = 'Cancelado';
+                                          statusColor = 'bg-red-100 text-red-800';
+                                        } else if (enrollmentPayment?.data_vencimento) {
+                                          const dueDate = new Date(enrollmentPayment.data_vencimento);
+                                          const today = new Date();
+                                          today.setHours(0, 0, 0, 0);
+                                          if (dueDate >= today) {
+                                            statusLabel = 'A Vencer';
+                                            statusColor = 'bg-blue-100 text-blue-800';
+                                          }
+                                        }
+
+                                        return (
+                                          <>
+                                            <div className="flex items-center gap-2">
+                                              {enrollmentPayment?.metodo_pagamento === 'pix' ? (
+                                                <QrCode size={14} className="text-emerald-600" />
+                                              ) : (
+                                                <CreditCard size={14} className="text-purple-600" />
+                                              )}
+                                              <span className="text-xs font-medium capitalize">
+                                                {enrollmentPayment?.metodo_pagamento?.replace('_', ' ') || 'N/A'}
+                                              </span>
+                                            </div>
+                                            <span className={`inline-flex items-center w-fit px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${statusColor}`}>
+                                              {statusLabel}
+                                            </span>
+                                          </>
+                                        );
+                                      })()}
                                     </div>
                                   </td>
                                   <td className="px-6 py-4 text-right">
@@ -3289,7 +3349,13 @@ export default function App() {
                           onClick={() => setFinanceFilters({...financeFilters, status: 'pendente', view: 'detailed'})}
                           className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${financeFilters.status === 'pendente' ? 'bg-amber-600 text-white border-amber-600' : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'}`}
                         >
-                          Pendentes
+                          Pendentes (Vencidos)
+                        </button>
+                        <button 
+                          onClick={() => setFinanceFilters({...financeFilters, status: 'a_vencer', view: 'detailed'})}
+                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${financeFilters.status === 'a_vencer' ? 'bg-blue-600 text-white border-blue-600' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
+                        >
+                          A Vencer
                         </button>
                         <button 
                           onClick={handleSyncPayments}
@@ -3469,8 +3535,33 @@ export default function App() {
                           
                           // Status filter
                           if (financeFilters.status) {
-                            if (financeFilters.status === 'pendente') {
-                              if (p.status !== 'pendente' && p.status !== 'falha') return false;
+                            const isPaid = p.status?.toLowerCase() === 'pago';
+                            const isCancelled = p.status?.toLowerCase() === 'cancelado';
+                            const isFailed = p.status?.toLowerCase() === 'falha';
+                            const isPending = !isPaid && !isCancelled;
+
+                            if (financeFilters.status === 'pago') {
+                              if (!isPaid) return false;
+                            } else if (financeFilters.status === 'pendente') {
+                              if (!isPending) return false;
+                              // Check if it's overdue
+                              if (p.data_vencimento) {
+                                const dueDate = new Date(p.data_vencimento);
+                                const today = new Date();
+                                today.setHours(0, 0, 0, 0);
+                                if (dueDate >= today) return false;
+                              }
+                            } else if (financeFilters.status === 'a_vencer') {
+                              if (!isPending) return false;
+                              // Check if it's future
+                              if (p.data_vencimento) {
+                                const dueDate = new Date(p.data_vencimento);
+                                const today = new Date();
+                                today.setHours(0, 0, 0, 0);
+                                if (dueDate < today) return false;
+                              } else {
+                                return false; // No due date, assume it's not "A Vencer"
+                              }
                             } else if (p.status !== financeFilters.status) {
                               return false;
                             }
@@ -3588,11 +3679,37 @@ export default function App() {
                         });
 
                         const totalPaid = filteredPayments
-                          .filter(p => p.status === 'pago')
+                          .filter(p => p.status?.toLowerCase() === 'pago')
                           .reduce((acc, curr) => acc + Number(curr.valor), 0);
                         
                         const totalPending = filteredPayments
-                          .filter(p => p.status === 'pendente' || p.status === 'falha')
+                          .filter(p => {
+                            const isPaid = p.status?.toLowerCase() === 'pago';
+                            const isCancelled = p.status?.toLowerCase() === 'cancelado';
+                            if (isPaid || isCancelled) return false;
+                            if (p.data_vencimento) {
+                              const dueDate = new Date(p.data_vencimento);
+                              const today = new Date();
+                              today.setHours(0, 0, 0, 0);
+                              return dueDate < today;
+                            }
+                            return true;
+                          })
+                          .reduce((acc, curr) => acc + Number(curr.valor), 0);
+
+                        const totalUpcoming = filteredPayments
+                          .filter(p => {
+                            const isPaid = p.status?.toLowerCase() === 'pago';
+                            const isCancelled = p.status?.toLowerCase() === 'cancelado';
+                            if (isPaid || isCancelled) return false;
+                            if (p.data_vencimento) {
+                              const dueDate = new Date(p.data_vencimento);
+                              const today = new Date();
+                              today.setHours(0, 0, 0, 0);
+                              return dueDate >= today;
+                            }
+                            return false;
+                          })
                           .reduce((acc, curr) => acc + Number(curr.valor), 0);
 
                         // Sort by date descending
@@ -3629,7 +3746,7 @@ export default function App() {
                         return (
                           <>
                             {financeFilters.view === 'summary' ? (
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                                 <button 
                                   onClick={() => setFinanceFilters({...financeFilters, status: 'pago', view: 'detailed'})}
                                   className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:border-emerald-300 hover:shadow-md transition-all text-left"
@@ -3646,12 +3763,24 @@ export default function App() {
                                   onClick={() => setFinanceFilters({...financeFilters, status: 'pendente', view: 'detailed'})}
                                   className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:border-amber-300 hover:shadow-md transition-all text-left"
                                 >
-                                  <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Pendente</p>
+                                  <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Pendente (Vencido)</p>
                                   <p className="text-3xl font-bold text-amber-600">
                                     R$ {totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                   </p>
                                   <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
                                     <ExternalLink size={12} /> Ver detalhes pendentes
+                                  </p>
+                                </button>
+                                <button 
+                                  onClick={() => setFinanceFilters({...financeFilters, status: 'a_vencer', view: 'detailed'})}
+                                  className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:border-blue-300 hover:shadow-md transition-all text-left"
+                                >
+                                  <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">A Vencer</p>
+                                  <p className="text-3xl font-bold text-blue-600">
+                                    R$ {totalUpcoming.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  </p>
+                                  <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
+                                    <ExternalLink size={12} /> Ver detalhes a vencer
                                   </p>
                                 </button>
                                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
@@ -3844,19 +3973,43 @@ export default function App() {
                                                 </div>
                                               </td>
                                               <td className="px-6 py-4">
-                                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                                  pag.status === 'pago' ? 'bg-emerald-100 text-emerald-800' : 
-                                                  pag.status === 'cancelado' ? 'bg-red-100 text-red-800' :
-                                                  pag.status === 'estornado' ? 'bg-blue-100 text-blue-800' :
-                                                  pag.status === 'falha' ? 'bg-rose-100 text-rose-800' :
-                                                  'bg-amber-100 text-amber-800'
-                                                }`}>
-                                                  {pag.status === 'pago' ? 'Conciliado' : 
-                                                   pag.status === 'cancelado' ? 'Cancelado' : 
-                                                   pag.status === 'estornado' ? 'Estornado' :
-                                                   pag.status === 'falha' ? 'Falhou' :
-                                                   'Pendente'}
-                                                </span>
+                                                {(() => {
+                                                  const isPaid = pag.status?.toLowerCase() === 'pago';
+                                                  const isCancelled = pag.status?.toLowerCase() === 'cancelado';
+                                                  const isRefunded = pag.status?.toLowerCase() === 'estornado';
+                                                  const isFailed = pag.status?.toLowerCase() === 'falha';
+                                                  
+                                                  let statusLabel = 'Pendente';
+                                                  let statusColor = 'bg-amber-100 text-amber-800';
+                                                  
+                                                  if (isPaid) {
+                                                    statusLabel = 'Conciliado';
+                                                    statusColor = 'bg-emerald-100 text-emerald-800';
+                                                  } else if (isCancelled) {
+                                                    statusLabel = 'Cancelado';
+                                                    statusColor = 'bg-red-100 text-red-800';
+                                                  } else if (isRefunded) {
+                                                    statusLabel = 'Estornado';
+                                                    statusColor = 'bg-blue-100 text-blue-800';
+                                                  } else if (isFailed) {
+                                                    statusLabel = 'Falhou';
+                                                    statusColor = 'bg-rose-100 text-rose-800';
+                                                  } else if (pag.data_vencimento) {
+                                                    const dueDate = new Date(pag.data_vencimento);
+                                                    const today = new Date();
+                                                    today.setHours(0, 0, 0, 0);
+                                                    if (dueDate >= today) {
+                                                      statusLabel = 'A Vencer';
+                                                      statusColor = 'bg-blue-100 text-blue-800';
+                                                    }
+                                                  }
+
+                                                  return (
+                                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColor}`}>
+                                                      {statusLabel}
+                                                    </span>
+                                                  );
+                                                })()}
                                               </td>
                                             </tr>
                                           );
@@ -4583,14 +4736,44 @@ export default function App() {
                                 </td>
                                 <td className="px-6 py-4">
                                   <div className="flex items-center gap-2">
-                                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
-                                      p.status === 'pago' ? 'bg-emerald-100 text-emerald-700' : 
-                                      p.status === 'pendente' ? 'bg-amber-100 text-amber-700' : 
-                                      'bg-red-100 text-red-700'
-                                    }`}>
-                                      {p.status}
-                                    </span>
-                                    {p.status === 'pendente' && (
+                                    {(() => {
+                                      const isPaid = p.status?.toLowerCase() === 'pago';
+                                      const isCancelled = p.status?.toLowerCase() === 'cancelado';
+                                      const isRefunded = p.status?.toLowerCase() === 'estornado';
+                                      const isFailed = p.status?.toLowerCase() === 'falha';
+                                      
+                                      let statusLabel = 'Pendente';
+                                      let statusColor = 'bg-amber-100 text-amber-700';
+                                      
+                                      if (isPaid) {
+                                        statusLabel = 'Pago';
+                                        statusColor = 'bg-emerald-100 text-emerald-700';
+                                      } else if (isCancelled) {
+                                        statusLabel = 'Cancelado';
+                                        statusColor = 'bg-red-100 text-red-700';
+                                      } else if (isRefunded) {
+                                        statusLabel = 'Estornado';
+                                        statusColor = 'bg-blue-100 text-blue-700';
+                                      } else if (isFailed) {
+                                        statusLabel = 'Falhou';
+                                        statusColor = 'bg-rose-100 text-rose-700';
+                                      } else if (p.data_vencimento) {
+                                        const dueDate = new Date(p.data_vencimento);
+                                        const today = new Date();
+                                        today.setHours(0, 0, 0, 0);
+                                        if (dueDate >= today) {
+                                          statusLabel = 'A Vencer';
+                                          statusColor = 'bg-blue-100 text-blue-700';
+                                        }
+                                      }
+
+                                      return (
+                                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${statusColor}`}>
+                                          {statusLabel}
+                                        </span>
+                                      );
+                                    })()}
+                                    {(p.status === 'pendente' || (p.data_vencimento && new Date(p.data_vencimento).getTime() >= new Date().setHours(0,0,0,0))) && (
                                       <button
                                         onClick={async () => {
                                           try {
@@ -6607,49 +6790,84 @@ export default function App() {
                     </div>
                     <h2 className="text-3xl font-bold mb-4">Matrícula Realizada!</h2>
                     
-                    {paymentInfo && (
-                      (paymentInfo.charges && paymentInfo.charges[0] && paymentInfo.charges[0].last_transaction && paymentInfo.charges[0].last_transaction.transaction_type === 'pix') ||
-                      (paymentInfo.order && paymentInfo.order.charges && paymentInfo.order.charges[0] && paymentInfo.order.charges[0].last_transaction && paymentInfo.order.charges[0].last_transaction.transaction_type === 'pix')
-                    ) && (
-                      <div className="mb-8 p-6 bg-emerald-50 rounded-2xl border border-emerald-100 max-w-sm mx-auto">
-                        <p className="text-emerald-800 font-bold mb-4 uppercase text-sm tracking-wider">Pagamento via PIX</p>
-                        <div className="bg-white p-4 rounded-xl shadow-sm mb-4 inline-block">
-                          <img 
-                            src={paymentInfo.order ? paymentInfo.order.charges[0].last_transaction.qr_code_url : paymentInfo.charges[0].last_transaction.qr_code_url} 
-                            alt="QR Code PIX" 
-                            className="w-48 h-48 mx-auto"
-                            referrerPolicy="no-referrer"
-                          />
-                        </div>
-                        <div className="space-y-3">
-                          <p className="text-xs text-slate-500">Escaneie o QR Code acima ou copie o código abaixo:</p>
-                          <div className="flex gap-2">
-                            <input 
-                              readOnly 
-                              value={paymentInfo.order ? paymentInfo.order.charges[0].last_transaction.qr_code : paymentInfo.charges[0].last_transaction.qr_code}
-                              className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono truncate"
-                            />
-                            <button 
-                              onClick={(e) => {
-                                const code = paymentInfo.order ? paymentInfo.order.charges[0].last_transaction.qr_code : paymentInfo.charges[0].last_transaction.qr_code;
-                                navigator.clipboard.writeText(code);
-                                const btn = e.currentTarget;
-                                const originalText = btn.innerText;
-                                btn.innerText = 'Copiado!';
-                                btn.classList.replace('bg-emerald-600', 'bg-slate-800');
-                                setTimeout(() => {
-                                  btn.innerText = originalText;
-                                  btn.classList.replace('bg-slate-800', 'bg-emerald-600');
-                                }, 2000);
-                              }}
-                              className="px-3 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold transition-all"
-                            >
-                              Copiar
-                            </button>
+                    {(() => {
+                      if (!paymentInfo) return null;
+                      
+                      let pixTx = null;
+                      
+                      // Case 1: { order, subscription }
+                      if (paymentInfo.order && paymentInfo.order.charges && paymentInfo.order.charges[0]?.last_transaction) {
+                        const tx = paymentInfo.order.charges[0].last_transaction;
+                        if (tx.transaction_type === 'pix' || paymentInfo.order.charges[0].payment_method === 'pix') {
+                          pixTx = tx;
+                        }
+                      }
+                      
+                      // Case 2: order or subscription object directly with charges
+                      if (!pixTx && paymentInfo.charges && paymentInfo.charges[0]?.last_transaction) {
+                        const tx = paymentInfo.charges[0].last_transaction;
+                        if (tx.transaction_type === 'pix' || paymentInfo.charges[0].payment_method === 'pix') {
+                          pixTx = tx;
+                        }
+                      }
+
+                      // Case 3: subscription object directly (via current_invoice)
+                      if (!pixTx && paymentInfo.current_invoice && paymentInfo.current_invoice.charges && paymentInfo.current_invoice.charges[0]?.last_transaction) {
+                        const tx = paymentInfo.current_invoice.charges[0].last_transaction;
+                        if (tx.transaction_type === 'pix' || paymentInfo.current_invoice.charges[0].payment_method === 'pix') {
+                          pixTx = tx;
+                        }
+                      }
+
+                      if (!pixTx) return null;
+
+                      return (
+                        <div className="mb-8 p-6 bg-emerald-50 rounded-2xl border border-emerald-100 max-w-sm mx-auto">
+                          <p className="text-emerald-800 font-bold mb-4 uppercase text-sm tracking-wider">Pagamento via PIX</p>
+                          <div className="bg-white p-4 rounded-xl shadow-sm mb-4 inline-block">
+                            {pixTx.qr_code_url ? (
+                              <img 
+                                src={pixTx.qr_code_url} 
+                                alt="QR Code PIX" 
+                                className="w-48 h-48 mx-auto"
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <div className="w-48 h-48 flex items-center justify-center bg-slate-50 border border-dashed border-slate-200 rounded-lg">
+                                <QrCode size={48} className="text-slate-300" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-3">
+                            <p className="text-xs text-slate-500">Escaneie o QR Code acima ou copie o código abaixo:</p>
+                            <div className="flex gap-2">
+                              <input 
+                                readOnly 
+                                value={pixTx.qr_code || ''}
+                                className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono truncate"
+                              />
+                              <button 
+                                onClick={(e) => {
+                                  const code = pixTx.qr_code || '';
+                                  navigator.clipboard.writeText(code);
+                                  const btn = e.currentTarget;
+                                  const originalText = btn.innerText;
+                                  btn.innerText = 'Copiado!';
+                                  btn.classList.replace('bg-emerald-600', 'bg-slate-800');
+                                  setTimeout(() => {
+                                    btn.innerText = originalText;
+                                    btn.classList.replace('bg-slate-800', 'bg-emerald-600');
+                                  }, 2000);
+                                }}
+                                className="px-3 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold transition-all"
+                              >
+                                Copiar
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {(
                       (paymentInfo && paymentInfo.charges && paymentInfo.charges[0] && paymentInfo.charges[0].payment_method === 'credit_card') || 
@@ -6822,8 +7040,8 @@ export default function App() {
                             <p className="text-xs text-emerald-700 font-medium uppercase">{selectedEnrollmentDetails.matricula.unidade}</p>
                           </div>
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                            selectedEnrollmentDetails.matricula.status === 'ativo' ? 'bg-emerald-100 text-emerald-700' :
-                            selectedEnrollmentDetails.matricula.status === 'cancelado' ? 'bg-red-100 text-red-700' :
+                            (selectedEnrollmentDetails.matricula.status || 'ativo').toLowerCase() === 'ativo' ? 'bg-emerald-100 text-emerald-700' :
+                            (selectedEnrollmentDetails.matricula.status || '').toLowerCase() === 'cancelado' ? 'bg-red-100 text-red-700' :
                             'bg-amber-100 text-amber-700'
                           }`}>
                             {selectedEnrollmentDetails.matricula.status}
@@ -6848,18 +7066,44 @@ export default function App() {
                                 <p className="text-[9px] text-slate-400">ID: {pag.pagarme_id?.slice(-8)}</p>
                               </div>
                             </div>
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
-                              pag.status === 'pago' ? 'bg-emerald-100 text-emerald-700' : 
-                              pag.status === 'cancelado' ? 'bg-red-100 text-red-700' :
-                              pag.status === 'estornado' ? 'bg-blue-100 text-blue-700' :
-                              pag.status === 'falha' ? 'bg-rose-100 text-rose-700' :
-                              'bg-amber-100 text-amber-700'
-                            }`}>
-                              {pag.status === 'pago' ? 'Conciliado' : 
-                               pag.status === 'cancelado' ? 'Cancelado' : 
-                               pag.status === 'estornado' ? 'Estornado' :
-                               pag.status === 'falha' ? 'Falhou' :
-                               'Pendente'}
+                            <span className={(() => {
+                              const isPaid = pag.status?.toLowerCase() === 'pago';
+                              const isCancelled = pag.status?.toLowerCase() === 'cancelado';
+                              const isRefunded = pag.status?.toLowerCase() === 'estornado';
+                              const isFailed = pag.status?.toLowerCase() === 'falha';
+                              
+                              let statusColor = 'bg-amber-100 text-amber-700';
+                              
+                              if (isPaid) statusColor = 'bg-emerald-100 text-emerald-700';
+                              else if (isCancelled) statusColor = 'bg-red-100 text-red-700';
+                              else if (isRefunded) statusColor = 'bg-blue-100 text-blue-700';
+                              else if (isFailed) statusColor = 'bg-rose-100 text-rose-700';
+                              else if (pag.data_vencimento) {
+                                const dueDate = new Date(pag.data_vencimento);
+                                const today = new Date();
+                                today.setHours(0, 0, 0, 0);
+                                if (dueDate >= today) statusColor = 'bg-blue-100 text-blue-700';
+                              }
+                              return `px-2 py-0.5 rounded text-[9px] font-bold uppercase ${statusColor}`;
+                            })()}>
+                              {(() => {
+                                const isPaid = pag.status?.toLowerCase() === 'pago';
+                                const isCancelled = pag.status?.toLowerCase() === 'cancelado';
+                                const isRefunded = pag.status?.toLowerCase() === 'estornado';
+                                const isFailed = pag.status?.toLowerCase() === 'falha';
+                                
+                                if (isPaid) return 'Conciliado';
+                                if (isCancelled) return 'Cancelado';
+                                if (isRefunded) return 'Estornado';
+                                if (isFailed) return 'Falhou';
+                                if (pag.data_vencimento) {
+                                  const dueDate = new Date(pag.data_vencimento);
+                                  const today = new Date();
+                                  today.setHours(0, 0, 0, 0);
+                                  if (dueDate >= today) return 'A Vencer';
+                                }
+                                return 'Pendente';
+                              })()}
                             </span>
                           </div>
                         ))}
