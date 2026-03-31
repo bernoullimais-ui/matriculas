@@ -5308,7 +5308,7 @@ export default function App() {
                         onChange={e => setNewCardData({...newCardData, holder_name: e.target.value})}
                       />
                     </div>
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Mês</label>
                         <input 
@@ -5333,7 +5333,7 @@ export default function App() {
                           onChange={e => setNewCardData({...newCardData, exp_year: e.target.value})}
                         />
                       </div>
-                      <div className="space-y-1">
+                      <div className="space-y-1 col-span-2 sm:col-span-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">CVV</label>
                         <input 
                           type="text" 
@@ -6567,9 +6567,11 @@ export default function App() {
                           />
                         </div>
                         
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                           <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Mês (MM)</label>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">
+                              Mês <span className="text-[10px] font-normal opacity-60">(MM)</span>
+                            </label>
                             <input 
                               type="text" 
                               className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
@@ -6582,7 +6584,9 @@ export default function App() {
                             />
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Ano (AA ou AAAA)</label>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">
+                              Ano <span className="text-[10px] font-normal opacity-60">(AA/AAAA)</span>
+                            </label>
                             <input 
                               type="text" 
                               className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
@@ -6594,7 +6598,7 @@ export default function App() {
                               }}
                             />
                           </div>
-                          <div>
+                          <div className="col-span-2 sm:col-span-1">
                             <label className="block text-sm font-medium text-slate-700 mb-1">CVV</label>
                             <input 
                               type="text" 

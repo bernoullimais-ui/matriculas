@@ -5452,7 +5452,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
               // Check if matricula is currently pending
               const { data: matricula } = await supabase
                 .from('matriculas')
-                .select('status, turma_id, unidade, turma, created_at')
+                .select('status, turma_id, unidade, turma, created_at, aluno_id')
                 .eq('id', paymentData.matricula_id)
                 .single();
 
@@ -5510,19 +5510,15 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                 const { data: student } = await supabase
                   .from('alunos')
                   .select('nome_completo, turma_complementar, unidade')
-                  .eq('responsavel_id', paymentData.responsavel_id)
-                  .order('created_at', { ascending: false })
-                  .limit(1)
+                  .eq('id', matricula.aluno_id)
                   .single();
 
                 if (guardian) {
                   // Send WhatsApp
                   if (guardian.telefone) {
-                    const guardianFirstName = (guardian.nome_completo || '').trim().split(' ')[0];
-                    const studentFirstName = student?.nome_completo 
-                      ? student.nome_completo.trim().split(' ')[0] 
-                      : 'seu filho(a)';
-                    let identidade = `na *Sport for Kids* (${matricula.unidade})`;
+                    const guardianName = (guardian.nome_completo || '').trim();
+                    const studentName = student?.nome_completo || 'seu filho(a)';
+                    let identidade = `*Sport for Kids* (${matricula.unidade})`;
                     if (matricula.unidade) {
                       const { data: mappingData } = await supabase
                         .from('unidades_mapping')
@@ -5532,7 +5528,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                         .maybeSingle();
                       
                       if (mappingData && mappingData.identidade) {
-                        identidade = mappingData.identidade;
+                        identidade = mappingData.identidade.replace(/^na\s+/i, '');
                       } else {
                         const { data: fallbackMapping } = await supabase
                           .from('unidades_mapping')
@@ -5541,13 +5537,13 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                           .limit(1)
                           .maybeSingle();
                         if (fallbackMapping && fallbackMapping.identidade) {
-                          identidade = fallbackMapping.identidade;
+                          identidade = fallbackMapping.identidade.replace(/^na\s+/i, '');
                         }
                       }
                     }
 
-                    const whatsappMsg = `Olá,*${guardianFirstName}* Que alegria ter vocês com a gente! 🎉
-A matrícula de *${studentFirstName}* em *${matricula.turma}* ${identidade} foi confirmada com sucesso. Já estamos preparando tudo para que essa jornada seja incrível.🏆
+                    const whatsappMsg = `Olá, ${guardianName} Que alegria ter vocês com a gente! 🎉
+A matrícula de ${studentName} em ${matricula.turma} em ${identidade} foi confirmada com sucesso. Já estamos preparando tudo para que essa jornada seja incrível.🏆
 
 Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só responder essa mensagem. Seja muito bem-vindo(a) ao nosso time! 🏆`;
 
