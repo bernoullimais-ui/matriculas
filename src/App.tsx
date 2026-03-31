@@ -452,6 +452,7 @@ export default function App() {
   const isSubmittingRef = useRef(false);
   const [portalTab, setPortalTab] = useState<'dashboard' | 'payments' | 'profile' | 'documents'>('dashboard');
   const [isUpdatingCard, setIsUpdatingCard] = useState(false);
+  const [isRetryingPayment, setIsRetryingPayment] = useState(false);
   const [selectedEnrollmentForCard, setSelectedEnrollmentForCard] = useState<string | null>(null);
   const [newCardData, setNewCardData] = useState({
     number: '',
@@ -862,8 +863,11 @@ export default function App() {
 
     setLoading(true);
     try {
-      const response = await fetch('/api/portal/subscription/card', {
-        method: 'PATCH',
+      const endpoint = isRetryingPayment ? '/api/enroll/retry' : '/api/portal/subscription/card';
+      const method = isRetryingPayment ? 'POST' : 'PATCH';
+      
+      const response = await fetch(endpoint, {
+        method: method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           enrollmentId: selectedEnrollmentForCard,
@@ -873,15 +877,20 @@ export default function App() {
 
       const data = await response.json();
       if (response.ok) {
-        alert('Cartão atualizado com sucesso!');
+        alert(isRetryingPayment ? 'Pagamento processado com sucesso!' : 'Cartão atualizado com sucesso!');
         setIsUpdatingCard(false);
+        setIsRetryingPayment(false);
         setNewCardData({ number: '', holder_name: '', exp_month: '', exp_year: '', cvv: '' });
+        if (isRetryingPayment) {
+          fetchEnrollments();
+          fetchFinancialData();
+        }
       } else {
-        alert(data.error || 'Erro ao atualizar cartão.');
+        alert(data.error || 'Erro ao processar solicitação.');
       }
     } catch (error) {
-      console.error('Error updating card:', error);
-      alert('Erro de conexão ao atualizar cartão.');
+      console.error('Error processing card action:', error);
+      alert('Erro de conexão.');
     } finally {
       setLoading(false);
     }
@@ -4590,61 +4599,85 @@ export default function App() {
                               dep.matriculasAtivas.map((mat: any) => (
                                 <div key={mat.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
                                   <div>
-                                    <p className="text-sm font-bold text-slate-800">{mat.turma}</p>
+                                    <div className="flex items-center gap-2">
+                                      <p className="text-sm font-bold text-slate-800">{mat.turma}</p>
+                                      {mat.status === 'pendente' && (
+                                        <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold uppercase">
+                                          Pendente
+                                        </span>
+                                      )}
+                                    </div>
                                     <p className="text-[10px] text-slate-500 uppercase">{mat.unidade}</p>
                                   </div>
                                   <div className="flex gap-2">
-                                    <button 
-                                      onClick={() => {
-                                        setFormData({
-                                          ...formData,
-                                          student: {
-                                            ...formData.student,
-                                            name: dep.nome_completo || '',
-                                            birthDate: dep.data_nascimento || '',
-                                            grade: dep.serie_ano || '',
-                                            turmaEscolar: dep.turma_escolar || '',
-                                            responsavel1: dep.responsavel_1 || '',
-                                            whatsapp1: dep.whatsapp_1 || '',
-                                            responsavel2: dep.responsavel_2 || '',
-                                            whatsapp2: dep.whatsapp_2 || '',
-                                            unidade: mat.unidade,
-                                            turmaComplementar: mat.turma
-                                          }
-                                        });
-                                        setTransferringEnrollmentId(mat.id);
-                                        setTransferringStudent({
-                                          id: dep.aluno_id,
-                                          nome_completo: dep.nome_completo,
-                                          serie_ano: dep.serie_ano,
-                                          data_nascimento: dep.data_nascimento
-                                        });
-                                        setStep('enrollment');
-                                      }}
-                                      className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                      title="Transferir"
-                                    >
-                                      <RefreshCw size={16} />
-                                    </button>
-                                    <button 
-                                      onClick={() => handleCancelEnrollment(mat.id)}
-                                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                      title="Cancelar"
-                                    >
-                                      <Trash2 size={16} />
-                                    </button>
-                                    {mat.pagarme_subscription_id && !payments.some(p => p.matricula_id === mat.id && p.metodo_pagamento === 'pix') && (
+                                    {mat.status === 'pendente' ? (
                                       <button 
                                         onClick={() => {
                                           setSelectedEnrollmentForCard(mat.id);
+                                          setIsRetryingPayment(true);
                                           setIsUpdatingCard(true);
                                         }}
-                                        className="flex items-center gap-1 px-2 py-1 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors text-[10px] font-bold uppercase"
-                                        title="Atualizar Cartão"
+                                        className="flex items-center gap-1 px-2 py-1 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors text-[10px] font-bold uppercase"
+                                        title="Pagar Agora"
                                       >
                                         <CreditCard size={14} />
-                                        Cartão
+                                        Pagar Agora
                                       </button>
+                                    ) : (
+                                      <>
+                                        <button 
+                                          onClick={() => {
+                                            setFormData({
+                                              ...formData,
+                                              student: {
+                                                ...formData.student,
+                                                name: dep.nome_completo || '',
+                                                birthDate: dep.data_nascimento || '',
+                                                grade: dep.serie_ano || '',
+                                                turmaEscolar: dep.turma_escolar || '',
+                                                responsavel1: dep.responsavel_1 || '',
+                                                whatsapp1: dep.whatsapp_1 || '',
+                                                responsavel2: dep.responsavel_2 || '',
+                                                whatsapp2: dep.whatsapp_2 || '',
+                                                unidade: mat.unidade,
+                                                turmaComplementar: mat.turma
+                                              }
+                                            });
+                                            setTransferringEnrollmentId(mat.id);
+                                            setTransferringStudent({
+                                              id: dep.aluno_id,
+                                              nome_completo: dep.nome_completo,
+                                              serie_ano: dep.serie_ano,
+                                              data_nascimento: dep.data_nascimento
+                                            });
+                                            setStep('enrollment');
+                                          }}
+                                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                          title="Transferir"
+                                        >
+                                          <RefreshCw size={16} />
+                                        </button>
+                                        <button 
+                                          onClick={() => handleCancelEnrollment(mat.id)}
+                                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                          title="Cancelar"
+                                        >
+                                          <Trash2 size={16} />
+                                        </button>
+                                        {mat.pagarme_subscription_id && !payments.some(p => p.matricula_id === mat.id && p.metodo_pagamento === 'pix') && (
+                                          <button 
+                                            onClick={() => {
+                                              setSelectedEnrollmentForCard(mat.id);
+                                              setIsUpdatingCard(true);
+                                            }}
+                                            className="flex items-center gap-1 px-2 py-1 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors text-[10px] font-bold uppercase"
+                                            title="Atualizar Cartão"
+                                          >
+                                            <CreditCard size={14} />
+                                            Cartão
+                                          </button>
+                                        )}
+                                      </>
                                     )}
                                   </div>
                                 </div>
@@ -5269,96 +5302,6 @@ export default function App() {
                   </div>
                 </div>
               )}
-
-              {/* Modal Atualizar Cartão */}
-          {isUpdatingCard && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
-              >
-                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                  <h3 className="text-lg font-bold text-slate-900">Atualizar Cartão de Crédito</h3>
-                  <button onClick={() => setIsUpdatingCard(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-                    <X size={20} />
-                  </button>
-                </div>
-                <form onSubmit={handleUpdateCard} className="p-8 space-y-6">
-                  <div className="space-y-4">
-                    <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label>
-                      <input 
-                        type="text" 
-                        required
-                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                        placeholder="0000 0000 0000 0000"
-                        value={newCardData.number}
-                        onChange={e => setNewCardData({...newCardData, number: e.target.value})}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-500 uppercase">Nome no Cartão</label>
-                      <input 
-                        type="text" 
-                        required
-                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                        placeholder="Como está no cartão"
-                        value={newCardData.holder_name}
-                        onChange={e => setNewCardData({...newCardData, holder_name: e.target.value})}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Mês</label>
-                        <input 
-                          type="text" 
-                          required
-                          maxLength={2}
-                          className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                          placeholder="MM"
-                          value={newCardData.exp_month}
-                          onChange={e => setNewCardData({...newCardData, exp_month: e.target.value})}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Ano</label>
-                        <input 
-                          type="text" 
-                          required
-                          maxLength={4}
-                          className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                          placeholder="AAAA"
-                          value={newCardData.exp_year}
-                          onChange={e => setNewCardData({...newCardData, exp_year: e.target.value})}
-                        />
-                      </div>
-                      <div className="space-y-1 col-span-2 sm:col-span-1">
-                        <label className="text-xs font-bold text-slate-500 uppercase">CVV</label>
-                        <input 
-                          type="text" 
-                          required
-                          maxLength={4}
-                          className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                          placeholder="123"
-                          value={newCardData.cvv}
-                          onChange={e => setNewCardData({...newCardData, cvv: e.target.value})}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  <button 
-                    type="submit"
-                    disabled={loading}
-                    className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    {loading ? <RefreshCw className="animate-spin" size={20} /> : <Save size={20} />}
-                    Salvar Novo Cartão
-                  </button>
-                </form>
-              </motion.div>
-            </div>
-          )}
 
           <AnimatePresence mode="wait">
                 {step === 'guardian' && (
@@ -8092,6 +8035,108 @@ export default function App() {
           </motion.div>
         </div>
       )}
+
+      {/* Modal Atualizar Cartão */}
+      <AnimatePresence>
+        {isUpdatingCard && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <h3 className="text-lg font-bold text-slate-900">
+                  {isRetryingPayment ? 'Concluir Pagamento da Matrícula' : 'Atualizar Cartão de Crédito'}
+                </h3>
+                <button 
+                  onClick={() => {
+                    setIsUpdatingCard(false);
+                    setIsRetryingPayment(false);
+                  }} 
+                  className="p-2 hover:bg-slate-200 rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <form onSubmit={handleUpdateCard} className="p-8 space-y-6">
+                <div className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">Número do Cartão</label>
+                    <input 
+                      type="text" 
+                      required
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                      placeholder="0000 0000 0000 0000"
+                      value={newCardData.number}
+                      onChange={e => setNewCardData({...newCardData, number: e.target.value})}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">Nome no Cartão</label>
+                    <input 
+                      type="text" 
+                      required
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                      placeholder="Como está no cartão"
+                      value={newCardData.holder_name}
+                      onChange={e => setNewCardData({...newCardData, holder_name: e.target.value})}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 uppercase">Mês</label>
+                      <input 
+                        type="text" 
+                        required
+                        maxLength={2}
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                        placeholder="MM"
+                        value={newCardData.exp_month}
+                        onChange={e => setNewCardData({...newCardData, exp_month: e.target.value})}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 uppercase">Ano</label>
+                      <input 
+                        type="text" 
+                        required
+                        maxLength={4}
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                        placeholder="AAAA"
+                        value={newCardData.exp_year}
+                        onChange={e => setNewCardData({...newCardData, exp_year: e.target.value})}
+                      />
+                    </div>
+                    <div className="space-y-1 col-span-2 sm:col-span-1">
+                      <label className="text-xs font-bold text-slate-500 uppercase">CVV</label>
+                      <input 
+                        type="text" 
+                        required
+                        maxLength={4}
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                        placeholder="123"
+                        value={newCardData.cvv}
+                        onChange={e => setNewCardData({...newCardData, cvv: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <button 
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {loading ? <RefreshCw className="animate-spin" size={20} /> : <Save size={20} />}
+                  {isRetryingPayment ? 'Processar Pagamento' : 'Salvar Novo Cartão'}
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

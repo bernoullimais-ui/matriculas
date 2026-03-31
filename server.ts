@@ -1107,6 +1107,12 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
     }
   });
 
+  // Helper to sanitize CPF
+  const sanitizeCPF = (cpf: string) => {
+    if (!cpf) return '';
+    return String(cpf).replace(/\D/g, '').trim();
+  };
+
   app.post("/api/guardian/access", async (req, res) => {
     const { identifier, password } = req.body;
     try {
@@ -1120,11 +1126,11 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
       if (isEmail) {
         query = query.eq('email', identifier.trim().toLowerCase());
       } else {
-        const cleanCPF = identifier.replace(/\D/g, '');
+        const cleanCPF = identifier.replace(/\D/g, '').trim();
         query = query.eq('cpf', cleanCPF);
       }
 
-      const { data: guardian, error: gError } = await query.maybeSingle();
+      const { data: guardian, error: gError } = await query.order('created_at', { ascending: false }).limit(1).maybeSingle();
 
       if (gError) throw gError;
       
@@ -1240,7 +1246,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         return res.status(400).json({ error: "ID e CPF são obrigatórios" });
       }
 
-      const cleanCPF = cpf.replace(/\D/g, '');
+      const cleanCPF = sanitizeCPF(cpf);
       
       // Check if CPF already exists for another user
       const { data: existing, error: checkError } = await supabase
@@ -1248,6 +1254,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         .select('id')
         .eq('cpf', cleanCPF)
         .neq('id', id)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (existing) {
@@ -1356,11 +1364,14 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
   app.post("/api/guardian/verify", async (req, res) => {
     const { cpf, password } = req.body;
     try {
+      const cleanCPF = String(cpf || '').replace(/\D/g, '').trim();
       const { data: guardian, error: gError } = await supabase
         .from('responsaveis')
         .select('*')
-        .eq('cpf', cpf)
+        .eq('cpf', cleanCPF)
         .eq('senha', password)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (gError) throw gError;
@@ -1453,11 +1464,12 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
   app.post("/api/guardian/register", async (req, res) => {
     const { name, cpf, email, phone, address, password } = req.body;
     try {
+      const cleanCPF = sanitizeCPF(cpf);
       const { data, error } = await supabase
         .from('responsaveis')
         .insert([{
           nome_completo: name,
-          cpf: cpf,
+          cpf: cleanCPF,
           email: email,
           telefone: phone,
           endereco: address,
@@ -1488,16 +1500,17 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         if (isEmail) {
           query = query.eq('email', identifier.trim().toLowerCase());
         } else {
-          const cleanCPF = identifier.replace(/\D/g, '');
+          const cleanCPF = sanitizeCPF(identifier);
           query = query.eq('cpf', cleanCPF);
         }
       } else if (cpf) {
-        query = query.eq('cpf', cpf);
+        const cleanCPF = sanitizeCPF(cpf);
+        query = query.eq('cpf', cleanCPF);
       } else {
         return res.status(400).json({ error: "CPF ou Identificador é obrigatório" });
       }
 
-      const { data, error } = await query.maybeSingle();
+      const { data, error } = await query.order('created_at', { ascending: false }).limit(1).maybeSingle();
 
       if (error) throw error;
       
@@ -1870,7 +1883,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         const { data: classData, error: classError } = await supabase
           .from('turmas_complementares')
           .select('id, valor_mensalidade')
-          .eq('nome', student.turmaComplementar)
+          .eq('nome', student.turmaComplementar.trim())
+          .limit(1)
           .maybeSingle();
         
         if (classError) {
@@ -1915,11 +1929,14 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
       // 1. Find or Create Guardian
       let guardianId: any;
+      const cleanCPF = sanitizeCPF(guardian.cpf);
       
       const { data: existingGuardian, error: findError } = await supabase
         .from('responsaveis')
         .select('id')
-        .eq('cpf', guardian.cpf)
+        .eq('cpf', cleanCPF)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (findError) {
@@ -1957,7 +1974,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           .from('responsaveis')
           .insert([{
             nome_completo: guardian.name,
-            cpf: guardian.cpf,
+            cpf: cleanCPF,
             email: guardian.email,
             telefone: guardian.phone,
             endereco: guardian.address,
@@ -2109,7 +2126,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         const { data: mappings, error: mappingError } = await supabase
           .from('unidades_mapping')
           .select('inicio_aulas, fim_aulas, identidade, ano_letivo')
-          .eq('nome', unidadeNome)
+          .ilike('nome', unidadeNome)
           .gte('fim_aulas', todayStr)
           .order('inicio_aulas', { ascending: true });
         
@@ -2119,7 +2136,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           const { data: fallbackMappings } = await supabase
             .from('unidades_mapping')
             .select('inicio_aulas, fim_aulas, identidade, ano_letivo')
-            .eq('nome_unidade', unidadeNome)
+            .ilike('nome_unidade', unidadeNome)
             .gte('fim_aulas', todayStr)
             .order('inicio_aulas', { ascending: true });
           
@@ -2609,6 +2626,198 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         details: error.details || error,
         hint: error.hint,
         code: error.code
+      });
+    }
+  });
+
+  app.post("/api/enroll/retry", async (req, res) => {
+    const { enrollmentId, card } = req.body;
+    const clientIp = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || '').split(',')[0].trim();
+
+    try {
+      // 1. Fetch enrollment with student and guardian details
+      const { data: enrollment, error: eError } = await supabase
+        .from('matriculas')
+        .select(`
+          *,
+          alunos (
+            *,
+            responsaveis (*)
+          )
+        `)
+        .eq('id', enrollmentId)
+        .single();
+
+      if (eError || !enrollment) {
+        console.error("Enrollment fetch error:", eError);
+        return res.status(404).json({ error: 'Matrícula não encontrada.' });
+      }
+
+      if (enrollment.status !== 'pendente') {
+        return res.status(400).json({ error: 'Esta matrícula já está ativa ou foi cancelada.' });
+      }
+
+      const student = enrollment.alunos;
+      const guardian = student.responsaveis;
+
+      // 2. Fetch pending installments for this enrollment
+      const { data: installments, error: pError } = await supabase
+        .from('pagamentos')
+        .select('*')
+        .eq('matricula_id', enrollmentId)
+        .eq('status', 'pendente')
+        .order('data_vencimento', { ascending: true });
+
+      if (pError || !installments || installments.length === 0) {
+        return res.status(400).json({ error: 'Não foram encontrados pagamentos pendentes para esta matrícula.' });
+      }
+
+      const valorCobrado = installments[0].valor;
+      const firstPaymentId = installments[0].id;
+
+      // 3. Pagar.me Logic
+      const isBernoulli = (enrollment.unidade || "").includes("Bernoulli");
+      const softDescriptorKey = isBernoulli ? 'pagarme_soft_descriptor_bernoulli' : 'pagarme_soft_descriptor';
+      const defaultSoftDescriptor = isBernoulli ? 'BernoulliMais' : 'SportForKids';
+      const softDescriptor = await getSetting(softDescriptorKey, defaultSoftDescriptor);
+
+      let paymentInfo = null;
+      
+      // Map card data to Pagar.me helper format
+      const pagarmeCard = {
+        number: card.number,
+        holderName: card.holder_name,
+        expMonth: card.exp_month,
+        expYear: card.exp_year,
+        cvv: card.cvv
+      };
+
+      // Determine if we need split (scheduled subscription)
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      const firstDueDate = installments[0].data_vencimento;
+      const isBeforeStart = firstDueDate && todayStr < firstDueDate;
+      const needsSplit = isBeforeStart && installments.length > 1;
+
+      if (needsSplit) {
+        console.log(`[Retry] Split detectado. Cobrando matrícula hoje e agendando assinatura para ${installments[1].data_vencimento}`);
+        
+        // 1. Cobra a Matrícula como um Pedido Avulso (Order)
+        const order = await createPagarmeOrder({
+          customer: {
+            name: guardian.nome_completo,
+            email: guardian.email,
+            cpf: guardian.cpf,
+            phone: guardian.telefone,
+            address: guardian.endereco
+          },
+          card: pagarmeCard,
+          amount: Math.round(valorCobrado * 100),
+          paymentMethod: 'credit_card',
+          description: `Matrícula - ${student.nome_completo} (${enrollment.turma})`,
+          code: `${firstPaymentId}_retry_${Date.now()}`,
+          softDescriptor,
+          ip: clientIp
+        });
+        
+        // 2. Cria a Assinatura agendada
+        const subscription = await createPagarmeSubscription({
+          customer: {
+            name: guardian.nome_completo,
+            email: guardian.email,
+            cpf: guardian.cpf,
+            phone: guardian.telefone,
+            address: guardian.endereco
+          },
+          card: pagarmeCard,
+          paymentMethod: 'credit_card',
+          amount: Math.round(valorCobrado * 100),
+          description: `Mensalidade - ${student.nome_completo} (${enrollment.turma})`,
+          code: `${firstPaymentId}_sub_retry_${Date.now()}`,
+          cycles: installments.length - 1,
+          start_at: new Date(installments[1].data_vencimento + "T12:00:00Z").toISOString(),
+          softDescriptor,
+          ip: clientIp
+        });
+        
+        paymentInfo = { order, subscription };
+
+        // Check if order was paid immediately
+        const isOrderPaid = order.status === 'paid';
+        
+        // Update enrollment and payment
+        // We update to 'ativo' if the order was paid, otherwise keep 'pendente' (webhook will update later)
+        if (isOrderPaid) {
+          await supabase.from('matriculas').update({ 
+            pagarme_subscription_id: subscription.id, 
+            status: 'ativo',
+            data_matricula: new Date().toISOString()
+          }).eq('id', enrollmentId);
+          
+          await supabase.from('pagamentos').update({ 
+            pagarme: order.id, 
+            status: 'pago',
+            data_pagamento: new Date().toISOString()
+          }).eq('id', firstPaymentId);
+        } else {
+          // Just link the IDs so webhook can find them
+          await supabase.from('matriculas').update({ pagarme_subscription_id: subscription.id }).eq('id', enrollmentId);
+          await supabase.from('pagamentos').update({ pagarme: order.id }).eq('id', firstPaymentId);
+        }
+
+      } else {
+        // Fluxo padrão: Assinatura começa hoje
+        console.log(`[Retry] Criando assinatura iniciando hoje para ${guardian.nome_completo}`);
+        const subscription = await createPagarmeSubscription({
+          customer: {
+            name: guardian.nome_completo,
+            email: guardian.email,
+            cpf: guardian.cpf,
+            phone: guardian.telefone,
+            address: guardian.endereco
+          },
+          card: pagarmeCard,
+          paymentMethod: 'credit_card',
+          amount: Math.round(valorCobrado * 100),
+          description: `Mensalidade - ${student.nome_completo} (${enrollment.turma})`,
+          code: `${firstPaymentId}_retry_${Date.now()}`,
+          cycles: installments.length,
+          softDescriptor,
+          ip: clientIp
+        });
+        
+        paymentInfo = subscription;
+
+        // Check if subscription is active (first charge successful)
+        const isSubActive = subscription.status === 'active';
+
+        // Update enrollment and payment
+        if (isSubActive) {
+          await supabase.from('matriculas').update({ 
+            pagarme_subscription_id: subscription.id, 
+            status: 'ativo',
+            data_matricula: new Date().toISOString()
+          }).eq('id', enrollmentId);
+          
+          await supabase.from('pagamentos').update({ 
+            pagarme: subscription.id, 
+            status: 'pago',
+            data_pagamento: new Date().toISOString()
+          }).eq('id', firstPaymentId);
+        } else {
+          await supabase.from('matriculas').update({ pagarme_subscription_id: subscription.id }).eq('id', enrollmentId);
+          await supabase.from('pagamentos').update({ pagarme: subscription.id }).eq('id', firstPaymentId);
+        }
+      }
+
+      res.json({ success: true, paymentInfo });
+
+    } catch (error: any) {
+      const apiError = error.response?.data;
+      console.error("Erro ao retentar pagamento:", JSON.stringify(apiError || error.message, null, 2));
+      res.status(400).json({ 
+        error: apiError?.message || error.message || "Erro ao processar pagamento.",
+        details: apiError?.errors
       });
     }
   });
@@ -3349,10 +3558,10 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         { data: matriculas, error: mError },
         { data: pagamentos, error: pError }
       ] = await Promise.all([
-        supabase.from('responsaveis').select('id, nome_completo'),
-        supabase.from('alunos').select('id, nome_completo, serie_ano, responsavel_id, data_nascimento'),
-        supabase.from('matriculas').select('id, aluno_id, turma, unidade, status, data_cancelamento, data_matricula, plano'),
-        supabase.from('pagamentos').select('responsavel_id, matricula_id, status, metodo_pagamento, data_vencimento')
+        supabase.from('responsaveis').select('id, nome_completo').order('created_at', { ascending: false }).limit(10000),
+        supabase.from('alunos').select('id, nome_completo, serie_ano, responsavel_id, data_nascimento').order('created_at', { ascending: false }).limit(10000),
+        supabase.from('matriculas').select('id, aluno_id, turma, unidade, status, data_cancelamento, data_matricula, plano').order('created_at', { ascending: false }).limit(10000),
+        supabase.from('pagamentos').select('responsavel_id, matricula_id, status, metodo_pagamento, data_vencimento').order('created_at', { ascending: false }).limit(10000)
       ]);
 
       if (rError) throw rError;
@@ -3363,10 +3572,10 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
       // Join the data in memory to match the expected frontend structure
       const result = (responsaveis || []).map(r => {
         const rAlunos = (alunos || [])
-          .filter(a => a.responsavel_id === r.id)
+          .filter(a => String(a.responsavel_id).trim() === String(r.id).trim())
           .map(a => ({
             ...a,
-            matriculas: (matriculas || []).filter(m => m.aluno_id === a.id)
+            matriculas: (matriculas || []).filter(m => String(m.aluno_id).trim() === String(a.id).trim())
           }));
         
         const rPagamentos = (pagamentos || []).filter(p => p.responsavel_id === r.id);
@@ -3383,27 +3592,6 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
       res.json(result);
     } catch (error: any) {
       console.error("Detailed Enrollment Fetch Error:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/admin/debug-counts", async (req, res) => {
-    try {
-      const { count: sAlunos, error: saErr } = await supabase.from('alunos').select('*', { count: 'exact', head: true });
-      const { count: sMatriculas, error: smErr } = await supabase.from('matriculas').select('*', { count: 'exact', head: true });
-      const { count: sResp, error: srErr } = await supabase.from('responsaveis').select('*', { count: 'exact', head: true });
-      const { count: sPag, error: spErr } = await supabase.from('pagamentos').select('*', { count: 'exact', head: true });
-      
-      res.json({
-        source: { 
-          alunos: sAlunos, 
-          matriculas: sMatriculas, 
-          responsaveis: sResp,
-          pagamentos: sPag,
-          errors: { saErr, smErr, srErr, spErr } 
-        }
-      });
-    } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
@@ -3749,12 +3937,12 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         mRes,
         tResInitial
       ] = await Promise.all([
-        supabase.from('pagamentos').select('*').limit(10000),
-        supabase.from('pagamentos_wix').select('*').limit(10000),
-        supabase.from('pagamentos_pagseguro').select('*').limit(10000),
-        supabase.from('responsaveis').select('id, nome_completo').limit(10000),
-        supabase.from('alunos').select('id, nome_completo, responsavel_id, turma_escolar').limit(10000),
-        supabase.from('matriculas').select('*').limit(10000), // Fetch all columns to include professor if it exists
+        supabase.from('pagamentos').select('*').order('created_at', { ascending: false }).limit(10000),
+        supabase.from('pagamentos_wix').select('*').order('created_at', { ascending: false }).limit(10000),
+        supabase.from('pagamentos_pagseguro').select('*').order('created_at', { ascending: false }).limit(10000),
+        supabase.from('responsaveis').select('id, nome_completo').order('created_at', { ascending: false }).limit(10000),
+        supabase.from('alunos').select('id, nome_completo, responsavel_id, turma_escolar').order('created_at', { ascending: false }).limit(10000),
+        supabase.from('matriculas').select('*').order('created_at', { ascending: false }).limit(10000), // Fetch all columns to include professor if it exists
         supabase.from('turmas_complementares').select('id, nome, professor, unidade_nome').limit(10000)
       ]);
 
