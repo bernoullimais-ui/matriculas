@@ -2635,30 +2635,59 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
     const clientIp = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || '').split(',')[0].trim();
 
     try {
-      // 1. Fetch enrollment with student and guardian details
-      const { data: enrollment, error: eError } = await supabase
+      // 1. Fetch enrollment
+      let { data: enrollment, error: eError } = await supabase
         .from('matriculas')
-        .select(`
-          *,
-          alunos (
-            *,
-            responsaveis (*)
-          )
-        `)
+        .select('*')
         .eq('id', enrollmentId)
-        .single();
+        .maybeSingle();
+
+      // Fallback: If not found by ID, check if this ID was actually an aluno_id 
+      if (!enrollment && !eError) {
+        const { data: fallbackEnrollment } = await supabase
+          .from('matriculas')
+          .select('*')
+          .eq('aluno_id', enrollmentId)
+          .eq('status', 'pendente')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        
+        if (fallbackEnrollment) {
+          enrollment = fallbackEnrollment;
+        }
+      }
 
       if (eError || !enrollment) {
-        console.error("Enrollment fetch error:", eError);
-        return res.status(404).json({ error: 'Matrícula não encontrada.' });
+        console.error("Enrollment fetch error:", eError || "Not found");
+        return res.status(404).json({ error: 'Matrícula não encontrada. Por favor, recarregue a página.' });
       }
 
       if (enrollment.status !== 'pendente') {
         return res.status(400).json({ error: 'Esta matrícula já está ativa ou foi cancelada.' });
       }
 
-      const student = enrollment.alunos;
-      const guardian = student.responsaveis;
+      // 2. Fetch student data separately
+      const { data: student, error: sError } = await supabase
+        .from('alunos')
+        .select('*')
+        .eq('id', enrollment.aluno_id)
+        .single();
+
+      if (sError || !student) {
+        return res.status(404).json({ error: 'Dados do aluno não encontrados.' });
+      }
+
+      // 3. Fetch guardian data separately
+      const { data: guardian, error: gError } = await supabase
+        .from('responsaveis')
+        .select('*')
+        .eq('id', student.responsavel_id)
+        .single();
+
+      if (gError || !guardian) {
+        return res.status(404).json({ error: 'Dados do responsável não encontrados.' });
+      }
 
       // 2. Fetch pending installments for this enrollment
       const { data: installments, error: pError } = await supabase
