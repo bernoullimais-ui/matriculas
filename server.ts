@@ -2203,6 +2203,11 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           baseDay = today.getDate();
         }
 
+        // Se o dia base for 31, ajusta para 30 para evitar pular meses sem dia 31
+        if (baseDay === 31) {
+          baseDay = 30;
+        }
+
         let nextVencimento = new Date(today);
         
         // If today is before classes start, we start counting from the start month
@@ -2211,6 +2216,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         }
 
         // Move to the next month for the first monthly installment
+        // Set to day 1 first to avoid skipping months when current day is 31
+        nextVencimento.setDate(1);
         nextVencimento.setMonth(nextVencimento.getMonth() + 1);
         nextVencimento.setDate(baseDay);
 
@@ -2248,6 +2255,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
           // Advance to next month
           nextVencimento = new Date(nextVencimento);
+          // Set to day 1 first to avoid skipping months when current day is 31
+          nextVencimento.setDate(1);
           nextVencimento.setMonth(nextVencimento.getMonth() + 1);
           nextVencimento.setDate(baseDay);
           
@@ -2689,19 +2698,24 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         return res.status(404).json({ error: 'Dados do responsável não encontrados.' });
       }
 
-      // 2. Fetch pending installments for this enrollment
+      // 2. Fetch installments that are not paid for this enrollment
       const { data: installments, error: pError } = await supabase
         .from('pagamentos')
         .select('*')
         .eq('matricula_id', enrollmentId)
-        .eq('status', 'pendente')
+        .neq('status', 'pago')
         .order('data_vencimento', { ascending: true });
 
       if (pError || !installments || installments.length === 0) {
-        return res.status(400).json({ error: 'Não foram encontrados pagamentos pendentes para esta matrícula.' });
+        return res.status(400).json({ error: 'Não foram encontrados pagamentos em aberto para esta matrícula.' });
       }
 
       const valorCobrado = installments[0].valor;
+      
+      if (!valorCobrado || valorCobrado <= 0) {
+        return res.status(400).json({ error: 'O valor da mensalidade não foi identificado. Por favor, entre em contato com o suporte.' });
+      }
+
       const firstPaymentId = installments[0].id;
 
       // 3. Pagar.me Logic
@@ -2864,6 +2878,165 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
       res.json(data || []);
     } catch (error: any) {
       console.error("Error fetching payments:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/payments/cancel/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      console.log(`[Cancelamento] Iniciando cancelamento do pagamento ${id}`);
+
+      // 1. Buscar pagamento no Supabase
+      const { data: payment, error: pError } = await supabase
+        .from('pagamentos')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (pError || !payment) {
+        return res.status(404).json({ error: 'Pagamento não encontrado.' });
+      }
+
+      if (payment.status === 'pago') {
+        return res.status(400).json({ error: 'Pagamentos já quitados devem ser estornados, não cancelados.' });
+      }
+
+      if (payment.status === 'cancelado') {
+        return res.status(400).json({ error: 'Este pagamento já está cancelado.' });
+      }
+
+      // 2. Tentar cancelar no Pagar.me se houver ID
+      if (payment.pagarme) {
+        const authHeader = Buffer.from(`${getPagarmeSecretKey()}:`).toString('base64');
+        
+        try {
+          if (payment.pagarme.startsWith('ord_')) {
+            // Cancelar Pedido
+            await axios.patch(`https://api.pagar.me/core/v5/orders/${payment.pagarme}/closed`, 
+              { status: 'canceled' },
+              {
+                headers: {
+                  'Authorization': `Basic ${authHeader}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+            console.log(`[Cancelamento] Pedido ${payment.pagarme} cancelado no Pagar.me`);
+          } else if (payment.pagarme.startsWith('sub_')) {
+            console.log(`[Cancelamento] Pagamento vinculado à assinatura ${payment.pagarme}. Cancelando apenas localmente.`);
+          }
+        } catch (err: any) {
+          console.error(`[Cancelamento] Erro ao cancelar no Pagar.me:`, err.response?.data || err.message);
+        }
+      }
+
+      // 3. Atualizar status no Supabase
+      const { error: updateError } = await supabase
+        .from('pagamentos')
+        .update({ status: 'cancelado' })
+        .eq('id', id);
+
+      if (updateError) throw updateError;
+
+      res.json({ success: true, message: 'Pagamento cancelado com sucesso.' });
+    } catch (error: any) {
+      console.error(`[Cancelamento] Erro crítico:`, error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/payments/refund/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { amount } = req.body;
+      console.log(`[Estorno] Iniciando estorno do pagamento ${id}`);
+
+      // 1. Buscar pagamento no Supabase
+      const { data: payment, error: pError } = await supabase
+        .from('pagamentos')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (pError || !payment) {
+        return res.status(404).json({ error: 'Pagamento não encontrado.' });
+      }
+
+      if (payment.status !== 'pago') {
+        return res.status(400).json({ error: 'Apenas pagamentos com status "pago" podem ser estornados.' });
+      }
+
+      if (!payment.pagarme) {
+        return res.status(400).json({ error: 'Este pagamento não possui um ID do Pagar.me vinculado.' });
+      }
+
+      const authHeader = Buffer.from(`${getPagarmeSecretKey()}:`).toString('base64');
+      let chargeId = null;
+
+      // 2. Obter o ID da transação (charge_id)
+      try {
+        if (payment.pagarme.startsWith('ord_')) {
+          const orderRes = await axios.get(`https://api.pagar.me/core/v5/orders/${payment.pagarme}`, {
+            headers: { 'Authorization': `Basic ${authHeader}` }
+          });
+          const charges = orderRes.data.charges;
+          if (charges && charges.length > 0) {
+            chargeId = charges[0].id;
+          }
+        } else if (payment.pagarme.startsWith('sub_')) {
+          const subRes = await axios.get(`https://api.pagar.me/core/v5/subscriptions/${payment.pagarme}/invoices`, {
+            headers: { 'Authorization': `Basic ${authHeader}` }
+          });
+          const invoices = subRes.data.data;
+          const paidInvoice = invoices.find((inv: any) => inv.status === 'paid');
+          if (paidInvoice && paidInvoice.charge) {
+            chargeId = paidInvoice.charge.id;
+          }
+        }
+      } catch (err: any) {
+        console.error(`[Estorno] Erro ao buscar dados no Pagar.me:`, err.response?.data || err.message);
+        return res.status(500).json({ error: 'Não foi possível localizar a transação no Pagar.me para estorno.' });
+      }
+
+      if (!chargeId) {
+        return res.status(400).json({ error: 'Não foi possível encontrar uma transação paga vinculada a este registro.' });
+      }
+
+      // 3. Realizar o estorno no Pagar.me
+      try {
+        const refundPayload: any = {};
+        if (amount) {
+          refundPayload.amount = Math.round(amount * 100);
+        }
+
+        await axios.post(`https://api.pagar.me/core/v5/charges/${chargeId}/confirm-refund`, 
+          refundPayload,
+          {
+            headers: {
+              'Authorization': `Basic ${authHeader}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        console.log(`[Estorno] Charge ${chargeId} estornada no Pagar.me`);
+      } catch (err: any) {
+        console.error(`[Estorno] Erro ao processar estorno no Pagar.me:`, err.response?.data || err.message);
+        const pagarmeError = err.response?.data?.message || err.message;
+        return res.status(500).json({ error: `Erro no Pagar.me: ${pagarmeError}` });
+      }
+
+      // 4. Atualizar status no Supabase
+      const { error: updateError } = await supabase
+        .from('pagamentos')
+        .update({ status: 'estornado' })
+        .eq('id', id);
+
+      if (updateError) throw updateError;
+
+      res.json({ success: true, message: 'Estorno realizado com sucesso.' });
+    } catch (error: any) {
+      console.error(`[Estorno] Erro crítico:`, error);
       res.status(500).json({ error: error.message });
     }
   });

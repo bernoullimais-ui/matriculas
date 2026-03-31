@@ -1306,6 +1306,75 @@ export default function App() {
     }
   };
 
+  const handleCancelPayment = async (paymentId: string) => {
+    if (!window.confirm('Deseja realmente cancelar este pagamento? Esta ação é irreversível.')) return;
+
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/payments/cancel/${paymentId}`, {
+        method: 'POST'
+      });
+      const data = await response.json();
+
+      if (response.ok) {
+        alert('Pagamento cancelado com sucesso!');
+        if (formData.guardian.id) {
+          fetchPayments(formData.guardian.id);
+        }
+        if (step === 'admin' && adminTab === 'finance') {
+          fetchFinancialData();
+        }
+      } else {
+        alert(`Erro ao cancelar: ${data.error}`);
+      }
+    } catch (error) {
+      console.error('Error cancelling payment:', error);
+      alert('Erro de conexão ao cancelar pagamento.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRefundPayment = async (paymentId: string) => {
+    const amountStr = window.prompt('Deseja realizar um estorno total ou parcial? Digite o valor (ex: 150.00) ou deixe em branco para estorno total:');
+    if (amountStr === null) return; // Cancelou o prompt
+
+    const amount = amountStr.trim() ? parseFloat(amountStr.replace(',', '.')) : null;
+    if (amountStr.trim() && isNaN(amount as number)) {
+      alert('Valor inválido.');
+      return;
+    }
+
+    if (!window.confirm(`Deseja realmente realizar o estorno ${amount ? `de R$ ${amount.toFixed(2)}` : 'TOTAL'} deste pagamento?`)) return;
+
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/payments/refund/${paymentId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount })
+      });
+      const data = await response.json();
+
+      if (response.ok) {
+        alert('Estorno realizado com sucesso!');
+        if (formData.guardian.id) {
+          fetchPayments(formData.guardian.id);
+        }
+        if (step === 'admin' && adminTab === 'finance') {
+          fetchFinancialData();
+        }
+      } else {
+        alert(`Erro ao estornar: ${data.error}`);
+      }
+    } catch (error) {
+      console.error('Error refunding payment:', error);
+      alert('Erro de conexão ao realizar estorno.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const verifyPassword = async () => {
     if (!formData.guardian.password) return;
     
@@ -3822,12 +3891,13 @@ export default function App() {
                                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Valor</th>
                                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Método</th>
                                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
+                                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Ações</th>
                                       </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
                                       {sortedPayments.length === 0 ? (
                                         <tr>
-                                          <td colSpan={financeFilters.paymentMethod === 'wix' ? 9 : 8} className="px-6 py-10 text-center text-slate-400 italic">
+                                          <td colSpan={financeFilters.paymentMethod === 'wix' ? 10 : 9} className="px-6 py-10 text-center text-slate-400 italic">
                                             Nenhum pagamento encontrado com os filtros selecionados.
                                           </td>
                                         </tr>
@@ -4019,6 +4089,45 @@ export default function App() {
                                                     </span>
                                                   );
                                                 })()}
+                                              </td>
+                                              <td className="px-6 py-4 text-right">
+                                                <div className="flex items-center justify-end gap-2">
+                                                  {(() => {
+                                                    const status = pag.status?.toLowerCase();
+                                                    const isPaid = status === 'pago';
+                                                    const isCancelled = status === 'cancelado';
+                                                    const isRefunded = status === 'estornado';
+                                                    const isFailed = status === 'falha';
+                                                    
+                                                    const canCancel = !isPaid && !isCancelled && !isRefunded && !isFailed;
+                                                    const canRefund = isPaid;
+
+                                                    return (
+                                                      <>
+                                                        {canCancel && (
+                                                          <button
+                                                            onClick={() => handleCancelPayment(pag.id)}
+                                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-all text-[10px] font-bold uppercase border border-red-100 shadow-sm"
+                                                            title="Cancelar Pagamento"
+                                                          >
+                                                            <Trash2 size={14} />
+                                                            <span>Cancelar</span>
+                                                          </button>
+                                                        )}
+                                                        {canRefund && (
+                                                          <button
+                                                            onClick={() => handleRefundPayment(pag.id)}
+                                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-all text-[10px] font-bold uppercase border border-blue-100 shadow-sm"
+                                                            title="Estornar Pagamento"
+                                                          >
+                                                            <RefreshCw size={14} />
+                                                            <span>Estornar</span>
+                                                          </button>
+                                                        )}
+                                                      </>
+                                                    );
+                                                  })()}
+                                                </div>
                                               </td>
                                             </tr>
                                           );
@@ -4831,16 +4940,37 @@ export default function App() {
                                   </div>
                                 </td>
                                 <td className="px-6 py-4">
-                                  {p.status === 'pago' ? (
-                                    <button 
-                                      onClick={() => handleDownloadReceipt(p.id)}
-                                      className="text-emerald-600 hover:text-emerald-700 text-xs font-bold flex items-center gap-1"
-                                    >
-                                      <FileText size={14} /> Recibo
-                                    </button>
-                                  ) : (
-                                    <span className="text-slate-400 text-xs italic">Indisponível</span>
-                                  )}
+                                  <div className="flex items-center gap-2">
+                                    {p.status === 'pago' ? (
+                                      <div className="flex items-center gap-2">
+                                        <button 
+                                          onClick={() => handleDownloadReceipt(p.id)}
+                                          className="text-emerald-600 hover:text-emerald-700 text-xs font-bold flex items-center gap-1"
+                                        >
+                                          <FileText size={14} /> Recibo
+                                        </button>
+                                        <button 
+                                          onClick={() => handleRefundPayment(p.id)}
+                                          className="text-blue-600 hover:text-blue-700 text-xs font-bold flex items-center gap-1"
+                                          title="Solicitar Estorno"
+                                        >
+                                          <RefreshCw size={14} /> Estornar
+                                        </button>
+                                      </div>
+                                    ) : p.status === 'pendente' || (p.data_vencimento && new Date(p.data_vencimento).getTime() >= new Date().setHours(0,0,0,0)) ? (
+                                      <div className="flex items-center gap-2">
+                                        <button 
+                                          onClick={() => handleCancelPayment(p.id)}
+                                          className="text-red-600 hover:text-red-700 text-xs font-bold flex items-center gap-1"
+                                          title="Cancelar Fatura"
+                                        >
+                                          <Trash2 size={14} /> Cancelar
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-400 text-xs italic">Indisponível</span>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             ))
