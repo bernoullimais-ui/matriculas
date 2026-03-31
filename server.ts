@@ -2464,7 +2464,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                 amount: Math.round(valorCobrado * 100),
                 paymentMethod: paymentMethod,
                 description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
-                code: firstPaymentId ? `${firstPaymentId.substring(0, 32)}_r_${Date.now()}` : `enroll_${Date.now()}`,
+                code: firstPaymentId ? `${firstPaymentId}_r_${Date.now()}` : `enroll_${Date.now()}`,
                 softDescriptor,
                 ip: clientIp
               });
@@ -2482,7 +2482,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                 paymentMethod: paymentMethod,
                 amount: Math.round(valorCobrado * 100),
                 description: `Mensalidade - ${student.name} (${student.turmaComplementar})`,
-                code: firstPaymentId ? `${firstPaymentId.substring(0, 32)}_s_${Date.now()}` : `sub_${Date.now()}`,
+                code: firstPaymentId ? `${firstPaymentId}_s_${Date.now()}` : `sub_${Date.now()}`,
                 cycles: installments.length - 1,
                 start_at: new Date(installments[1].data_vencimento + "T12:00:00Z").toISOString(),
                 softDescriptor,
@@ -2524,7 +2524,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                 amount: Math.round(valorCobrado * 100), // convert to cents
                 paymentMethod: 'pix',
                 description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
-                code: firstPaymentId ? `${firstPaymentId.substring(0, 32)}_p_${Date.now()}` : `enroll_pix_${Date.now()}`,
+                code: firstPaymentId ? `${firstPaymentId}_p_${Date.now()}` : `enroll_pix_${Date.now()}`,
                 softDescriptor,
                 ip: clientIp
               });
@@ -2744,7 +2744,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           amount: Math.round(valorCobrado * 100),
           paymentMethod: 'credit_card',
           description: `Matrícula - ${student.nome_completo} (${enrollment.turma})`,
-          code: `${firstPaymentId.substring(0, 32)}_r_${Date.now()}`,
+          code: `${firstPaymentId}_r_${Date.now()}`,
           softDescriptor,
           ip: clientIp
         });
@@ -2762,7 +2762,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           paymentMethod: 'credit_card',
           amount: Math.round(valorCobrado * 100),
           description: `Mensalidade - ${student.nome_completo} (${enrollment.turma})`,
-          code: `${firstPaymentId.substring(0, 32)}_sr_${Date.now()}`,
+          code: `${firstPaymentId}_z_${Date.now()}`,
           cycles: installments.length - 1,
           start_at: new Date(installments[1].data_vencimento + "T12:00:00Z").toISOString(),
           softDescriptor,
@@ -2809,7 +2809,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           paymentMethod: 'credit_card',
           amount: Math.round(valorCobrado * 100),
           description: `Mensalidade - ${student.nome_completo} (${enrollment.turma})`,
-          code: `${firstPaymentId.substring(0, 32)}_r_${Date.now()}`,
+          code: `${firstPaymentId}_r_${Date.now()}`,
           cycles: installments.length,
           softDescriptor,
           ip: clientIp
