@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+@theme {
+  --animate-spin-slow: spin 3s linear infinite;
+}
+
 @layer utilities {
   .custom-scrollbar::-webkit-scrollbar {
     width: 4px;

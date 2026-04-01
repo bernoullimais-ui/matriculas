@@ -449,6 +449,37 @@ export default function App() {
   const [appliedCoupon, setAppliedCoupon] = useState<any>(null);
   const [couponCode, setCouponCode] = useState('');
   const [couponError, setCouponError] = useState('');
+  const [updatePaymentModal, setUpdatePaymentModal] = useState<{
+    isOpen: boolean;
+    paymentId: string;
+    currentAmount: number;
+    newValue: string;
+    updateFuture: boolean;
+  }>({
+    isOpen: false,
+    paymentId: '',
+    currentAmount: 0,
+    newValue: '',
+    updateFuture: false,
+  });
+  const [cancelPaymentModal, setCancelPaymentModal] = useState<{
+    isOpen: boolean;
+    paymentId: string;
+  }>({
+    isOpen: false,
+    paymentId: '',
+  });
+  const [refundPaymentModal, setRefundPaymentModal] = useState<{
+    isOpen: boolean;
+    paymentId: string;
+    amount: string;
+    isTotal: boolean;
+  }>({
+    isOpen: false,
+    paymentId: '',
+    amount: '',
+    isTotal: true,
+  });
   const isSubmittingRef = useRef(false);
   const [portalTab, setPortalTab] = useState<'dashboard' | 'payments' | 'profile' | 'documents'>('dashboard');
   const [isUpdatingCard, setIsUpdatingCard] = useState(false);
@@ -1306,9 +1337,12 @@ export default function App() {
     }
   };
 
-  const handleCancelPayment = async (paymentId: string) => {
-    if (!window.confirm('Deseja realmente cancelar este pagamento? Esta ação é irreversível.')) return;
+  const handleCancelPayment = (paymentId: string) => {
+    setCancelPaymentModal({ isOpen: true, paymentId });
+  };
 
+  const confirmCancelPayment = async () => {
+    const { paymentId } = cancelPaymentModal;
     setLoading(true);
     try {
       const response = await fetch(`/api/payments/cancel/${paymentId}`, {
@@ -1317,7 +1351,8 @@ export default function App() {
       const data = await response.json();
 
       if (response.ok) {
-        alert('Pagamento cancelado com sucesso!');
+        setSuccessMessage('Pagamento cancelado com sucesso!');
+        setCancelPaymentModal({ isOpen: false, paymentId: '' });
         if (formData.guardian.id) {
           fetchPayments(formData.guardian.id);
         }
@@ -1325,27 +1360,28 @@ export default function App() {
           fetchFinancialData();
         }
       } else {
-        alert(`Erro ao cancelar: ${data.error}`);
+        setErrorMessage(`Erro ao cancelar: ${data.error}`);
       }
     } catch (error) {
       console.error('Error cancelling payment:', error);
-      alert('Erro de conexão ao cancelar pagamento.');
+      setErrorMessage('Erro de conexão ao cancelar pagamento.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRefundPayment = async (paymentId: string) => {
-    const amountStr = window.prompt('Deseja realizar um estorno total ou parcial? Digite o valor (ex: 150.00) ou deixe em branco para estorno total:');
-    if (amountStr === null) return; // Cancelou o prompt
+  const handleRefundPayment = (paymentId: string) => {
+    setRefundPaymentModal({ isOpen: true, paymentId, amount: '', isTotal: true });
+  };
 
-    const amount = amountStr.trim() ? parseFloat(amountStr.replace(',', '.')) : null;
-    if (amountStr.trim() && isNaN(amount as number)) {
+  const confirmRefundPayment = async () => {
+    const { paymentId, amount: amountStr, isTotal } = refundPaymentModal;
+    
+    const amount = !isTotal && amountStr.trim() ? parseFloat(amountStr.replace(',', '.')) : null;
+    if (!isTotal && amountStr.trim() && isNaN(amount as number)) {
       alert('Valor inválido.');
       return;
     }
-
-    if (!window.confirm(`Deseja realmente realizar o estorno ${amount ? `de R$ ${amount.toFixed(2)}` : 'TOTAL'} deste pagamento?`)) return;
 
     setLoading(true);
     try {
@@ -1357,7 +1393,8 @@ export default function App() {
       const data = await response.json();
 
       if (response.ok) {
-        alert('Estorno realizado com sucesso!');
+        setSuccessMessage('Estorno realizado com sucesso!');
+        setRefundPaymentModal({ isOpen: false, paymentId: '', amount: '', isTotal: true });
         if (formData.guardian.id) {
           fetchPayments(formData.guardian.id);
         }
@@ -1365,11 +1402,64 @@ export default function App() {
           fetchFinancialData();
         }
       } else {
-        alert(`Erro ao estornar: ${data.error}`);
+        setErrorMessage(`Erro ao estornar: ${data.error}`);
       }
     } catch (error) {
       console.error('Error refunding payment:', error);
-      alert('Erro de conexão ao realizar estorno.');
+      setErrorMessage('Erro de conexão ao realizar estorno.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdatePaymentValue = (paymentId: string, currentAmount: number) => {
+    setUpdatePaymentModal({
+      isOpen: true,
+      paymentId,
+      currentAmount,
+      newValue: currentAmount.toFixed(2),
+      updateFuture: false
+    });
+  };
+
+  const confirmUpdatePaymentValue = async () => {
+    const { paymentId, newValue: newValueStr, updateFuture } = updatePaymentModal;
+    
+    const newValue = parseFloat(newValueStr.replace(',', '.'));
+    
+    if (isNaN(newValue) || newValue <= 0) {
+      alert("Por favor, informe um valor válido.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/payments/update-value/${paymentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          newValue, 
+          updateFutureInstallments: updateFuture 
+        })
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        setSuccessMessage(result.message || "Valor atualizado com sucesso.");
+        setUpdatePaymentModal(prev => ({ ...prev, isOpen: false }));
+        if (formData.guardian.id) {
+          fetchPayments(formData.guardian.id);
+        }
+        if (step === 'admin' && adminTab === 'finance') {
+          fetchFinancialData();
+        }
+      } else {
+        setErrorMessage(result.error || "Erro ao atualizar valor.");
+      }
+    } catch (error) {
+      console.error("Erro ao atualizar valor do pagamento:", error);
+      setErrorMessage("Erro de conexão ao tentar atualizar o valor.");
     } finally {
       setLoading(false);
     }
@@ -4035,7 +4125,14 @@ export default function App() {
                                                 </div>
                                               </td>
                                               <td className="px-6 py-4 font-bold text-slate-900 whitespace-nowrap">
-                                                R$ {Number(pag.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                <div className="flex flex-col">
+                                                  <span>R$ {Number(pag.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                                  {(pag.pagarme?.startsWith('sub_') || pag.matricula_id) && (
+                                                    <span className="text-[9px] text-emerald-600 font-bold uppercase flex items-center gap-0.5 mt-0.5">
+                                                      <RefreshCw size={8} className="animate-spin-slow" /> Assinatura Ativa
+                                                    </span>
+                                                  )}
+                                                </div>
                                               </td>
                                               <td className="px-6 py-4 text-sm">
                                                 <div className="flex items-center gap-2">
@@ -4101,9 +4198,20 @@ export default function App() {
                                                     
                                                     const canCancel = !isPaid && !isCancelled && !isRefunded && !isFailed;
                                                     const canRefund = isPaid;
+                                                    const canEdit = !isPaid && !isCancelled && !isRefunded && !isFailed;
 
                                                     return (
                                                       <>
+                                                        {canEdit && (
+                                                          <button
+                                                            onClick={() => handleUpdatePaymentValue(pag.id, pag.valor)}
+                                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-lg transition-all text-[10px] font-bold uppercase border border-amber-100 shadow-sm"
+                                                            title="Editar Valor"
+                                                          >
+                                                            <Edit3 size={14} />
+                                                            <span>Editar</span>
+                                                          </button>
+                                                        )}
                                                         {canCancel && (
                                                           <button
                                                             onClick={() => handleCancelPayment(pag.id)}
@@ -4710,16 +4818,16 @@ export default function App() {
                                   <div>
                                     <div className="flex items-center gap-2">
                                       <p className="text-sm font-bold text-slate-800">{mat.turma}</p>
-                                      {mat.status === 'pendente' && (
-                                        <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold uppercase">
-                                          Pendente
+                                      {(mat.status === 'pendente' || mat.status === 'falha') && (
+                                        <span className={`text-[9px] ${mat.status === 'falha' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'} px-1.5 py-0.5 rounded font-bold uppercase`}>
+                                          {mat.status === 'falha' ? 'Falha no Pagamento' : 'Pendente'}
                                         </span>
                                       )}
                                     </div>
                                     <p className="text-[10px] text-slate-500 uppercase">{mat.unidade}</p>
                                   </div>
                                   <div className="flex gap-2">
-                                    {mat.status === 'pendente' ? (
+                                    {(mat.status === 'pendente' || mat.status === 'falha') ? (
                                       <button 
                                         onClick={() => {
                                           setSelectedEnrollmentForCard(mat.id);
@@ -7943,7 +8051,7 @@ export default function App() {
 
       {/* Error Modal */}
       {errorMessage && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -7982,7 +8090,7 @@ export default function App() {
 
       {/* Success Modal */}
       {successMessage && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -8263,6 +8371,225 @@ export default function App() {
                   {isRetryingPayment ? 'Processar Pagamento' : 'Salvar Novo Cartão'}
                 </button>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Atualizar Valor do Pagamento */}
+      <AnimatePresence>
+        {updatePaymentModal.isOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <DollarSign size={20} className="text-amber-600" />
+                  Editar Valor do Pagamento
+                </h3>
+                <button 
+                  onClick={() => setUpdatePaymentModal(prev => ({ ...prev, isOpen: false }))} 
+                  className="p-2 hover:bg-slate-200 rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="p-8 space-y-6">
+                <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 flex gap-3">
+                  <Info className="text-amber-600 shrink-0" size={20} />
+                  <p className="text-xs text-amber-800 leading-relaxed">
+                    Informe o novo valor para este pagamento. O valor atual é <strong>R$ {updatePaymentModal.currentAmount.toFixed(2)}</strong>.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Novo Valor (R$)</label>
+                  <div className="relative">
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">R$</div>
+                    <input 
+                      type="text" 
+                      className="w-full pl-12 pr-4 py-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-amber-500 outline-none transition-all font-bold text-lg"
+                      placeholder="0,00"
+                      value={updatePaymentModal.newValue}
+                      onChange={e => setUpdatePaymentModal({...updatePaymentModal, newValue: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer hover:bg-slate-100 transition-colors"
+                     onClick={() => setUpdatePaymentModal(prev => ({ ...prev, updateFuture: !prev.updateFuture }))}>
+                  <div className={`mt-0.5 w-5 h-5 rounded border flex items-center justify-center transition-all ${updatePaymentModal.updateFuture ? 'bg-amber-600 border-amber-600' : 'bg-white border-slate-300'}`}>
+                    {updatePaymentModal.updateFuture && <Check size={14} className="text-white" />}
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold text-slate-900">Atualizar parcelas futuras</p>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Aplicar este novo valor também para todas as próximas parcelas a vencer desta matrícula e <strong>atualizar o valor da assinatura no Pagar.me</strong>.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button 
+                    onClick={() => setUpdatePaymentModal(prev => ({ ...prev, isOpen: false }))}
+                    className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    onClick={confirmUpdatePaymentValue}
+                    disabled={loading}
+                    className="flex-1 py-4 bg-amber-600 text-white font-bold rounded-2xl hover:bg-amber-700 transition-all shadow-lg shadow-amber-200 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {loading ? <RefreshCw className="animate-spin" size={20} /> : 'Salvar Alteração'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Cancelar Pagamento */}
+      <AnimatePresence>
+        {cancelPaymentModal.isOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-red-50">
+                <h3 className="text-lg font-bold text-red-900 flex items-center gap-2">
+                  <Trash2 size={20} className="text-red-600" />
+                  Cancelar Pagamento
+                </h3>
+                <button 
+                  onClick={() => setCancelPaymentModal({ isOpen: false, paymentId: '' })} 
+                  className="p-2 hover:bg-red-100 rounded-full transition-colors"
+                >
+                  <X size={20} className="text-red-400" />
+                </button>
+              </div>
+              
+              <div className="p-8 space-y-6">
+                <div className="bg-red-50 border border-red-100 rounded-2xl p-4 flex gap-3">
+                  <AlertCircle className="text-red-600 shrink-0" size={20} />
+                  <p className="text-sm text-red-800 leading-relaxed">
+                    Deseja realmente cancelar este pagamento? Esta ação é <strong>irreversível</strong>.
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setCancelPaymentModal({ isOpen: false, paymentId: '' })}
+                    className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all"
+                  >
+                    Voltar
+                  </button>
+                  <button 
+                    onClick={confirmCancelPayment}
+                    disabled={loading}
+                    className="flex-1 py-4 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-all shadow-lg shadow-red-200 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {loading ? <RefreshCw className="animate-spin" size={20} /> : 'Sim, Cancelar'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Estornar Pagamento */}
+      <AnimatePresence>
+        {refundPaymentModal.isOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-blue-50">
+                <h3 className="text-lg font-bold text-blue-900 flex items-center gap-2">
+                  <RefreshCw size={20} className="text-blue-600" />
+                  Estornar Pagamento
+                </h3>
+                <button 
+                  onClick={() => setRefundPaymentModal({ isOpen: false, paymentId: '', amount: '', isTotal: true })} 
+                  className="p-2 hover:bg-blue-100 rounded-full transition-colors"
+                >
+                  <X size={20} className="text-blue-400" />
+                </button>
+              </div>
+              
+              <div className="p-8 space-y-6">
+                <div className="space-y-4">
+                  <div className="flex gap-4">
+                    <button 
+                      onClick={() => setRefundPaymentModal({...refundPaymentModal, isTotal: true})}
+                      className={`flex-1 py-3 rounded-xl border font-bold transition-all ${refundPaymentModal.isTotal ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                    >
+                      Estorno Total
+                    </button>
+                    <button 
+                      onClick={() => setRefundPaymentModal({...refundPaymentModal, isTotal: false})}
+                      className={`flex-1 py-3 rounded-xl border font-bold transition-all ${!refundPaymentModal.isTotal ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                    >
+                      Parcial
+                    </button>
+                  </div>
+
+                  {!refundPaymentModal.isTotal && (
+                    <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Valor do Estorno (R$)</label>
+                      <div className="relative">
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">R$</div>
+                        <input 
+                          type="text" 
+                          className="w-full pl-12 pr-4 py-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-lg"
+                          placeholder="0,00"
+                          value={refundPaymentModal.amount}
+                          onChange={e => setRefundPaymentModal({...refundPaymentModal, amount: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 flex gap-3">
+                  <Info className="text-blue-600 shrink-0" size={20} />
+                  <p className="text-xs text-blue-800 leading-relaxed">
+                    Deseja realmente realizar o estorno <strong>{refundPaymentModal.isTotal ? 'TOTAL' : `de R$ ${refundPaymentModal.amount || '0,00'}`}</strong> deste pagamento?
+                  </p>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button 
+                    onClick={() => setRefundPaymentModal({ isOpen: false, paymentId: '', amount: '', isTotal: true })}
+                    className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    onClick={confirmRefundPayment}
+                    disabled={loading}
+                    className="flex-1 py-4 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {loading ? <RefreshCw className="animate-spin" size={20} /> : 'Confirmar Estorno'}
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}

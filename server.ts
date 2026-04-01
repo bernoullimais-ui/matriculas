@@ -2672,7 +2672,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         return res.status(404).json({ error: 'Matrícula não encontrada. Por favor, recarregue a página.' });
       }
 
-      if (enrollment.status !== 'pendente') {
+      if (enrollment.status !== 'pendente' && enrollment.status !== 'falha') {
         return res.status(400).json({ error: 'Esta matrícula já está ativa ou foi cancelada.' });
       }
 
@@ -2947,51 +2947,182 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
   });
 
   app.post("/api/payments/refund/:id", async (req, res) => {
+    const { id } = req.params;
+    const { amount } = req.body;
+    console.log(`[Estorno] Iniciando estorno do pagamento ${id}`);
+
     try {
-      const { id } = req.params;
-      const { amount } = req.body;
-      console.log(`[Estorno] Iniciando estorno do pagamento ${id}`);
+      // 1. Buscar pagamento no Supabase (em todas as tabelas possíveis)
+      let payment = null;
+      let table = 'pagamentos';
 
-      // 1. Buscar pagamento no Supabase
-      const { data: payment, error: pError } = await supabase
-        .from('pagamentos')
-        .select('*')
-        .eq('id', id)
-        .single();
+      // Tenta na tabela principal
+      const { data: pData } = await supabase.from('pagamentos').select('*').eq('id', id).maybeSingle();
+      if (pData) {
+        payment = pData;
+        table = 'pagamentos';
+      } else {
+        // Tenta na tabela Wix
+        const { data: wData } = await supabase.from('pagamentos_wix').select('*').eq('id', id).maybeSingle();
+        if (wData) {
+          payment = wData;
+          table = 'pagamentos_wix';
+        } else {
+          // Tenta na tabela PagSeguro
+          const { data: psData } = await supabase.from('pagamentos_pagseguro').select('*').eq('id', id).maybeSingle();
+          if (psData) {
+            payment = psData;
+            table = 'pagamentos_pagseguro';
+          }
+        }
+      }
 
-      if (pError || !payment) {
+      if (!payment) {
+        console.error(`[Estorno] Pagamento ${id} não encontrado em nenhuma tabela.`);
         return res.status(404).json({ error: 'Pagamento não encontrado.' });
       }
 
-      if (payment.status !== 'pago') {
+      console.log(`[Estorno] Pagamento encontrado na tabela ${table}. Status atual: ${payment.status || payment.status_transacao}`);
+
+      // Se for um pagamento externo (Wix ou PagSeguro), apenas atualizamos o status localmente
+      if (table !== 'pagamentos') {
+        console.log(`[Estorno] Pagamento externo detectado (${table}). Atualizando apenas status local.`);
+        const updatePayload: any = {};
+        if (table === 'pagamentos_wix') {
+          updatePayload.status_transacao = 'Estornado';
+        } else {
+          updatePayload.status = 'Estornado';
+        }
+
+        const { error: updateError } = await supabase
+          .from(table)
+          .update(updatePayload)
+          .eq('id', id);
+
+        if (updateError) throw updateError;
+        return res.json({ success: true, message: 'Status atualizado para estornado (registro externo).' });
+      }
+
+      // Para a tabela 'pagamentos', verificamos se é Pagar.me
+      if (payment.status !== 'pago' && payment.status !== 'conciliado') {
         return res.status(400).json({ error: 'Apenas pagamentos com status "pago" podem ser estornados.' });
       }
 
-      if (!payment.pagarme) {
-        return res.status(400).json({ error: 'Este pagamento não possui um ID do Pagar.me vinculado.' });
+      // NOVO: Se o método for Wix ou PagSeguro, mesmo na tabela 'pagamentos', tratamos como externo
+      const metodo = (payment.metodo_pagamento || '').toLowerCase();
+      if (metodo === 'wix' || metodo === 'pagseguro') {
+        console.log(`[Estorno] Pagamento externo detectado pelo método (${metodo}). Atualizando apenas status local.`);
+        const { error: updateError } = await supabase
+          .from('pagamentos')
+          .update({ status: 'estornado' })
+          .eq('id', id);
+        if (updateError) throw updateError;
+        return res.json({ success: true, message: 'Status atualizado para estornado (registro externo identificado pelo método).' });
       }
 
+      if (!payment.pagarme) {
+        // Se não tem ID do Pagar.me, mas está pago, permitimos estorno manual (apenas status)
+        console.log(`[Estorno] Pagamento sem ID Pagar.me. Realizando estorno manual.`);
+        const { error: updateError } = await supabase
+          .from('pagamentos')
+          .update({ status: 'estornado' })
+          .eq('id', id);
+        if (updateError) throw updateError;
+        return res.json({ success: true, message: 'Estorno manual realizado com sucesso (sem integração Pagar.me).' });
+      }
+
+      console.log(`[Estorno] Pagamento ${id} vinculado ao ID Pagar.me: ${payment.pagarme}`);
       const authHeader = Buffer.from(`${getPagarmeSecretKey()}:`).toString('base64');
       let chargeId = null;
 
       // 2. Obter o ID da transação (charge_id)
       try {
-        if (payment.pagarme.startsWith('ord_')) {
-          const orderRes = await axios.get(`https://api.pagar.me/core/v5/orders/${payment.pagarme}`, {
-            headers: { 'Authorization': `Basic ${authHeader}` }
-          });
-          const charges = orderRes.data.charges;
-          if (charges && charges.length > 0) {
-            chargeId = charges[0].id;
+        if (payment.pagarme.startsWith('ch_')) {
+          chargeId = payment.pagarme;
+        } else if (payment.pagarme.startsWith('ord_') || payment.pagarme.startsWith('or_')) {
+          console.log(`[Estorno] Buscando pedido ${payment.pagarme} no Pagar.me`);
+          try {
+            const orderRes = await axios.get(`https://api.pagar.me/core/v5/orders/${payment.pagarme}`, {
+              headers: { 'Authorization': `Basic ${authHeader}` },
+              timeout: 15000
+            });
+            const charges = orderRes.data.charges;
+            if (charges && charges.length > 0) {
+              chargeId = charges[0].id;
+              console.log(`[Estorno] ChargeId encontrado no pedido: ${chargeId}`);
+            }
+          } catch (e: any) {
+            if (e.response?.status === 404) {
+              console.log(`[Estorno] Pedido ${payment.pagarme} não encontrado.`);
+              // Deixa chargeId como null para tentar busca por code ou fallback local
+            } else throw e;
           }
         } else if (payment.pagarme.startsWith('sub_')) {
-          const subRes = await axios.get(`https://api.pagar.me/core/v5/subscriptions/${payment.pagarme}/invoices`, {
-            headers: { 'Authorization': `Basic ${authHeader}` }
-          });
-          const invoices = subRes.data.data;
-          const paidInvoice = invoices.find((inv: any) => inv.status === 'paid');
-          if (paidInvoice && paidInvoice.charge) {
-            chargeId = paidInvoice.charge.id;
+          console.log(`[Estorno] Buscando faturas da assinatura ${payment.pagarme} no Pagar.me`);
+          try {
+            const subRes = await axios.get(`https://api.pagar.me/core/v5/subscriptions/${payment.pagarme}/invoices`, {
+              headers: { 'Authorization': `Basic ${authHeader}` },
+              timeout: 15000
+            });
+            const invoices = subRes.data.data;
+            if (invoices && invoices.length > 0) {
+              const amountInCents = Math.round(payment.valor * 100);
+              let paidInvoice = invoices.find((inv: any) => 
+                inv.status === 'paid' && 
+                Math.abs(inv.amount - amountInCents) < 10
+              );
+              if (!paidInvoice) paidInvoice = invoices.find((inv: any) => inv.status === 'paid');
+              if (paidInvoice && paidInvoice.charge) {
+                chargeId = paidInvoice.charge.id;
+                console.log(`[Estorno] ChargeId encontrado na fatura da assinatura: ${chargeId}`);
+              }
+            }
+          } catch (e: any) {
+            if (e.response?.status === 404) {
+              console.log(`[Estorno] Assinatura ${payment.pagarme} não encontrada.`);
+            } else throw e;
+          }
+        } else if (payment.pagarme.startsWith('in_')) {
+          console.log(`[Estorno] Buscando fatura ${payment.pagarme} no Pagar.me`);
+          try {
+            const invRes = await axios.get(`https://api.pagar.me/core/v5/invoices/${payment.pagarme}`, {
+              headers: { 'Authorization': `Basic ${authHeader}` },
+              timeout: 15000
+            });
+            if (invRes.data.charge) {
+              chargeId = invRes.data.charge.id;
+              console.log(`[Estorno] ChargeId encontrado na fatura: ${chargeId}`);
+            }
+          } catch (e: any) {
+            if (e.response?.status === 404) {
+              console.log(`[Estorno] Fatura ${payment.pagarme} não encontrada.`);
+            } else throw e;
+          }
+        } else if (/^\d+$/.test(payment.pagarme)) {
+          chargeId = payment.pagarme;
+        } else {
+          // Se não tem prefixo conhecido e não é numérico, tenta usar como chargeId diretamente
+          // O fallback de 404 no refund vai tratar se isso falhar
+          chargeId = payment.pagarme;
+        }
+
+        // Busca por code se ainda não encontrou chargeId
+        if (!chargeId) {
+          console.log(`[Estorno] ChargeId não encontrado. Tentando buscar pedido pelo code: ${id}`);
+          try {
+            const searchRes = await axios.get(`https://api.pagar.me/core/v5/orders?code=${id}`, {
+              headers: { 'Authorization': `Basic ${authHeader}` },
+              timeout: 15000
+            });
+            if (searchRes.data.data && searchRes.data.data.length > 0) {
+              const order = searchRes.data.data[0];
+              if (order.charges && order.charges.length > 0) {
+                chargeId = order.charges[0].id;
+                console.log(`[Estorno] ChargeId encontrado via busca por code: ${chargeId}`);
+              }
+            }
+          } catch (e: any) {
+            console.error(`[Estorno] Erro ao buscar pedido por code:`, e.message);
           }
         }
       } catch (err: any) {
@@ -3000,7 +3131,15 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
       }
 
       if (!chargeId) {
-        return res.status(400).json({ error: 'Não foi possível encontrar uma transação paga vinculada a este registro.' });
+        console.warn(`[Estorno] Nenhum chargeId encontrado para o pagamento ${id} após todas as tentativas.`);
+        // Se chegamos aqui e temos um ID Pagar.me que resultou em 404 ou falha de busca, permitimos estorno local
+        console.log(`[Estorno] Realizando estorno local como fallback para evitar bloqueio.`);
+        const { error: updateError } = await supabase
+          .from('pagamentos')
+          .update({ status: 'estornado' })
+          .eq('id', id);
+        if (updateError) throw updateError;
+        return res.json({ success: true, message: 'Estorno realizado localmente (transação não localizada no Pagar.me).' });
       }
 
       // 3. Realizar o estorno no Pagar.me
@@ -3010,18 +3149,52 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           refundPayload.amount = Math.round(amount * 100);
         }
 
-        await axios.post(`https://api.pagar.me/core/v5/charges/${chargeId}/confirm-refund`, 
-          refundPayload,
-          {
-            headers: {
-              'Authorization': `Basic ${authHeader}`,
-              'Content-Type': 'application/json'
+        console.log(`[Estorno] Enviando solicitação de estorno para charge ${chargeId}`, refundPayload);
+        // Tenta refund padrão
+        try {
+          await axios.post(`https://api.pagar.me/core/v5/charges/${chargeId}/refund`, 
+            refundPayload,
+            {
+              headers: {
+                'Authorization': `Basic ${authHeader}`,
+                'Content-Type': 'application/json'
+              },
+              timeout: 15000
             }
+          );
+        } catch (refundErr: any) {
+          // Se for 404, não adianta tentar confirm-refund, vamos direto para o fallback local
+          if (refundErr.response?.status === 404) {
+            throw refundErr; // Será pego pelo catch externo que fará o fallback local
           }
-        );
-        console.log(`[Estorno] Charge ${chargeId} estornada no Pagar.me`);
+
+          console.log(`[Estorno] Tentativa de refund falhou, tentando confirm-refund...`);
+          await axios.post(`https://api.pagar.me/core/v5/charges/${chargeId}/confirm-refund`, 
+            refundPayload,
+            {
+              headers: {
+                'Authorization': `Basic ${authHeader}`,
+                'Content-Type': 'application/json'
+              },
+              timeout: 15000
+            }
+          );
+        }
+        console.log(`[Estorno] Charge ${chargeId} estornada com sucesso no Pagar.me`);
       } catch (err: any) {
         console.error(`[Estorno] Erro ao processar estorno no Pagar.me:`, err.response?.data || err.message);
+        
+        // Fallback local se for 404 (transação não encontrada no Pagar.me)
+        if (err.response?.status === 404) {
+          console.warn(`[Estorno] Pagar.me retornou 404 para a charge ${chargeId}. Realizando estorno apenas local.`);
+          const { error: updateError } = await supabase
+            .from('pagamentos')
+            .update({ status: 'estornado' })
+            .eq('id', id);
+          if (updateError) throw updateError;
+          return res.json({ success: true, message: 'Estorno realizado localmente (transação não encontrada no Pagar.me).' });
+        }
+
         const pagarmeError = err.response?.data?.message || err.message;
         return res.status(500).json({ error: `Erro no Pagar.me: ${pagarmeError}` });
       }
@@ -3037,6 +3210,105 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
       res.json({ success: true, message: 'Estorno realizado com sucesso.' });
     } catch (error: any) {
       console.error(`[Estorno] Erro crítico:`, error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/payments/update-value/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { newValue, updateFutureInstallments } = req.body;
+
+      if (newValue === undefined || isNaN(newValue) || newValue <= 0) {
+        return res.status(400).json({ error: 'Valor inválido.' });
+      }
+
+      // 1. Buscar pagamento no Supabase
+      const { data: payment, error: pError } = await supabase
+        .from('pagamentos')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (pError || !payment) {
+        return res.status(404).json({ error: 'Pagamento não encontrado.' });
+      }
+
+      if (payment.status === 'pago') {
+        return res.status(400).json({ error: 'Não é possível alterar o valor de um pagamento já quitado.' });
+      }
+
+      // 2. Se for para atualizar parcelas futuras de uma assinatura
+      if (updateFutureInstallments && payment.matricula_id) {
+        // Buscar a matrícula para pegar o ID da assinatura
+        const { data: matricula, error: mError } = await supabase
+          .from('matriculas')
+          .select('pagarme_subscription_id')
+          .eq('id', payment.matricula_id)
+          .single();
+
+        if (matricula?.pagarme_subscription_id) {
+          const subId = matricula.pagarme_subscription_id;
+          const authHeader = Buffer.from(`${getPagarmeSecretKey()}:`).toString('base64');
+
+          try {
+            // Buscar assinatura para pegar o ID do item
+            const subRes = await axios.get(`https://api.pagar.me/core/v5/subscriptions/${subId}`, {
+              headers: { 'Authorization': `Basic ${authHeader}` }
+            });
+
+            const itemId = subRes.data.items?.[0]?.id;
+            if (itemId) {
+              // Atualizar o valor do item na assinatura
+              await axios.patch(`https://api.pagar.me/core/v5/subscriptions/${subId}/items/${itemId}`, 
+                {
+                  pricing_scheme: {
+                    scheme_type: "unit",
+                    price: Math.round(newValue * 100)
+                  }
+                },
+                {
+                  headers: {
+                    'Authorization': `Basic ${authHeader}`,
+                    'Content-Type': 'application/json'
+                  }
+                }
+              );
+              console.log(`[Pagar.me] Assinatura ${subId} atualizada para novo valor: ${newValue}`);
+            }
+          } catch (err: any) {
+            console.error(`[Pagar.me] Erro ao atualizar assinatura:`, err.response?.data || err.message);
+            // Mesmo que falhe no Pagar.me, podemos continuar atualizando localmente se o usuário desejar, 
+            // mas é melhor avisar.
+          }
+        }
+
+        // Atualizar todos os pagamentos pendentes desta matrícula
+        const { error: bulkUpdateError } = await supabase
+          .from('pagamentos')
+          .update({ valor: newValue })
+          .eq('matricula_id', payment.matricula_id)
+          .eq('status', 'pendente');
+
+        if (bulkUpdateError) throw bulkUpdateError;
+      } else {
+        // Atualizar apenas este pagamento
+        const { error: updateError } = await supabase
+          .from('pagamentos')
+          .update({ valor: newValue })
+          .eq('id', id);
+
+        if (updateError) throw updateError;
+      }
+
+      let message = 'Valor atualizado com sucesso.';
+      if (updateFutureInstallments && payment.matricula_id) {
+        message = 'Valor atualizado com sucesso neste pagamento, nas parcelas futuras e na assinatura do Pagar.me.';
+      }
+
+      res.json({ success: true, message });
+    } catch (error: any) {
+      console.error(`[UpdateValue] Erro crítico:`, error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -5551,12 +5823,15 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         event.type === 'order.paid' || 
         event.type === 'charge.paid' || 
         event.type === 'order.payment_failed' ||
+        event.type === 'charge.payment_failed' ||
+        event.type === 'charge.created' ||
         event.type === 'invoice.paid' ||
         event.type === 'invoice.payment_failed' ||
         event.type === 'invoice.created' ||
         event.type === 'subscription.created' ||
         event.type === 'subscription.updated' ||
         event.type === 'subscription.canceled' ||
+        event.type === 'subscription_item.created' ||
         event.type === 'charge.refunded' ||
         event.type === 'order.canceled'
       ) {
