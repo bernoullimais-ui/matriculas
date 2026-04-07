@@ -669,6 +669,7 @@ async function createPagarmeOrder(data: {
     expMonth: string;
     expYear: string;
     cvv: string;
+    cpf?: string;
   };
   amount: number; // in cents
   paymentMethod: 'pix' | 'credit_card';
@@ -798,6 +799,7 @@ async function createPagarmeOrder(data: {
           card: {
             number: data.card?.number?.replace(/\D/g, ''),
             holder_name: data.card?.holderName?.substring(0, 64),
+            holder_document: data.card?.cpf ? data.card.cpf.replace(/\D/g, '') : undefined,
             exp_month: parseInt(data.card?.expMonth, 10),
             exp_year: parseInt(data.card?.expYear?.length === 2 ? `20${data.card.expYear}` : data.card?.expYear, 10),
             cvv: data.card?.cvv,
@@ -864,6 +866,7 @@ async function createPagarmeSubscription(data: {
     expMonth: string;
     expYear: string;
     cvv: string;
+    cpf?: string;
   };
   paymentMethod?: 'pix' | 'credit_card';
   amount: number; // in cents
@@ -989,6 +992,7 @@ async function createPagarmeSubscription(data: {
     payload.card = {
       number: data.card.number.replace(/\D/g, ''),
       holder_name: data.card.holderName.substring(0, 64),
+      holder_document: data.card.cpf ? data.card.cpf.replace(/\D/g, '') : undefined,
       exp_month: parseInt(data.card.expMonth, 10),
       exp_year: parseInt(data.card.expYear.length === 2 ? `20${data.card.expYear}` : data.card.expYear, 10),
       cvv: data.card.cvv,
@@ -1615,6 +1619,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         card: {
           number: card.number.replace(/\s/g, ''),
           holder_name: card.holder_name,
+          holder_document: card.cpf ? card.cpf.replace(/\D/g, '') : undefined,
           exp_month: card.exp_month,
           exp_year: card.exp_year,
           cvv: card.cvv
@@ -2732,7 +2737,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         holderName: card.holder_name,
         expMonth: card.exp_month,
         expYear: card.exp_year,
-        cvv: card.cvv
+        cvv: card.cvv,
+        cpf: card.cpf
       };
 
       // Determine if we need split (scheduled subscription)

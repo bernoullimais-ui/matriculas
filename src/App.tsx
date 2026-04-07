@@ -490,7 +490,8 @@ export default function App() {
     holder_name: '',
     exp_month: '',
     exp_year: '',
-    cvv: ''
+    cvv: '',
+    cpf: ''
   });
   const [payments, setPayments] = useState<any[]>([]);
   const [waitlist, setWaitlist] = useState<any[]>([]);
@@ -616,7 +617,8 @@ export default function App() {
       holderName: '',
       expMonth: '',
       expYear: '',
-      cvv: ''
+      cvv: '',
+      cpf: ''
     }
   });
 
@@ -892,6 +894,11 @@ export default function App() {
     e.preventDefault();
     if (!selectedEnrollmentForCard) return;
 
+    if (!newCardData.cpf || newCardData.cpf.replace(/\D/g, '').length !== 11) {
+      alert('Por favor, informe um CPF válido para o titular do cartão.');
+      return;
+    }
+
     setLoading(true);
     try {
       const endpoint = isRetryingPayment ? '/api/enroll/retry' : '/api/portal/subscription/card';
@@ -911,7 +918,7 @@ export default function App() {
         alert(isRetryingPayment ? 'Pagamento processado com sucesso!' : 'Cartão atualizado com sucesso!');
         setIsUpdatingCard(false);
         setIsRetryingPayment(false);
-        setNewCardData({ number: '', holder_name: '', exp_month: '', exp_year: '', cvv: '' });
+        setNewCardData({ number: '', holder_name: '', exp_month: '', exp_year: '', cvv: '', cpf: '' });
         if (isRetryingPayment) {
           fetchEnrollments();
           fetchFinancialData();
@@ -2284,13 +2291,17 @@ export default function App() {
       const isFull = selectedTurma && selectedTurma.capacidade && (selectedTurma.ocupacao_atual || 0) >= selectedTurma.capacidade;
       
       if (!isFull) {
-        const { number, holderName, expMonth, expYear, cvv } = formData.card;
+        const { number, holderName, expMonth, expYear, cvv, cpf } = formData.card;
         if (!number || number.replace(/\s/g, '').length < 13) {
           setErrorMessage('Por favor, informe um número de cartão válido.');
           return;
         }
         if (!holderName) {
           setErrorMessage('Por favor, informe o nome impresso no cartão.');
+          return;
+        }
+        if (!cpf || cpf.replace(/\D/g, '').length !== 11) {
+          setErrorMessage('Por favor, informe um CPF válido para o titular do cartão.');
           return;
         }
         if (!expMonth || !expYear) {
@@ -6747,6 +6758,23 @@ export default function App() {
                             onChange={e => setFormData({...formData, card: {...formData.card, holderName: e.target.value.toUpperCase()}})}
                           />
                         </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1">CPF do Titular do Cartão</label>
+                          <input 
+                            type="text" 
+                            className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                            placeholder="000.000.000-00"
+                            value={formData.card.cpf}
+                            onChange={e => {
+                              let val = e.target.value.replace(/\D/g, '').substring(0, 11);
+                              if (val.length > 9) val = val.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4');
+                              else if (val.length > 6) val = val.replace(/(\d{3})(\d{3})(\d{1,3})/, '$1.$2.$3');
+                              else if (val.length > 3) val = val.replace(/(\d{3})(\d{1,3})/, '$1.$2');
+                              setFormData({...formData, card: {...formData.card, cpf: val}});
+                            }}
+                          />
+                        </div>
                         
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                           <div>
@@ -8321,6 +8349,22 @@ export default function App() {
                       placeholder="Como está no cartão"
                       value={newCardData.holder_name}
                       onChange={e => setNewCardData({...newCardData, holder_name: e.target.value})}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">CPF do Titular</label>
+                    <input 
+                      type="text" 
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                      placeholder="000.000.000-00"
+                      value={newCardData.cpf}
+                      onChange={e => {
+                        let val = e.target.value.replace(/\D/g, '').substring(0, 11);
+                        if (val.length > 9) val = val.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4');
+                        else if (val.length > 6) val = val.replace(/(\d{3})(\d{3})(\d{1,3})/, '$1.$2.$3');
+                        else if (val.length > 3) val = val.replace(/(\d{3})(\d{1,3})/, '$1.$2');
+                        setNewCardData({...newCardData, cpf: val});
+                      }}
                     />
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
