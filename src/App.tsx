@@ -45,6 +45,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import Papa from 'papaparse';
+import { useFranquiaTheme } from './hooks/useFranquiaTheme';
 
 type Step = 'guardian' | 'student' | 'enrollment' | 'payment' | 'success' | 'waitlist_success' | 'admin' | 'portal' | 'complete_profile';
 
@@ -72,6 +73,7 @@ interface Enrollment {
 }
 
 export default function App() {
+  const { theme, loading: themeLoading } = useFranquiaTheme();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [step, setStep] = useState<Step>('guardian');
@@ -904,12 +906,16 @@ export default function App() {
       const endpoint = isRetryingPayment ? '/api/enroll/retry' : '/api/portal/subscription/card';
       const method = isRetryingPayment ? 'POST' : 'PATCH';
       
+      const urlParams = new URLSearchParams(window.location.search);
+      const franquia = urlParams.get('franquia');
+
       const response = await fetch(endpoint, {
         method: method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           enrollmentId: selectedEnrollmentForCard,
-          card: newCardData
+          card: newCardData,
+          franquia: franquia
         })
       });
 
@@ -2323,12 +2329,16 @@ export default function App() {
 
       const endpoint = isFull ? '/api/waitlist' : '/api/enroll';
 
+      const urlParams = new URLSearchParams(window.location.search);
+      const franquia = urlParams.get('franquia');
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
-          couponId: appliedCoupon?.id
+          couponId: appliedCoupon?.id,
+          franquia: franquia
         })
       });
       
@@ -2419,12 +2429,18 @@ export default function App() {
             className="flex items-center gap-2 cursor-pointer" 
             onClick={() => setStep('guardian')}
           >
-            <div className="p-2 bg-emerald-600 rounded-lg">
-              <ShieldCheck className="text-white" size={20} />
-            </div>
-            <h1 className="text-lg font-bold tracking-tight hidden sm:block">
-              Sport for Kids
-            </h1>
+            {theme?.logo_url ? (
+              <img src={theme.logo_url} alt={theme.nome || 'Logo'} className="h-10 object-contain" />
+            ) : (
+              <>
+                <div className="p-2 bg-emerald-600 rounded-lg">
+                  <ShieldCheck className="text-white" size={20} />
+                </div>
+                <h1 className="text-lg font-bold tracking-tight hidden sm:block">
+                  {theme?.nome || 'Sport for Kids'}
+                </h1>
+              </>
+            )}
           </div>
           
           <div className="flex items-center gap-6">
@@ -7097,7 +7113,7 @@ export default function App() {
                     ) : null}
 
                     <p className="text-slate-500 mb-8 max-w-md mx-auto">
-                      Os dados foram enviados com sucesso e estão sendo processados para o sistema <strong>Gestão Sport for Kids 3.0</strong>.
+                      Os dados foram enviados com sucesso e estão sendo processados para o sistema <strong>Gestão {theme?.nome || 'Sport for Kids'} 3.0</strong>.
                     </p>
                     <div className="space-y-3">
                       <button 
@@ -7955,7 +7971,7 @@ export default function App() {
       </main>
 
       <footer className="max-w-6xl mx-auto py-12 px-6 text-center text-slate-400 text-sm">
-        <p>© 2024 Sport for Kids. Todos os direitos reservados.</p>
+        <p>© {new Date().getFullYear()} {theme?.nome || 'Sport for Kids'}. Todos os direitos reservados.</p>
         <p className="mt-2 flex items-center justify-center gap-1">
           <ShieldCheck size={14} /> Ambiente Seguro e Criptografado via Supabase
         </p>
@@ -8252,7 +8268,7 @@ export default function App() {
             <div className="p-6 md:p-10 space-y-6 overflow-y-auto">
               <div className="space-y-4">
                 <h3 className="text-lg md:text-xl font-bold text-slate-900 leading-tight">
-                  Bem-vindo(a) ao novo Portal de Matrículas Sport for Kids!
+                  Bem-vindo(a) ao novo Portal de Matrículas {theme?.nome || 'Sport for Kids'}!
                 </h3>
                 <p className="text-sm md:text-base text-slate-600 leading-relaxed">
                   Para sua comodidade, migramos todos os dados da plataforma anterior para este novo ambiente. 

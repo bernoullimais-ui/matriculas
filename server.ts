@@ -363,7 +363,19 @@ async function sendWhatsAppMessage(toPhone: string, contactName: string, message
   }
 }
 
-async function sendPaymentFailureNotification(guardianId: string, studentName: string, className: string, reason: string, unidadeName?: string) {
+const recentNotifications = new Map<string, number>();
+
+async function sendPaymentFailureNotification(guardianId: string, studentName: string, className: string, reason: string, unidadeName?: string, matriculaId?: string) {
+  if (matriculaId) {
+    const now = Date.now();
+    const lastSent = recentNotifications.get(matriculaId);
+    if (lastSent && (now - lastSent) < 5 * 60 * 1000) {
+      console.log(`[Notificação] Notificação de falha para a matrícula ${matriculaId} bloqueada (enviada recentemente).`);
+      return;
+    }
+    recentNotifications.set(matriculaId, now);
+  }
+
   try {
     const { data: guardian, error: gError } = await supabase
       .from('responsaveis')
@@ -422,6 +434,10 @@ Se precisar de ajuda, entre em contato conosco.
           <p style="margin: 0;"><strong>Motivo:</strong> ${reason}</p>
         </div>
         <p>Sua matrícula <strong>não foi confirmada</strong>. Por favor, acesse o portal para revisar os dados de pagamento ou tente realizar a matrícula novamente.</p>
+        <p>Se tiver problemas com seu cartão, você pode atualizá-lo clicando no link abaixo:</p>
+        <div style="text-align: center; margin: 20px 0;">
+          <a href="https://ais-dev-62fwya3blqvimcjcuaqae4-22964521808.us-west1.run.app/pagamento/atualizar/${matriculaId}" style="background-color: #3b82f6; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Atualizar Cartão de Crédito</a>
+        </div>
         <p>Se precisar de ajuda, entre em contato conosco.</p>
         <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
         <p style="font-size: 12px; color: #64748b; text-align: center;">Sport for Kids - Transformando vidas através do esporte</p>
@@ -443,7 +459,7 @@ Se precisar de ajuda, entre em contato conosco.
   }
 }
 
-async function sendRecurringPaymentFailureNotification(guardianId: string, studentName: string, className: string, reason: string, unidadeName?: string) {
+async function sendRecurringPaymentFailureNotification(guardianId: string, studentName: string, className: string, reason: string, unidadeName?: string, matriculaId?: string) {
   try {
     const { data: guardian, error: gError } = await supabase
       .from('responsaveis')
@@ -655,6 +671,20 @@ function getPagarmeSecretKey() {
   return secretKey;
 }
 
+async function getFranquiaConfig(franquiaName?: string) {
+  if (!franquiaName) return null;
+  const { data, error } = await supabase
+    .from('identidades')
+    .select('*')
+    .eq('nome', franquiaName)
+    .single();
+  if (error || !data) {
+    console.warn(`Franquia ${franquiaName} não encontrada ou erro:`, error);
+    return null;
+  }
+  return data;
+}
+
 async function createPagarmeOrder(data: {
   customer: {
     name: string;
@@ -677,8 +707,54 @@ async function createPagarmeOrder(data: {
   code: string; // Reference ID for webhook
   softDescriptor?: string;
   ip?: string;
+  franquia?: string;
 }) {
-  const secretKey = getPagarmeSecretKey();
+  let secretKey = getPagarmeSecretKey();
+  let splitRules: any[] | undefined = undefined;
+
+  const franquiaConfig = await getFranquiaConfig(data.franquia);
+  if (franquiaConfig) {
+    if (franquiaConfig.modelo_pagamento === 'saas') {
+      secretKey = franquiaConfig.pagarme_api_key;
+    } else if (franquiaConfig.modelo_pagamento === 'split') {
+      secretKey = process.env.VITE_PAGARME_MASTER_KEY || process.env.PAGARME_MASTER_KEY || secretKey;
+      const masterRecipientId = process.env.VITE_PAGARME_MASTER_RECIPIENT_ID || process.env.PAGARME_MASTER_RECIPIENT_ID;
+
+      if (!masterRecipientId) {
+        console.warn("PAGARME_MASTER_RECIPIENT_ID não configurado para o modelo split. O split não será aplicado corretamente.");
+      } else {
+        const totalAmount = Math.round(Math.max(100, data.amount));
+        const percentualFee = franquiaConfig.taxa_split_percentual || 0;
+        const fixedFeeCents = Math.round((franquiaConfig.taxa_split_fixa || 0) * 100);
+
+        const commissionAmount = Math.round(totalAmount * (percentualFee / 100)) + fixedFeeCents;
+        const clientAmount = totalAmount - commissionAmount;
+
+        splitRules = [
+          {
+            amount: clientAmount,
+            recipient_id: franquiaConfig.pagarme_recipient_id,
+            type: "flat",
+            options: {
+              charge_processing_fee: true,
+              charge_remainder_fee: true,
+              liable: true
+            }
+          },
+          {
+            amount: commissionAmount,
+            recipient_id: masterRecipientId,
+            type: "flat",
+            options: {
+              charge_processing_fee: false,
+              charge_remainder_fee: false,
+              liable: false
+            }
+          }
+        ];
+      }
+    }
+  }
   
   if (!secretKey) {
     throw new Error("PAGARME_SECRET_KEY não configurada nas variáveis de ambiente (Menu Settings).");
@@ -769,7 +845,8 @@ async function createPagarmeOrder(data: {
         amount: Math.round(Math.max(100, data.amount)), 
         description: data.description.substring(0, 255),
         quantity: 1,
-        code: data.code
+        code: data.code,
+        ...(splitRules ? { split: splitRules } : {})
       }
     ],
     customer: {
@@ -876,8 +953,54 @@ async function createPagarmeSubscription(data: {
   start_at?: string; // ISO date string
   softDescriptor?: string;
   ip?: string;
+  franquia?: string;
 }) {
-  const secretKey = getPagarmeSecretKey();
+  let secretKey = getPagarmeSecretKey();
+  let splitRules: any[] | undefined = undefined;
+
+  const franquiaConfig = await getFranquiaConfig(data.franquia);
+  if (franquiaConfig) {
+    if (franquiaConfig.modelo_pagamento === 'saas') {
+      secretKey = franquiaConfig.pagarme_api_key;
+    } else if (franquiaConfig.modelo_pagamento === 'split') {
+      secretKey = process.env.VITE_PAGARME_MASTER_KEY || process.env.PAGARME_MASTER_KEY || secretKey;
+      const masterRecipientId = process.env.VITE_PAGARME_MASTER_RECIPIENT_ID || process.env.PAGARME_MASTER_RECIPIENT_ID;
+
+      if (!masterRecipientId) {
+        console.warn("PAGARME_MASTER_RECIPIENT_ID não configurado para o modelo split. O split não será aplicado corretamente.");
+      } else {
+        const totalAmount = Math.round(Math.max(100, data.amount));
+        const percentualFee = franquiaConfig.taxa_split_percentual || 0;
+        const fixedFeeCents = Math.round((franquiaConfig.taxa_split_fixa || 0) * 100);
+
+        const commissionAmount = Math.round(totalAmount * (percentualFee / 100)) + fixedFeeCents;
+        const clientAmount = totalAmount - commissionAmount;
+
+        splitRules = [
+          {
+            amount: clientAmount,
+            recipient_id: franquiaConfig.pagarme_recipient_id,
+            type: "flat",
+            options: {
+              charge_processing_fee: true,
+              charge_remainder_fee: true,
+              liable: true
+            }
+          },
+          {
+            amount: commissionAmount,
+            recipient_id: masterRecipientId,
+            type: "flat",
+            options: {
+              charge_processing_fee: false,
+              charge_remainder_fee: false,
+              liable: false
+            }
+          }
+        ];
+      }
+    }
+  }
   
   if (!secretKey) {
     throw new Error("PAGARME_SECRET_KEY não configurada nas variáveis de ambiente (Menu Settings).");
@@ -982,7 +1105,8 @@ async function createPagarmeSubscription(data: {
         pricing_scheme: {
           scheme_type: "unit",
           price: Math.round(Math.max(100, data.amount))
-        }
+        },
+        ...(splitRules ? { split: splitRules } : {})
       }
     ]
   };
@@ -1601,7 +1725,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
     try {
       const { data: matData, error: matError } = await supabase
         .from('matriculas')
-        .select('pagarme_subscription_id')
+        .select('pagarme_subscription_id, unidade')
         .eq('id', enrollmentId)
         .single();
 
@@ -1609,7 +1733,17 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         return res.status(404).json({ error: "Assinatura não encontrada para esta matrícula." });
       }
 
-      const secretKey = (process.env.PAGARME_SECRET_KEY || "").trim();
+      let secretKey = (process.env.PAGARME_SECRET_KEY || "").trim();
+      
+      const franquiaConfig = await getFranquiaConfig(matData.unidade);
+      if (franquiaConfig) {
+        if (franquiaConfig.modelo_pagamento === 'saas') {
+          secretKey = franquiaConfig.pagarme_api_key;
+        } else if (franquiaConfig.modelo_pagamento === 'split') {
+          secretKey = process.env.VITE_PAGARME_MASTER_KEY || process.env.PAGARME_MASTER_KEY || secretKey;
+        }
+      }
+
       if (!secretKey) throw new Error("PAGARME_SECRET_KEY não configurada.");
 
       const authHeader = `Basic ${Buffer.from(`${secretKey}:`).toString('base64')}`;
@@ -2480,7 +2614,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                 description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
                 code: firstPaymentId ? `${firstPaymentId}_r_${Date.now()}` : `enroll_${Date.now()}`,
                 softDescriptor,
-                ip: clientIp
+                ip: clientIp,
+                franquia: req.body.franquia
               });
               
               // 2. Cria a Assinatura agendada para o início das aulas + 1 mês
@@ -2500,7 +2635,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                 cycles: installments.length - 1,
                 start_at: new Date(installments[1].data_vencimento + "T12:00:00Z").toISOString(),
                 softDescriptor,
-                ip: clientIp
+                ip: clientIp,
+                franquia: req.body.franquia
               });
               
               paymentInfo = { order, subscription };
@@ -2540,7 +2676,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                 description: `Matrícula - ${student.name} (${student.turmaComplementar})`,
                 code: firstPaymentId ? `${firstPaymentId}_p_${Date.now()}` : `enroll_pix_${Date.now()}`,
                 softDescriptor,
-                ip: clientIp
+                ip: clientIp,
+                franquia: req.body.franquia
               });
               paymentInfo = order;
               console.log("Pagar.me PIX order created successfully:", order.id);
@@ -2570,7 +2707,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
                 code: firstPaymentId ? `${firstPaymentId}_${Date.now()}` : `enroll_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
                 cycles: installments.length,
                 softDescriptor,
-                ip: clientIp
+                ip: clientIp,
+                franquia: req.body.franquia
               });
               paymentInfo = subscription;
               console.log("Pagar.me subscription created successfully:", subscription.id);
@@ -2621,7 +2759,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
             student.name,
             student.turmaComplementar,
             failureReason,
-            student.unidade
+            student.unidade,
+            undefined
           );
 
           // We continue anyway, as the enrollment was successful in the DB
@@ -2766,7 +2905,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           description: `Matrícula - ${student.nome_completo} (${enrollment.turma})`,
           code: `${firstPaymentId}_r_${Date.now()}`,
           softDescriptor,
-          ip: clientIp
+          ip: clientIp,
+          franquia: req.body.franquia
         });
         
         // 2. Cria a Assinatura agendada
@@ -2786,7 +2926,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           cycles: installments.length - 1,
           start_at: new Date(installments[1].data_vencimento + "T12:00:00Z").toISOString(),
           softDescriptor,
-          ip: clientIp
+          ip: clientIp,
+          franquia: req.body.franquia
         });
         
         paymentInfo = { order, subscription };
@@ -2832,7 +2973,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
           code: `${firstPaymentId}_r_${Date.now()}`,
           cycles: installments.length,
           softDescriptor,
-          ip: clientIp
+          ip: clientIp,
+          franquia: req.body.franquia
         });
         
         paymentInfo = subscription;
@@ -4648,6 +4790,26 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
     }
   });
 
+  // Franquia Config Endpoint
+  app.get("/api/franquia/:nome", async (req, res) => {
+    try {
+      const { nome } = req.params;
+      const config = await getFranquiaConfig(nome);
+      if (!config) {
+        return res.status(404).json({ error: "Franquia não encontrada" });
+      }
+      // Return only safe public config
+      res.json({ 
+        nome: config.nome,
+        modelo_pagamento: config.modelo_pagamento,
+        cor_primaria: config.cor_primaria,
+        logo_url: config.logo_url
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Admin: Bulk Import
   app.post("/api/admin/import", async (req, res) => {
     const { rows, preview } = req.body;
@@ -5953,7 +6115,11 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
         }
 
         let originalCode = paymentId;
-        if (paymentId && paymentId.includes('_') && !paymentId.startsWith('enroll_') && !paymentId.startsWith('or_') && !paymentId.startsWith('ch_') && !paymentId.startsWith('sub_') && !paymentId.startsWith('in_')) {
+        
+        // Don't split if it's already a full UUID_TIMESTAMP (e.g. 35e591b8-5cfd-4e6d-8cb5-52d9c33f2e73_1776694922095-02)
+        const isTimestampedUUID = paymentId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_[0-9]+(-[0-9]+)?$/i.test(paymentId);
+
+        if (paymentId && !isTimestampedUUID && paymentId.includes('_') && !paymentId.startsWith('enroll_') && !paymentId.startsWith('or_') && !paymentId.startsWith('ch_') && !paymentId.startsWith('sub_') && !paymentId.startsWith('in_')) {
           paymentId = paymentId.split('_')[0];
         }
 
@@ -5992,8 +6158,15 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
           // Check if it's a recurring payment (cycle > 1) OR a split subscription (cycle 1 is the 2nd payment)
           const invoice = data.invoice || (data.charges && data.charges[0] && data.charges[0].invoice) || (event.type === 'invoice.paid' || event.type === 'invoice.created' ? data : null);
-          const isSubscription = (invoice && invoice.subscription_id) || event.type.startsWith('subscription.');
-          const cycle = invoice ? invoice.cycle : (data.current_cycle || 1);
+          const isSubscription = !!((invoice && (invoice.subscription_id || invoice.subscription)) || event.type.startsWith('subscription.'));
+          
+          let cycleNum = 1;
+          if (invoice && invoice.cycle) {
+            cycleNum = typeof invoice.cycle === 'object' ? invoice.cycle.cycle : invoice.cycle;
+          } else if (data.current_cycle) {
+            cycleNum = data.current_cycle;
+          }
+
           let targetPaymentId = paymentId;
           
           const isSplitSubscription = originalCode && originalCode.includes('_sub_');
@@ -6007,8 +6180,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
             updatePayload.data_pagamento = new Date().toISOString();
             
             // Se for uma fatura de assinatura, preferimos salvar o ID da assinatura para facilitar cancelamentos
-            if (isSubscription && invoice && invoice.subscription_id) {
-              updatePayload.pagarme = invoice.subscription_id;
+            if (isSubscription && invoice && (invoice.subscription_id || (invoice.subscription && invoice.subscription.id))) {
+              updatePayload.pagarme = invoice.subscription_id || invoice.subscription.id;
             } else {
               updatePayload.pagarme = data.id;
             }
@@ -6023,31 +6196,103 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
               (event.type === 'charge.antifraud_reproval' || event.type === 'charge.antifraud_reproved' ? "Reprovado pelo sistema de antifraude." : "Transação recusada pela operadora do cartão.");
           }
 
-          if (isSubscription && (cycle > 1 || isSplitSubscription)) {
-            console.log(`[Webhook Pagar.me] Pagamento recorrente ou split detectado. Ciclo: ${cycle}, Split: ${isSplitSubscription}`);
+          if (isSubscription && (cycleNum > 1 || isSplitSubscription)) {
+            console.log(`[Webhook Pagar.me] Pagamento recorrente ou split detectado. Ciclo: ${cycleNum}, Split: ${isSplitSubscription}`);
             // Find the original payment to get matricula_id
-            const { data: originalPayment } = await supabase
-              .from('pagamentos')
-              .select('matricula_id')
-              .eq('id', paymentId)
-              .single();
-
-            if (originalPayment && originalPayment.matricula_id) {
-              // Find the next pending payment for this matricula
-              const { data: nextPayment } = await supabase
+            console.log(`[Webhook Pagar.me] Buscando pagamento original: ${paymentId}`);
+            
+            // 1. Try to find the payment by the `payment_id` (our record ID) or Pagar.me ID
+            const pagarmeId = data.charge?.id || data.id;
+            let directPayment = null;
+            if (cycleNum === 1) {
+              console.log(`[Webhook Pagar.me] Tentando encontrar pagamento pelo ID interno ${paymentId} ou Pagar.me ${pagarmeId}`);
+              
+              const { data: foundPayment, error: _directError } = await supabase
                 .from('pagamentos')
-                .select('id, data_vencimento')
-                .eq('matricula_id', originalPayment.matricula_id)
-                .eq('status', 'pendente')
-                .order('data_vencimento', { ascending: true })
-                .limit(1)
+                .select('id')
+                .or(`id.eq.${paymentId},pagarme.eq.${paymentId},pagarme.eq.${pagarmeId}`)
+                .maybeSingle();
+              directPayment = foundPayment;
+            } else {
+              console.log(`[Webhook Pagar.me] Ciclo ${cycleNum} > 1. Pulando busca por ID para evitar subscrição do pagamento original.`);
+            }
+                
+            if (directPayment) {
+              targetPaymentId = directPayment.id;
+              console.log(`[Webhook Pagar.me] Pagamento encontrado: ${targetPaymentId}`);
+            } else {
+
+
+              // Fallback to searching by matrícula_id
+              // Extract base UUID if it's a complex timestamped ID (e.g. UUID_TIMESTAMP-02)
+              const baseUUIDMatch = paymentId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+              const searchId = baseUUIDMatch ? baseUUIDMatch[0] : paymentId;
+              console.log(`[Webhook Pagar.me] Não encontrado pelo ID Pagar.me, buscando pagamento original para matrícula: ${searchId}`);
+              
+              const { data: originalPayment, error: originalError } = await supabase
+                .from('pagamentos')
+                .select('matricula_id')
+                .eq('id', searchId)
                 .single();
 
-              if (nextPayment) {
-                targetPaymentId = nextPayment.id;
-                console.log(`[Webhook Pagar.me] Atualizando parcela pendente: ${targetPaymentId}`);
+              if (originalError) {
+                  console.error(`[Webhook Pagar.me] Erro ao buscar pagamento original:`, originalError);
+              }
+
+              if (originalPayment && originalPayment.matricula_id) {
+                console.log(`[Webhook Pagar.me] Encontrado pagamento original para matrícula: ${originalPayment.matricula_id}`);
+                // Find the next pending payment for this matrícula
+                const { data: nextPayment, error: nextError } = await supabase
+                  .from('pagamentos')
+                  .select('id, data_vencimento')
+                  .eq('matricula_id', originalPayment.matricula_id)
+                  .eq('status', 'pendente')
+                  .order('data_vencimento', { ascending: true })
+                  .limit(1)
+                  .single();
+                  
+                if (nextError) {
+                    console.error(`[Webhook Pagar.me] Erro ao buscar próximo pagamento pendente:`, nextError);
+                }
+
+                if (nextPayment) {
+                  targetPaymentId = nextPayment.id;
+                  console.log(`[Webhook Pagar.me] Atualizando parcela pendente: ${targetPaymentId}`);
+                } else {
+                  console.log(`[Webhook Pagar.me] Nenhuma parcela pendente encontrada para a matrícula ${originalPayment.matricula_id}. Criando novo registro...`);
+                  // Fetch matrícula details to create a new payment
+                  const { data: matricula, error: matError } = await supabase
+                    .from('matriculas')
+                    .select('aluno_id, responsavel_id, turma, unidade')
+                    .eq('id', originalPayment.matricula_id)
+                    .single();
+                    
+                  if (matricula) {
+                    const newPayment = {
+                      matricula_id: originalPayment.matricula_id,
+                      responsavel_id: matricula.responsavel_id,
+                      aluno_id: matricula.aluno_id,
+                      status: status,
+                      metodo_pagamento: 'cartão',
+                      valor: data.amount / 100, // Amount is in cents
+                      data_vencimento: new Date().toISOString(),
+                      pagarme: pagarmeId,
+                      data_pagamento: isPaid ? new Date().toISOString() : null
+                    };
+                    
+                    const { data: insertedPayment, error: insertError } = await supabase
+                      .from('pagamentos')
+                      .insert([newPayment])
+                      .select();
+                      
+                    if (insertedPayment && insertedPayment.length > 0) {
+                      targetPaymentId = insertedPayment[0].id;
+                      console.log(`[Webhook Pagar.me] Novo registro de pagamento criado: ${targetPaymentId}`);
+                    }
+                  }
+                }
               } else {
-                console.warn(`[Webhook Pagar.me] Nenhuma parcela pendente encontrada para a matrícula ${originalPayment.matricula_id}`);
+                console.log(`[Webhook Pagar.me] Pagamento original não encontrado ou sem matricula_id`);
               }
             }
           }
@@ -6365,7 +6610,8 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
                   student?.nome_completo || "Estudante",
                   matricula.turma || "Turma não identificada",
                   failureReason,
-                  matricula.unidade
+                  matricula.unidade,
+                  paymentData.matricula_id
                 );
               } else if (matricula && (matricula.status || '').toLowerCase() === 'ativo') {
                 console.log(`[Webhook Pagar.me] Falha em pagamento recorrente da matrícula ${paymentData.matricula_id}. Enviando notificação...`);
