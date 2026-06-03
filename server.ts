@@ -520,7 +520,10 @@ Qualquer dúvida, seguimos à disposição! 🏆`;
         <h3>O que acontece agora?</h3>
         <p>Nosso sistema está programado para realizar <strong>novas tentativas automáticas</strong> de cobrança nos próximos dias. Você não precisa se preocupar.</p>
         <h3>Precisa trocar o cartão?</h3>
-        <p>Se o cartão cadastrado foi cancelado, expirou ou se você deseja alterá-lo para as próximas tentativas e futuras cobranças, por favor, acesse o nosso portal ou entre em contato com a nossa equipe de atendimento.</p>
+        <p>Se o cartão cadastrado foi cancelado, expirou ou se você deseja alterá-lo para as próximas tentativas e futuras cobranças, você pode atualizá-lo clicando no link abaixo:</p>
+        <div style="text-align: center; margin: 20px 0;">
+          <a href="https://ais-dev-62fwya3blqvimcjcuaqae4-22964521808.us-west1.run.app/pagamento/atualizar/${matriculaId}" style="background-color: #3b82f6; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Atualizar Cartão de Crédito</a>
+        </div>
         <p>Se precisar de ajuda, estamos à disposição!</p>
         <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
         <p style="font-size: 14px; color: #334155;">Atenciosamente,<br/><strong>Equipe Sport for Kids</strong></p>
