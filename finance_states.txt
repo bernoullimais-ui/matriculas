@@ -1,0 +1,10 @@
+  const [financialData, setFinancialData] = useState<any>(null);
+  const [finStartDate, setFinStartDate] = useState(getFirstDayOfMonth());
+  const [finEndDate, setFinEndDate] = useState(getLastDayOfMonth());
+  const [finSelectedUnit, setFinSelectedUnit] = useState('');
+  const [finSelectedProf, setFinSelectedProf] = useState<string[]>([]);
+  const [isFinProfDropdownOpen, setIsFinProfDropdownOpen] = useState(false);
+  const [finSearchStudent, setFinSearchStudent] = useState('');
+  const [finPrimaryTab, setFinPrimaryTab] = useState<'projetada' | 'aferida' | 'inadimplencias'>('aferida');
+  const [finSecondaryTab, setFinSecondaryTab] = useState<'professor' | 'unidade' | 'detalhado' | 'sem_integral' | 'estudantes_integral' | 'wix' | 'pagarme' | 'comissionamento' | ''>('wix');
+  const [financeFilters, setFinanceFilters] = useState({

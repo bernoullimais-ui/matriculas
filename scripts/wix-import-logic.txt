@@ -1,0 +1,770 @@
+  6709	  app.post("/api/admin/import-wix-payments", express.json({ limit: '10mb' }), async (req, res) => {
+  6710	    const { payments, preview, mapping } = req.body; // Expecting an array of objects and optional mapping
+  6711	    if (!Array.isArray(payments)) {
+  6712	      return res.status(400).json({ error: 'Formato inválido. Esperado um array de pagamentos.' });
+  6713	    }
+  6714	
+  6715	    const fuzzy = (s: any) => {
+  6716	      if (!s) return '';
+  6717	      return String(s)
+  6718	        .replace(/[\u0000-\u001F\u007F-\u009F\uFEFF]/g, '')
+  6719	        .normalize("NFD")
+  6720	        .replace(/[\u0300-\u036f]/g, "")
+  6721	        .replace(/[^a-z0-9]/gi, '')
+  6722	        .toLowerCase()
+  6723	        .trim();
+  6724	    };
+  6725	
+  6726	    const getVal = (row: any, keys: string[]) => {
+  6727	      const entries = Object.entries(row);
+  6728	      const cleanKey = (s: string) => s.replace(/[\u0000-\u001F\u007F-\u009F\uFEFF]/g, '').toLowerCase().trim();
+  6729	      
+  6730	      // 1. Tenta correspondência exata primeiro
+  6731	      for (const key of keys) {
+  6732	        const ck = cleanKey(key);
+  6733	        const found = entries.find(([k]) => cleanKey(k) === ck);
+  6734	        if (found) return String(found[1]).trim();
+  6735	      }
+  6736	      // 2. Tenta correspondência parcial se não achar exata
+  6737	      for (const key of keys) {
+  6738	        const ck = cleanKey(key);
+  6739	        const found = entries.find(([k]) => cleanKey(k).includes(ck));
+  6740	        if (found) return String(found[1]).trim();
+  6741	      }
+  6742	      return '';
+  6743	    };
+  6744	
+  6745	    const getMappedVal = (row: any, fieldId: string, defaultKeys: string[]) => {
+  6746	      if (mapping && mapping[fieldId]) {
+  6747	        return String(row[mapping[fieldId]] || '').trim();
+  6748	      }
+  6749	      return getVal(row, defaultKeys);
+  6750	    };
+  6751	
+  6752	    const searchInRow = (row: any, search: string) => {
+  6753	      if (!search) return false;
+  6754	      const s = fuzzy(search);
+  6755	      if (s.length < 3) return false;
+  6756	      return Object.values(row).some(val => {
+  6757	        if (!val) return false;
+  6758	        const fVal = fuzzy(val);
+  6759	        return fVal.includes(s) || s.includes(fVal);
+  6760	      });
+  6761	    };
+  6762	
+  6763	    const searchStudentInRow = (row: any, studentName: string) => {
+  6764	      if (!studentName) return false;
+  6765	      const s = fuzzy(studentName);
+  6766	      const rowValues = Object.values(row).map(v => fuzzy(v));
+  6767	      
+  6768	      // Check if fuzzy full name is in any column
+  6769	      if (rowValues.some(val => val.includes(s) || s.includes(val))) return true;
+  6770	      
+  6771	      // Split name into parts and see if at least two parts match
+  6772	      const parts = studentName.toLowerCase().split(' ').filter(p => p.length > 2);
+  6773	      if (parts.length < 2) {
+  6774	        return rowValues.some(val => val.includes(fuzzy(studentName)));
+  6775	      }
+  6776	      
+  6777	      let matchCount = 0;
+  6778	      for (const part of parts) {
+  6779	        const fPart = fuzzy(part);
+  6780	        if (rowValues.some(val => val.includes(fPart))) {
+  6781	          matchCount++;
+  6782	        }
+  6783	      }
+  6784	      return matchCount >= 2;
+  6785	    };
+  6786	
+  6787	    if (preview) {
+  6788	      const previewData = [];
+  6789	      const sample = payments.slice(0, 10);
+  6790	
+  6791	      // Função auxiliar para pegar valor por índice (mesma lógica do import final)
+  6792	      const getByIdx = (row: any, idx: number) => {
+  6793	        const entry = Object.entries(row).find(([k]) => k.startsWith(`idx${idx}_`));
+  6794	        return entry ? String(entry[1]).trim() : '';
+  6795	      };
+  6796	
+  6797	      // Cálculo de totais para a pré-visualização (Novos vs Existentes)
+  6798	      const allWixIds = payments.map(p => getByIdx(p, 1)).filter(id => !!id);
+  6799	      let existingIds = new Set<string>();
+  6800	      
+  6801	      if (allWixIds.length > 0) {
+  6802	        // Busca em lotes de 500 para evitar limites de query
+  6803	        for (let i = 0; i < allWixIds.length; i += 500) {
+  6804	          const chunk = allWixIds.slice(i, i + 500);
+  6805	          const { data: existing } = await supabase
+  6806	            .from('pagamentos_wix')
+  6807	            .select('id_provedor_pagamento')
+  6808	            .in('id_provedor_pagamento', chunk);
+  6809	          existing?.forEach(p => existingIds.add(p.id_provedor_pagamento));
+  6810	        }
+  6811	      }
+  6812	
+  6813	      const skippedCount = existingIds.size;
+  6814	      const successCount = payments.length - skippedCount;
+  6815	      
+  6816	      for (const row of sample) {
+  6817	        const email = getByIdx(row, 26); // Email (Cobrança)
+  6818	        const responsavelNome = getByIdx(row, 16); // Nome (Cobrança)
+  6819	        const responsavelSobrenome = getByIdx(row, 17); // Sobrenome (Cobrança)
+  6820	        const fullNameResp = (responsavelNome + ' ' + responsavelSobrenome).trim();
+  6821	        
+  6822	        const wixId = getByIdx(row, 1);
+  6823	        const isExisting = existingIds.has(wixId);
+  6824	
+  6825	        // Identificação do Item/Plano
+  6826	        let nomeItem = getByIdx(row, 45); // Produto/Serviço
+  6827	        if (!nomeItem) {
+  6828	          // Fallback: Varredura profunda se a coluna 45 estiver vazia
+  6829	          const planKeywords = ['volei', 'xadrez', 'ballet', 'judo', 'tenis', 'futsal', 'basquete', 'teatro', 'robotica', 'funcional', 'dança', 'pickleball', 'programação', 'equipe', 'kids'];
+  6830	          const allEntries = Object.entries(row);
+  6831	          for (const [key, val] of allEntries) {
+  6832	            const v = String(val).trim();
+  6833	            if (v && v.length > 3 && !fuzzy(v).includes(fuzzy(responsavelNome)) && planKeywords.some(kw => fuzzy(v).includes(kw))) {
+  6834	              nomeItem = v;
+  6835	              break;
+  6836	            }
+  6837	          }
+  6838	        }
+  6839	
+  6840	        const dataStr = getMappedVal(row, 'data', ['Data do Pagamento', 'Data', 'Date', 'Pagamento']) || '---';
+  6841	        let alunoNome = 'Não encontrado';
+  6842	        
+  6843	        if (email || fullNameResp) {
+  6844	          let resp = null;
+  6845	          if (email) {
+  6846	            const { data } = await supabase.from('responsaveis').select('id').ilike('email', email.trim()).maybeSingle();
+  6847	            resp = data;
+  6848	          }
+  6849	          
+  6850	          if (!resp && fullNameResp) {
+  6851	            const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', fullNameResp).maybeSingle();
+  6852	            resp = data;
+  6853	          }
+  6854	
+  6855	          if (resp) {
+  6856	            const { data: students } = await supabase.from('alunos').select('id, nome_completo').eq('responsavel_id', resp.id);
+  6857	            if (students && students.length > 0) {
+  6858	              const studentIds = students.map(s => s.id);
+  6859	              const { data: enrollments } = await supabase
+  6860	                .from('matriculas')
+  6861	                .select('id, aluno_id, plano, turma, status, data_cancelamento, turma_id')
+  6862	                .in('aluno_id', studentIds);
+  6863	              
+  6864	              if (enrollments) {
+  6865	                const fItem = fuzzy(nomeItem);
+  6866	                let matches = [];
+  6867	                
+  6868	                if (fItem) {
+  6869	                  matches = enrollments.filter(e => {
+  6870	                    const fp = fuzzy(e.plano);
+  6871	                    return fp && (fp === fItem || fItem.includes(fp) || fp.includes(fItem));
+  6872	                  });
+  6873	
+  6874	                  if (matches.length === 0) {
+  6875	                    const allEntries = Object.entries(row);
+  6876	                    for (const [k, v] of allEntries) {
+  6877	                      const valStr = String(v).trim();
+  6878	                      const foundKeyword = enrollments.find(e => e.plano && valStr.toLowerCase().includes(e.plano.toLowerCase()))?.plano;
+  6879	                      if (foundKeyword) {
+  6880	                        matches = enrollments.filter(e => fuzzy(e.plano).includes(fuzzy(foundKeyword)));
+  6881	                        break;
+  6882	                      }
+  6883	                    }
+  6884	                  }
+  6885	                }
+  6886	
+  6887	                if (matches.length > 0) {
+  6888	                  let bestMatch = null;
+  6889	                  const activeMatches = matches.filter(m => (m.status || '').toLowerCase() === 'ativo' && !m.data_cancelamento);
+  6890	                  const candidates = activeMatches.length > 0 ? activeMatches : matches;
+  6891	
+  6892	                  // Tenta achar o aluno pelo nome no CSV
+  6893	                  bestMatch = candidates.find(m => {
+  6894	                    const s = students.find(st => st.id === m.aluno_id);
+  6895	                    return s && searchStudentInRow(row, s.nome_completo);
+  6896	                  });
+  6897	
+  6898	                  if (!bestMatch) bestMatch = candidates[0];
+  6899	
+  6900	                  const student = students.find(s => s.id === bestMatch.aluno_id);
+  6901	                  const turmaInfo = bestMatch.turma ? ` (${bestMatch.turma})` : '';
+  6902	                  alunoNome = (student ? student.nome_completo : 'ID: ' + bestMatch.aluno_id) + turmaInfo;
+  6903	                }
+  6904	              }
+  6905	            }
+  6906	          }
+  6907	        }
+  6908	
+  6909	        previewData.push({
+  6910	          Data: dataStr,
+  6911	          Item: nomeItem,
+  6912	          Aluno: alunoNome,
+  6913	          status: isExisting ? 'existente' : 'novo'
+  6914	        });
+  6915	      }
+  6916	
+  6917	      return res.json({ 
+  6918	        processed: payments.length, 
+  6919	        success: successCount, 
+  6920	        skipped: skippedCount,
+  6921	        errors: [], 
+  6922	        preview: previewData 
+  6923	      });
+  6924	    }
+  6925	
+  6926	    const results = { processed: 0, success: 0, errors: [] as any[], details: [] as any[] };
+  6927	
+  6928	    for (const row of payments) {
+  6929	      results.processed++;
+  6930	
+  6931	      const getByIdx = (idx: number) => {
+  6932	        const entry = Object.entries(row).find(([k]) => k.startsWith(`idx${idx}_`));
+  6933	        return entry ? String(entry[1]).trim() : '';
+  6934	      };
+  6935	
+  6936	      const parseWixDate = (dateStr: string) => {
+  6937	        if (!dateStr || !dateStr.trim()) return null;
+  6938	        const datePart = dateStr.trim().split(' ')[0]; // Pega apenas a parte da data se houver hora
+  6939	        const parts = datePart.split('/');
+  6940	        if (parts.length === 3) {
+  6941	          const day = parts[0].padStart(2, '0');
+  6942	          const month = parts[1].padStart(2, '0');
+  6943	          let year = parts[2];
+  6944	          if (year.length === 2) year = `20${year}`;
+  6945	          return `${year}-${month}-${day}T12:00:00Z`;
+  6946	        }
+  6947	        return null;
+  6948	      };
+  6949	      // Add a small delay to prevent rate limiting (100ms)
+  6950	      await sleep(100);
+  6951	      try {
+  6952	        const email = getMappedVal(row, 'email', ['Email']);
+  6953	        const responsavelNomeMapped = getMappedVal(row, 'responsavel_nome', ['Nome', 'Name', 'Responsável']);
+  6954	        const alunoMapped = getMappedVal(row, 'aluno', ['Aluno', 'Estudante', 'Child', 'Student', 'Nome do Aluno']);
+  6955	        const valorStr = getMappedVal(row, 'valor', ['Valor']) || '0,00';
+  6956	        const valor = parseFloat(valorStr.replace(',', '.'));
+  6957	        const statusWix = getMappedVal(row, 'status', ['Status da transação', 'Status']);
+  6958	        const wixId = getMappedVal(row, 'transacao_id', ['ID do provedor de pagamento']);
+  6959	        
+  6960	        let nomeItem = '';
+  6961	        if (mapping && mapping.plano) {
+  6962	          nomeItem = String(row[mapping.plano] || '').trim();
+  6963	        } else {
+  6964	          // Extração robusta do nome do item (mesma lógica da preview)
+  6965	          const nomeResponsavel = getVal(row, ['Nome']);
+  6966	          const sobrenomeResponsavel = getVal(row, ['Sobrenome']);
+  6967	          const fullNameResp = (nomeResponsavel + ' ' + sobrenomeResponsavel).trim();
+  6968	          const planKeywords = ['volei', 'xadrez', 'ballet', 'judo', 'tenis', 'futsal', 'basquete', 'teatro', 'robotica', 'funcional', 'dança', 'pickleball', 'programação', 'equipe', 'kids'];
+  6969	          
+  6970	          nomeItem = getVal(row, ['Produtos ou serviços', 'Item', 'Plano', 'Nome do produto', 'Descrição', 'Serviço', 'Product', 'Description']);
+  6971	          const allEntries = Object.entries(row);
+  6972	          let foundPlanByKeyword = '';
+  6973	          let nomeColumns = [];
+  6974	          for (const [key, val] of allEntries) {
+  6975	            const v = String(val).trim();
+  6976	            const k = key.toLowerCase();
+  6977	            if (k === 'nome' || k.includes('nome')) nomeColumns.push(v);
+  6978	            if (v && v.length > 3 && !fuzzy(v).includes(fuzzy(nomeResponsavel)) && !fuzzy(fullNameResp).includes(fuzzy(v))) {
+  6979	              if (planKeywords.some(kw => fuzzy(v).includes(kw))) foundPlanByKeyword = v;
+  6980	            }
+  6981	          }
+  6982	          if (foundPlanByKeyword) nomeItem = foundPlanByKeyword;
+  6983	          else if (nomeColumns.length >= 3) nomeItem = nomeColumns[2] || nomeColumns[nomeColumns.length - 1];
+  6984	        }
+  6985	
+  6986	        const dataPagamento = formatTimestamp(getMappedVal(row, 'data', ['Data', 'Date']));
+  6987	
+  6988	        if (!email || !wixId) {
+  6989	          results.errors.push({ row: results.processed, error: `Email ou ID do Wix ausente. Email: ${email}, WixId: ${wixId}` });
+  6990	          continue;
+  6991	        }
+  6992	
+  6993	        // Verifica se já foi importado na nova tabela pagamentos_wix
+  6994	        const { data: existingWix } = await supabase.from('pagamentos_wix').select('id').eq('id_provedor_pagamento', wixId).maybeSingle();
+  6995	        if (existingWix) {
+  6996	          results.success++; // Consideramos sucesso pois já está no banco
+  6997	          continue;
+  6998	        }
+  6999	
+  7000	        let responsavel = null;
+  7001	        if (email) {
+  7002	          const { data } = await supabase.from('responsaveis').select('id').ilike('email', email.trim()).maybeSingle();
+  7003	          responsavel = data;
+  7004	        }
+  7005	        
+  7006	        if (!responsavel && responsavelNomeMapped) {
+  7007	          const { data } = await supabase.from('responsaveis').select('id').ilike('nome_completo', responsavelNomeMapped.trim()).maybeSingle();
+  7008	          responsavel = data;
+  7009	        }
+  7010	
+  7011	        if (!responsavel) {
+  7012	          results.errors.push({ row: results.processed, error: `Responsável não encontrado: ${email || responsavelNomeMapped}` });
+  7013	          continue;
+  7014	        }
+  7015	
+  7016	        const tipoPedido = getByIdx(43);
+  7017	        const isPricingPlan = tipoPedido === 'Pricing Plans';
+  7018	
+  7019	        let aluno_id = null;
+  7020	        let matricula_id = null;
+  7021	        let turma_id = null;
+  7022	        let alunoNomeMatch = '';
+  7023	        let turmaMatch = '';
+  7024	
+  7025	        if (isPricingPlan) {
+  7026	          const { data: students } = await supabase.from('alunos').select('id, nome_completo').eq('responsavel_id', responsavel.id);
+  7027	          const studentIds = students?.map(s => s.id) || [];
+  7028	
+  7029	          if (studentIds.length > 0) {
+  7030	            const { data: enrollments } = await supabase
+  7031	              .from('matriculas')
+  7032	              .select('id, aluno_id, status, plano, turma, data_cancelamento, turma_id')
+  7033	              .in('aluno_id', studentIds);
+  7034	
+  7035	            if (enrollments && enrollments.length > 0) {
+  7036	              const fItem = fuzzy(nomeItem);
+  7037	              
+  7038	              // NOVA ABORDAGEM SÊNIOR: Filtro de Texto Obrigatório
+  7039	              let matches = [];
+  7040	              
+  7041	              if (fItem) {
+  7042	                matches = enrollments.filter(e => {
+  7043	                  const fp = fuzzy(e.plano);
+  7044	                  return fp && (fp === fItem || fItem.includes(fp) || fp.includes(fItem));
+  7045	                });
+  7046	
+  7047	                if (matches.length === 0) {
+  7048	                  matches = enrollments.filter(e => e.plano && searchInRow(row, e.plano));
+  7049	                }
+  7050	
+  7051	                // 3. Se ainda não achou, tenta por palavras-chave
+  7052	                if (matches.length === 0) {
+  7053	                  const planKeywords = ['volei', 'xadrez', 'ballet', 'judo', 'tenis', 'futsal', 'basquete', 'teatro', 'robotica', 'funcional', 'dança', 'pickleball', 'programação', 'equipe', 'kids'];
+  7054	                  const foundKeyword = planKeywords.find(kw => fItem.includes(kw));
+  7055	                  if (foundKeyword) {
+  7056	                    matches = enrollments.filter(e => {
+  7057	                      const fp = fuzzy(e.plano);
+  7058	                      return fp && fp.includes(foundKeyword);
+  7059	                    });
+  7060	                  }
+  7061	                }
+  7062	              }
+  7063	
+  7064	              if (matches.length > 0) {
+  7065	                let bestMatch = null;
+  7066	                
+  7067	                const activeMatches = matches.filter(m => (m.status || '').toLowerCase() === 'ativo' && !m.data_cancelamento);
+  7068	                const candidates = activeMatches.length > 0 ? activeMatches : matches;
+  7069	
+  7070	                if (candidates.length > 1) {
+  7071	                  // Se houver mapeamento de aluno, prioriza ele
+  7072	                  if (alunoMapped) {
+  7073	                    bestMatch = candidates.find(m => {
+  7074	                      const s = students.find(st => st.id === m.aluno_id);
+  7075	                      return s && (fuzzy(s.nome_completo).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome_completo)));
+  7076	                    });
+  7077	                  }
+  7078	
+  7079	                  if (!bestMatch) {
+  7080	                    bestMatch = candidates.find(m => {
+  7081	                      const s = students.find(st => st.id === m.aluno_id);
+  7082	                      return s && searchStudentInRow(row, s.nome_completo);
+  7083	                    });
+  7084	                  }
+  7085	                }
+  7086	
+  7087	                if (!bestMatch) {
+  7088	                  bestMatch = candidates[0];
+  7089	                }
+  7090	                
+  7091	                if (bestMatch) {
+  7092	                  matricula_id = bestMatch.id;
+  7093	                  aluno_id = bestMatch.aluno_id;
+  7094	                  turma_id = bestMatch.turma_id;
+  7095	                  const s = students.find(st => st.id === aluno_id);
+  7096	                  alunoNomeMatch = s ? s.nome_completo : '';
+  7097	                  turmaMatch = bestMatch.turma || '';
+  7098	                }
+  7099	              } else {
+  7100	                // Se o texto não bateu, vinculamos apenas o aluno se houver certeza, mas sem matrícula.
+  7101	                let matchedStudent = null;
+  7102	                if (alunoMapped) {
+  7103	                  matchedStudent = students.find(s => fuzzy(s.nome_completo).includes(fuzzy(alunoMapped)) || fuzzy(alunoMapped).includes(fuzzy(s.nome_completo)));
+  7104	                }
+  7105	                
+  7106	                if (!matchedStudent) {
+  7107	                  matchedStudent = students.find(s => searchStudentInRow(row, s.nome_completo));
+  7108	                }
+  7109	
+  7110	                if (matchedStudent) {
+  7111	                  aluno_id = matchedStudent.id;
+  7112	                  alunoNomeMatch = matchedStudent.nome_completo;
+  7113	                }
+  7114	              }
+  7115	            }
+  7116	          }
+  7117	        }
+  7118	
+  7119	        // Mapeamento exaustivo usando índices para evitar colisões de nomes duplicados (Nome, Email, etc.)
+  7120	        // O frontend envia as chaves no formato idxN_NomeColuna
+  7121	        
+  7122	        const dataPagamentoStr = getMappedVal(row, 'data', ['Data do Pagamento', 'Data', 'Date', 'Pagamento']);
+  7123	        const dataTransacaoStr = getMappedVal(row, 'data_transacao', ['Data da transação', 'Transaction Date', 'Transação']);
+  7124	
+  7125	        const wixRowData: any = {
+  7126	          data_pagamento_gmt_03: parseWixDate(dataPagamentoStr),
+  7127	          id_provedor_pagamento: wixId,
+  7128	          data_transacao_gmt_03: parseWixDate(dataTransacaoStr),
+  7129	          moeda: getByIdx(3),
+  7130	          valor: valor,
+  7131	          taxa_processamento: parseFloat((getByIdx(5) || '0').replace(',', '.')),
+  7132	          taxa_servico: parseFloat((getByIdx(6) || '0').replace(',', '.')),
+  7133	          liquido: parseFloat((getByIdx(7) || '0').replace(',', '.')),
+  7134	          status_transacao: statusWix,
+  7135	          tipo_pagamento: getByIdx(9),
+  7136	          valor_reembolso: parseFloat((getByIdx(10) || '0').replace(',', '.')),
+  7137	          parcelas: parseInt(getByIdx(11) || '0'),
+  7138	          provedor_pagamento: getByIdx(12),
+  7139	          conta_comerciante: getByIdx(13),
+  7140	          metodo_pagamento: getByIdx(14),
+  7141	          dados_cartao: getByIdx(15),
+  7142	          
+  7143	          // Detalhes da Cobrança (Índices 16 a 29)
+  7144	          cobranca_nome: getByIdx(16),
+  7145	          cobranca_sobrenome: getByIdx(17),
+  7146	          cobranca_endereco: getByIdx(18),
+  7147	          cobranca_rua: getByIdx(19),
+  7148	          cobranca_numero: getByIdx(20),
+  7149	          cobranca_cidade: getByIdx(21),
+  7150	          cobranca_empresa: getByIdx(22),
+  7151	          cobranca_codigo_pais: getByIdx(23),
+  7152	          cobranca_estado: getByIdx(24),
+  7153	          cobranca_cep: getByIdx(25),
+  7154	          cobranca_email: getByIdx(26),
+  7155	          cobranca_telefone: getByIdx(27),
+  7156	          cobranca_fax: getByIdx(28),
+  7157	          cobranca_cpf_cnpj: getByIdx(29),
+  7158	
+  7159	          // Detalhes da Entrega (Índices 30 a 42)
+  7160	          entrega_nome: getByIdx(30),
+  7161	          entrega_sobrenome: getByIdx(31),
+  7162	          entrega_endereco: getByIdx(32),
+  7163	          entrega_rua: getByIdx(33),
+  7164	          entrega_numero: getByIdx(34),
+  7165	          entrega_cidade: getByIdx(35),
+  7166	          entrega_empresa: getByIdx(36),
+  7167	          entrega_codigo_pais: getByIdx(37),
+  7168	          entrega_estado: getByIdx(38),
+  7169	          entrega_cep: getByIdx(39),
+  7170	          entrega_email: getByIdx(40),
+  7171	          entrega_telefone: getByIdx(41),
+  7172	          entrega_fax: getByIdx(42),
+  7173	          
+  7174	          // Informações do Pedido (Índices 43 a 49)
+  7175	          tipo_pedido: tipoPedido,
+  7176	          id_pedido: getByIdx(44),
+  7177	          produto_nome: getByIdx(45) || nomeItem,
+  7178	          quantidade: parseInt(getByIdx(46) || '0'),
+  7179	          desconto: parseFloat((getByIdx(47) || '0').replace(',', '.')),
+  7180	          envio: parseFloat((getByIdx(48) || '0').replace(',', '.')),
+  7181	          imposto: parseFloat((getByIdx(49) || '0').replace(',', '.')),
+  7182	
+  7183	          // Assinatura (Índices 50 a 54)
+  7184	          assinatura_ciclo_cobranca: getByIdx(50),
+  7185	          assinatura_frequencia: getByIdx(51),
+  7186	          assinatura_intervalo: getByIdx(52),
+  7187	          assinatura_status: getByIdx(53),
+  7188	          assinatura_motivo: getByIdx(54),
+  7189	
+  7190	          // Chargebacks (Índices 55 a 57)
+  7191	          chargeback_status: getByIdx(55),
+  7192	          chargeback_data_envio: getByIdx(56),
+  7193	          chargeback_prazo_disputa: getByIdx(57),
+  7194	          
+  7195	          // IDs vinculados ao sistema
+  7196	          responsavel_id: responsavel.id,
+  7197	          aluno_id,
+  7198	          matricula_id,
+  7199	          turma_id
+  7200	        };
+  7201	
+  7202	        // Insere na nova tabela pagamentos_wix
+  7203	        let { error } = await supabase.from('pagamentos_wix').insert([wixRowData]);
+  7204	        
+  7205	        // Fallback: Se as colunas de associação não existirem no banco (erro 42703), tenta sem elas
+  7206	        if (error && error.code === '42703') {
+  7207	          console.warn('Colunas de associação ausentes no banco. Tentando importação simplificada...');
+  7208	          const simplifiedData = { ...wixRowData };
+  7209	          delete simplifiedData.responsavel_id;
+  7210	          delete simplifiedData.aluno_id;
+  7211	          delete simplifiedData.matricula_id;
+  7212	          delete (simplifiedData as any).turma_id;
+  7213	          
+  7214	          const retry = await supabase.from('pagamentos_wix').insert([simplifiedData]);
+  7215	          error = retry.error;
+  7216	        }
+  7217	
+  7218	        if (error) throw error;
+  7219	        
+  7220	        results.success++;
+  7221	        results.details.push({
+  7222	          row: results.processed,
+  7223	          item: nomeItem,
+  7224	          aluno: alunoNomeMatch ? `${alunoNomeMatch}${turmaMatch ? ' (' + turmaMatch + ')' : ''}` : 'Não identificado'
+  7225	        });
+  7226	      } catch (err: any) {
+  7227	        results.errors.push({ row: results.processed, error: err.message });
+  7228	      }
+  7229	    }
+  7230	    res.json(results);
+  7231	  });
+  7232	
+  7233	  app.post("/api/admin/import-pagseguro-payments", express.json({ limit: '10mb' }), async (req, res) => {
+  7234	    const { payments, preview } = req.body;
+  7235	    
+  7236	    console.log(`[PagSeguro Import] Received ${payments?.length || 0} rows. Preview: ${preview}`);
+  7237	
+  7238	    const results: any = {
+  7239	      processed: 0,
+  7240	      success: 0,
+  7241	      skipped: 0,
+  7242	      errors: [],
+  7243	      details: []
+  7244	    };
+  7245	
+  7246	    if (!payments || !Array.isArray(payments) || payments.length === 0) {
+  7247	      console.warn('[PagSeguro Import] No payments provided in request body');
+  7248	      return res.json(results);
+  7249	    }
+  7250	
+  7251	    const getVal = (row: any, keys: string[]) => {
+  7252	      const entries = Object.entries(row);
+  7253	      const cleanKey = (s: string) => s.replace(/[\u0000-\u001F\u007F-\u009F\uFEFF]/g, '').toLowerCase().trim();
+  7254	      
+  7255	      for (const key of keys) {
+  7256	        const ck = cleanKey(key);
+  7257	        const found = entries.find(([k]) => cleanKey(k) === ck);
+  7258	        if (found) return String(found[1]).trim();
+  7259	      }
+  7260	      for (const key of keys) {
+  7261	        const ck = cleanKey(key);
+  7262	        const found = entries.find(([k]) => cleanKey(k).includes(ck));
+  7263	        if (found) return String(found[1]).trim();
+  7264	      }
+  7265	      return '';
+  7266	    };
+  7267	
+  7268	    const parseDate = (dateStr: string) => {
+  7269	      if (!dateStr || dateStr === '---' || dateStr === '-') return null;
+  7270	      // Format: 26/02/2026 12:27
+  7271	      const parts = dateStr.split(' ');
+  7272	      const dateParts = parts[0].split('/');
+  7273	      if (dateParts.length === 3) {
+  7274	        const day = dateParts[0].padStart(2, '0');
+  7275	        const month = dateParts[1].padStart(2, '0');
+  7276	        const year = dateParts[2];
+  7277	        const time = parts[1] || '12:00';
+  7278	        return `${year}-${month}-${day}T${time}:00Z`;
+  7279	      }
+  7280	      return dateStr;
+  7281	    };
+  7282	
+  7283	    const parseAmount = (val: string) => {
+  7284	      if (!val) return 0;
+  7285	      return parseFloat(val.replace(/[R$\s]/g, '').replace(/\./g, '').replace(',', '.')) || 0;
+  7286	    };
+  7287	
+  7288	    for (const row of payments) {
+  7289	      results.processed++;
+  7290	      try {
+  7291	        if (results.processed === 1) {
+  7292	          console.log(`[PagSeguro Import] Row 1 keys:`, Object.keys(row));
+  7293	        }
+  7294	
+  7295	        const transacaoId = getVal(row, ['Código da Transação', 'Codigo da Transacao', 'Transaction ID', 'ID da Transação', 'ID Transação']);
+  7296	        if (!transacaoId) {
+  7297	          console.warn(`Row ${results.processed}: Missing transaction ID. Keys: ${Object.keys(row).join(', ')}`);
+  7298	          throw new Error('Código da Transação ausente ou coluna não identificada');
+  7299	        }
+  7300	
+  7301	        // Check if already exists
+  7302	        const { data: existing } = await supabase
+  7303	          .from('pagamentos_pagseguro')
+  7304	          .select('id')
+  7305	          .eq('id_transacao', transacaoId)
+  7306	          .maybeSingle();
+  7307	
+  7308	        if (existing && !preview) {
+  7309	          results.skipped++;
+  7310	          continue;
+  7311	        }
+  7312	
+  7313	        // Try to identify responsible and student
+  7314	        const emailComprador = getVal(row, ['E-mail Comprador', 'Email Comprador']);
+  7315	        const emailCliente = getVal(row, ['E-mail Cliente', 'Email Cliente']);
+  7316	        const nomeComprador = getVal(row, ['Nome Comprador']);
+  7317	        const nomeCliente = getVal(row, ['Nome Cliente']);
+  7318	        
+  7319	        let responsavel = null;
+  7320	        const targetEmail = (emailComprador || emailCliente || '').trim();
+  7321	        if (targetEmail) {
+  7322	          const { data } = await supabase.from('responsaveis').select('id, nome_completo').ilike('email', targetEmail).maybeSingle();
+  7323	          responsavel = data;
+  7324	        }
+  7325	
+  7326	        const targetName = (nomeComprador || nomeCliente || '').trim();
+  7327	        if (!responsavel && targetName) {
+  7328	          // Fuzzy match by name
+  7329	          const { data } = await supabase.from('responsaveis').select('id, nome_completo').ilike('nome_completo', targetName).maybeSingle();
+  7330	          responsavel = data;
+  7331	        }
+  7332	
+  7333	        let aluno_id = null;
+  7334	        let matricula_id = null;
+  7335	        let turma_id = null;
+  7336	        let alunoNomeMatch = null;
+  7337	        let turmaMatch = null;
+  7338	
+  7339	        if (responsavel) {
+  7340	          // Find students for this responsible
+  7341	          const { data: students } = await supabase.from('alunos').select('id, nome_completo').eq('responsavel_id', responsavel.id);
+  7342	          if (students && students.length > 0) {
+  7343	            aluno_id = students[0].id;
+  7344	            alunoNomeMatch = students[0].nome_completo;
+  7345	
+  7346	            if (aluno_id) {
+  7347	              const { data: mats } = await supabase.from('matriculas').select('id, turma, turma_id').eq('aluno_id', aluno_id).eq('status', 'ativo').maybeSingle();
+  7348	              if (mats) {
+  7349	                matricula_id = mats.id;
+  7350	                turma_id = mats.turma_id;
+  7351	                turmaMatch = mats.turma;
+  7352	              }
+  7353	            }
+  7354	          }
+  7355	        }
+  7356	
+  7357	        const rawStatus = getVal(row, ['Status']);
+  7358	        const mappedStatus = (rawStatus || '').toLowerCase().includes('aprovad') || (rawStatus || '').toLowerCase().includes('paga') || (rawStatus || '').toLowerCase().includes('disponivel') ? 'Conciliado' : 
+  7359	                            (rawStatus || '').toLowerCase().includes('cancelad') || (rawStatus || '').toLowerCase().includes('devolvida') ? 'Estornado' : rawStatus;
+  7360	
+  7361	        if (preview) {
+  7362	          results.success++;
+  7363	          results.details.push({
+  7364	            row: results.processed,
+  7365	            item: transacaoId,
+  7366	            aluno: alunoNomeMatch ? `${alunoNomeMatch}${turmaMatch ? ' (' + turmaMatch + ')' : ''}` : 'Não identificado',
+  7367	            status: mappedStatus,
+  7368	            responsavel: responsavel?.nome_completo || targetName || 'Não identificado'
+  7369	          });
+  7370	          continue;
+  7371	        }
+  7372	
+  7373	        const rowData = {
+  7374	          documento: getVal(row, ['Documento']),
+  7375	          estabelecimento: getVal(row, ['Estabelecimento']),
+  7376	          nome_cliente: getVal(row, ['Nome Cliente']),
+  7377	          email_cliente: getVal(row, ['E-mail Cliente', 'Email Cliente']),
+  7378	          id_transacao: transacaoId,
+  7379	          data_transacao: parseDate(getVal(row, ['Data da Transação', 'Data da Transacao'])),
+  7380	          data_liberacao: parseDate(getVal(row, ['Data prevista de liberação', 'Data prevista de liberacao'])),
+  7381	          data_cancelamento: parseDate(getVal(row, ['Data do cancelamento'])),
+  7382	          bandeira: getVal(row, ['Bandeira']),
+  7383	          forma_pagamento: getVal(row, ['Forma de Pagamento', 'Forma de Pagamento']),
+  7384	          parcela: getVal(row, ['Parcela']),
+  7385	          valor_bruto: parseAmount(getVal(row, ['Valor Bruto'])),
+  7386	          valor_taxa: parseAmount(getVal(row, ['Valor Taxa'])),
+  7387	          valor_repasse: parseAmount(getVal(row, ['Valor Repasse'])),
+  7388	          valor_liquido: parseAmount(getVal(row, ['Valor Líquido', 'Valor Liquido'])),
+  7389	          status: rawStatus,
+  7390	          numero_cartao: getVal(row, ['Número do Cartão', 'Numero do Cartao']),
+  7391	          nsu: getVal(row, ['Código NSU', 'Codigo NSU']),
+  7392	          codigo_autorizacao: getVal(row, ['Código de Autorização', 'Codigo de Autorizacao']),
+  7393	          id_maquininha: getVal(row, ['Identificação da Maquininha', 'Identificacao da Maquininha']),
+  7394	          codigo_venda: getVal(row, ['Código da Venda', 'Codigo da Venda']),
+  7395	          codigo_referencia: getVal(row, ['Código Referência', 'Codigo Referencia']),
+  7396	          nome_comprador: getVal(row, ['Nome Comprador']),
+  7397	          email_comprador: getVal(row, ['E-mail Comprador']),
+  7398	          txid_pix: getVal(row, ['Código TX ID (PIX)', 'Codigo TX ID (PIX)']),
+  7399	          id_split: getVal(row, ['ID Split']),
+  7400	          responsavel_id: responsavel?.id,
+  7401	          aluno_id,
+  7402	          matricula_id,
+  7403	          turma_id
+  7404	        };
+  7405	
+  7406	        let { error } = await supabase.from('pagamentos_pagseguro').insert([rowData]);
+  7407	        
+  7408	        if (error && error.code === '42703') {
+  7409	          const simplifiedData = { ...rowData };
+  7410	          delete (simplifiedData as any).responsavel_id;
+  7411	          delete (simplifiedData as any).aluno_id;
+  7412	          delete (simplifiedData as any).matricula_id;
+  7413	          delete (simplifiedData as any).turma_id;
+  7414	          const retry = await supabase.from('pagamentos_pagseguro').insert([simplifiedData]);
+  7415	          error = retry.error;
+  7416	        }
+  7417	
+  7418	        if (error) throw error;
+  7419	        
+  7420	        results.success++;
+  7421	        results.details.push({
+  7422	          row: results.processed,
+  7423	          item: transacaoId,
+  7424	          aluno: alunoNomeMatch ? `${alunoNomeMatch}${turmaMatch ? ' (' + turmaMatch + ')' : ''}` : 'Não identificado'
+  7425	        });
+  7426	      } catch (err: any) {
+  7427	        console.error(`[PagSeguro Import] Error on row ${results.processed}:`, err.message);
+  7428	        results.errors.push({ row: results.processed, error: err.message, data: row });
+  7429	      }
+  7430	    }
+  7431	    console.log(`[PagSeguro Import] Finished. Success: ${results.success}, Errors: ${results.errors.length}`);
+  7432	    res.json(results);
+  7433	  });
+  7434	
+  7435	  // Global API error handler
+  7436	  app.use('/api', (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  7437	    console.error('API Error:', err);
+  7438	    res.status(err.status || 500).json({
+  7439	      error: err.message || 'Internal Server Error',
+  7440	      details: err.stack
+  7441	    });
+  7442	  });
+  7443	
+  7444	  // Vite middleware for development
+  7445	  async function startServer() {
+  7446	    const PORT = 3000;
+  7447	    if (process.env.NODE_ENV !== "production") {
+  7448	      const { createServer: createViteServer } = await import("vite");
+  7449	      const vite = await createViteServer({
+  7450	        server: { middlewareMode: true },
+  7451	        appType: "spa",
+  7452	      });
+  7453	      app.use(vite.middlewares);
+  7454	    } else {
+  7455	      app.use(express.static(path.join(currentDirname, "dist")));
+  7456	      app.get("*", (req, res) => {
+  7457	        res.sendFile(path.join(currentDirname, "dist", "index.html"));
+  7458	      });
+  7459	    }
+  7460	
+  7461	    app.listen(Number(PORT), "0.0.0.0", () => {
+  7462	      console.log(`Server running on http://localhost:${PORT}`);
+  7463	      
+  7464	      // Configurar Cron Job para sincronização automática a cada hora
+  7465	      // '0 * * * *' = No minuto 0 de cada hora
+  7466	      cron.schedule('0 * * * *', () => {
+  7467	        syncAllPendingPayments().catch(err => console.error('[Cron] Erro ao executar syncAllPendingPayments:', err));
+  7468	      });
+  7469	      
+  7470	      console.log('[Cron] Job de sincronização financeira agendado (1x por hora).');
+  7471	    });
+  7472	  }
+  7473	
+  7474	  if (process.env.VERCEL !== "1") {
+  7475	    startServer();
+  7476	  }
+  7477	
+  7478	export default app;

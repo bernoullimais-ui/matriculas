@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@theme {
+  --animate-spin-slow: spin 3s linear infinite;
+  
+  --color-emerald-50: var(--theme-primary-50, #ecfdf5);
+  --color-emerald-100: var(--theme-primary-100, #d1fae5);
+  --color-emerald-500: var(--theme-primary-light, #10b981);
+  --color-emerald-600: var(--theme-primary, #059669);
+  --color-emerald-700: var(--theme-primary-dark, #047857);
+}
+
+@layer utilities {
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #e2e8f0;
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #cbd5e1;
+  }
+  
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}

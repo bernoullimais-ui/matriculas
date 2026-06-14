@@ -1,0 +1,49 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "server.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
+  ],
+  "routes": [
+    { "handle": "filesystem" },
+    {
+      "src": "/api/(.*)",
+      "dest": "/server.ts"
+    },
+    {
+      "src": "/loja/produto/(.*)",
+      "dest": "/server.ts"
+    },
+    {
+      "src": "/eventos/(.*)",
+      "dest": "/server.ts"
+    },
+    {
+      "src": "/portal/(.*)/turma/(.*)",
+      "dest": "/server.ts"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/wix-sync",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/pagarme-sync",
+      "schedule": "10 * * * *"
+    }
+  ]
+}

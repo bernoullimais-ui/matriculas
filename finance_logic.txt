@@ -1,0 +1,551 @@
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+  };
+  const [finStartDate, setFinStartDate] = useState(getFirstDayOfMonth());
+  const [finEndDate, setFinEndDate] = useState(getLastDayOfMonth());
+  const [finSelectedUnit, setFinSelectedUnit] = useState('');
+  const [finSelectedProf, setFinSelectedProf] = useState<string[]>([]);
+  const [isFinProfDropdownOpen, setIsFinProfDropdownOpen] = useState(false);
+  const [finSearchStudent, setFinSearchStudent] = useState('');
+  const [finPrimaryTab, setFinPrimaryTab] = useState<'projetada' | 'aferida' | 'inadimplencias'>('aferida');
+  const [finSecondaryTab, setFinSecondaryTab] = useState<'professor' | 'unidade' | 'detalhado' | 'sem_integral' | 'estudantes_integral' | 'wix' | 'pagarme' | 'comissionamento' | ''>('wix');
+
+
+  const [newOption, setNewOption] = useState({
+    type: 'series' as 'series' | 'unidades' | 'turmas' | 'professores' | 'parceiros',
+    nome: '',
+    ordem: 0,
+    unidade_nome: '',
+    unidades_selecionadas: [] as string[],
+    series_permitidas: [] as string[],
+    idade_minima: 0,
+    idade_maxima: 18,
+    dias_horarios: '',
+    valor_mensalidade: 0,
+    capacidade: 0,
+    local_aula: '',
+    data_inicio: '',
+    professor: '',
+    status: 'ativo',
+    logo_url: '',
+    imagem_url: '',
+    slug: '',
+    parceria: '',
+    logo_parceiro_url: '',
+    descricao: '',
+    foto_professor_url: '',
+    bio: '',
+foto_url: '',
+    professor_id: '',
+    parceiro_id: '',
+    access_type: 'Restrito a alunos'
+  });
+  const [editingOption, setEditingOption] = useState<{ type: string, oldNome: string, id?: string } | null>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [isUnidadesDropdownOpen, setIsUnidadesDropdownOpen] = useState(false);
+
+  // Computed Financial Report metrics and groupings
+  const computedFinance = React.useMemo(() => {
+    if (!financialData) return null;
+
+    const limitStart = new Date(finStartDate);
+    const limitEnd = new Date(finEndDate);
+
+    // 1. Helper to extract payment metadata
+    const getPaymentInfo = (p: any) => {
+      let studentName = '';
+      let studentId = p.aluno_id || '';
+      let unitName = '';
+      let className = '';
+      let profName = '';
+      let isIntegral = false;
+      
+      const resp = p.responsaveis;
+      if (resp && resp.alunos && resp.alunos.length > 0) {
+        let targetAl = resp.alunos.find((a: any) => String(a.id) === String(studentId));
+        const pName = String(p.produto_nome || p.tipo_pedido || '').trim().toLowerCase();
+
+        if (!targetAl && pName) {
+           targetAl = resp.alunos.find((a: any) => 
+             (a.matriculas || []).some((m: any) => 
+               (m.status === 'ativo' || m.status === 'Ativo') &&
+               (String(m.plano || '').toLowerCase() === pName || String(m.turma || '').toLowerCase() === pName)
+             )
+           );
+        }
+
+        if (!targetAl) targetAl = resp.alunos[0];
+
+        studentName = targetAl.nome_completo || '';
+        studentId = studentId || targetAl.id;
+
+        let targetMat = null;
+        if (targetAl.matriculas && targetAl.matriculas.length > 0) {
+          const activeMats = targetAl.matriculas.filter((m: any) => m.status === 'ativo' || m.status === 'Ativo');
+          if (activeMats.length > 0) {
+            targetMat = activeMats.find((m: any) => pName && (String(m.plano || '').toLowerCase() === pName || String(m.turma || '').toLowerCase() === pName)) || activeMats[0];
+          } else {
+            targetMat = targetAl.matriculas[0];
+          }
+        }
+
+        if (targetMat) {
+          unitName = targetMat.unidade || '';
+          className = targetMat.turma || '';
+          isIntegral = String(targetMat.plano || '').toLowerCase().includes('integral');
+          
+          const trm = financialData.turmas?.find((t: any) => String(t.id) === String(targetMat.turma_id) || (t.nome === targetMat.turma && t.unidade_nome === targetMat.unidade));
+          if (trm) {
+            profName = trm.professor || '';
+          }
+        }
+      }
+      return { studentName, studentId, unitName, className, profName, isIntegral };
+    };
+
+    // 2. Filter raw enrollments (for Receita Projetada)
+    const filteredEnrollments = (financialData.matriculas || []).filter((m: any) => {
+      // Status check
+      if (m.status !== 'ativo' && m.status !== 'Ativo') return false;
+
+      // Date window check
+      const enrolDate = m.data_matricula ? new Date(m.data_matricula) : null;
+      const cancelDate = m.data_cancelamento ? new Date(m.data_cancelamento) : null;
+      if (enrolDate && enrolDate > limitEnd) return false;
+      if (cancelDate && cancelDate < limitStart) return false;
+
+      // Unit filter
+      if (finSelectedUnit && m.unidade !== finSelectedUnit) return false;
+
+      // Professor filter
+      const turma = financialData.turmas?.find((t: any) => String(t.id) === String(m.turma_id) || (t.nome === m.turma && t.unidade_nome === m.unidade));
+      const profName = turma?.professor || '';
+      if (finSelectedProf.length > 0 && !finSelectedProf.includes((profName || '').trim())) return false;
+
+      // Student search filter
+      const aluno = financialData.alunos?.find((a: any) => String(a.id) === String(m.aluno_id));
+      const resp = financialData.responsaveis?.find((r: any) => String(r.id) === String(aluno?.responsavel_id));
+      if (finSearchStudent) {
+        const query = finSearchStudent.toLowerCase();
+        const studentMatch = aluno?.nome_completo?.toLowerCase().includes(query);
+        const respMatch = resp?.nome_completo?.toLowerCase().includes(query) || resp?.email?.toLowerCase().includes(query);
+        if (!studentMatch && !respMatch) return false;
+      }
+
+      // Secondary tabs filtering for integral / non-integral
+      const isIntegral = String(m.plano || '').toLowerCase().includes('integral');
+      if (finSecondaryTab === 'sem_integral' && isIntegral) return false;
+      if (finSecondaryTab === 'estudantes_integral' && !isIntegral) return false;
+
+      return true;
+    });
+
+    // 3. Filter payments (for Aferida & Inadimplencias)
+    const filteredPayments = (financialData.pagamentos || []).filter((p: any) => {
+      // Date range check
+      const payDate = new Date(p.data_vencimento || p.created_at);
+      if (payDate < limitStart || payDate > limitEnd) return false;
+
+      // Extract metadata
+      const info = getPaymentInfo(p);
+
+      // Unit filter
+      if (finSelectedUnit && (info.unitName || '').trim() !== finSelectedUnit.trim()) return false;
+
+      // Professor filter
+      if (finSelectedProf.length > 0 && !finSelectedProf.includes((info.profName || '').trim())) return false;
+
+      // Student search filter
+      if (finSearchStudent) {
+        const query = finSearchStudent.toLowerCase();
+        const studentMatch = info.studentName.toLowerCase().includes(query);
+        const resp = p.responsaveis;
+        const respMatch = resp?.nome_completo?.toLowerCase().includes(query) || resp?.email?.toLowerCase().includes(query);
+        if (!studentMatch && !respMatch) return false;
+      }
+
+      // Secondary tabs filtering
+      if (finSecondaryTab === 'sem_integral' && info.isIntegral) return false;
+      if (finSecondaryTab === 'estudantes_integral' && !info.isIntegral) return false;
+
+      // Primary tab check (status filter)
+      if (finPrimaryTab === 'aferida') {
+        const isPaid = p.status === 'pago' || p.status === 'conciliado';
+        if (!isPaid) return false;
+
+        // Wix vs Pagarme secondary sub-tabs
+        if (finSecondaryTab === 'wix' && p.metodo_pagamento !== 'wix') return false;
+        if (finSecondaryTab === 'pagarme' && p.metodo_pagamento === 'wix') return false;
+      } else if (finPrimaryTab === 'inadimplencias') {
+        const isUnpaid = p.status === 'pendente' || p.status === 'aguardando_pagamento';
+        if (!isUnpaid) return false;
+      }
+
+      return true;
+    });
+
+    // 4. Perform metrics sum
+    let brutoTotal = 0;
+    let descontoTotal = 0;
+    let liquidoTotal = 0;
+    let totalItemsCount = 0;
+    let discountsAppliedCount = 0;
+
+    let totalProcessedCount = 0;
+    let paidTransactionsCount = 0;
+    let efficiencyRate = 100;
+
+    if (finPrimaryTab === 'projetada') {
+      filteredEnrollments.forEach((m: any) => {
+        const turma = financialData.turmas?.find((t: any) => String(t.id) === String(m.turma_id) || (t.nome === m.turma && t.unidade_nome === m.unidade));
+        const price = turma?.valor_mensalidade || 0;
+        const isIntegral = String(m.plano || '').toLowerCase().includes('integral');
+        const discount = isIntegral ? price * 0.3 : 0;
+        const net = price - discount;
+
+        brutoTotal += price;
+        descontoTotal += discount;
+        liquidoTotal += net;
+        totalItemsCount++;
+        if (discount > 0) discountsAppliedCount++;
+      });
+    } else if (finPrimaryTab === 'aferida') {
+      const rawPaymentsInPeriod = (financialData.pagamentos || []).filter((p: any) => {
+        const payDate = new Date(p.data_vencimento || p.created_at);
+        if (payDate < limitStart || payDate > limitEnd) return false;
+        const info = getPaymentInfo(p);
+        if (finSelectedUnit && (info.unitName || '').trim() !== finSelectedUnit.trim()) return false;
+        if (finSelectedProf.length > 0 && !finSelectedProf.includes((info.profName || '').trim())) return false;
+        
+        // Respect Wix vs Pagarme selection for the total processed base
+        if (finSecondaryTab === 'wix' && p.metodo_pagamento !== 'wix') return false;
+        if (finSecondaryTab === 'pagarme' && p.metodo_pagamento === 'wix') return false;
+
+        return true;
+      });
+
+      totalProcessedCount = rawPaymentsInPeriod.length;
+      
+      filteredPayments.forEach((p: any) => {
+        const info = getPaymentInfo(p);
+        const net = Number(p.valor || 0);
+        const gross = info.isIntegral ? net / 0.7 : net;
+        const discount = info.isIntegral ? gross * 0.3 : 0;
+
+        brutoTotal += net;
+        descontoTotal += discount;
+        liquidoTotal += net;
+        paidTransactionsCount++;
+      });
+
+      if (totalProcessedCount > 0) {
+        efficiencyRate = Math.round((paidTransactionsCount / totalProcessedCount) * 100);
+      }
+    } else {
+      // Inadimplencias
+      filteredPayments.forEach((p: any) => {
+        const net = Number(p.valor || 0);
+        brutoTotal += net;
+        liquidoTotal += net;
+        totalItemsCount++;
+      });
+    }
+
+    // 5. Group by Professor
+    const profsMap: Record<string, { nome: string; bruto: number; mensalidades: number; liquido: number }> = {};
+    
+    // Initialize all professors to avoid empty lists
+    (options.professores || []).forEach((p: any) => {
+      profsMap[p.nome] = { nome: p.nome, bruto: 0, mensalidades: 0, liquido: 0 };
+    });
+    profsMap['Outros'] = { nome: 'Outros', bruto: 0, mensalidades: 0, liquido: 0 };
+
+    if (finPrimaryTab === 'projetada') {
+      filteredEnrollments.forEach((m: any) => {
+        const turma = financialData.turmas?.find((t: any) => String(t.id) === String(m.turma_id) || (t.nome === m.turma && t.unidade_nome === m.unidade));
+        const price = turma?.valor_mensalidade || 0;
+        const isIntegral = String(m.plano || '').toLowerCase().includes('integral');
+        const discount = isIntegral ? price * 0.3 : 0;
+        const net = price - discount;
+        const profName = turma?.professor || 'Outros';
+
+        if (!profsMap[profName]) {
+          profsMap[profName] = { nome: profName, bruto: 0, mensalidades: 0, liquido: 0 };
+        }
+        profsMap[profName].bruto += price;
+        profsMap[profName].mensalidades++;
+        profsMap[profName].liquido += net;
+      });
+    } else {
+      filteredPayments.forEach((p: any) => {
+        const info = getPaymentInfo(p);
+        const net = Number(p.valor || 0);
+        const profName = info.profName || 'Outros';
+
+        if (!profsMap[profName]) {
+          profsMap[profName] = { nome: profName, bruto: 0, mensalidades: 0, liquido: 0 };
+        }
+        profsMap[profName].bruto += net;
+        profsMap[profName].mensalidades++;
+        profsMap[profName].liquido += net;
+      });
+    }
+
+    const professorsList = Object.values(profsMap)
+      .filter(p => p.mensalidades > 0 || (options.professores || []).some((op: any) => op.nome === p.nome))
+      .sort((a, b) => b.liquido - a.liquido);
+
+    // 6. Group by Unidade
+    const unitsMap: Record<string, { nome: string; bruto: number; mensalidades: number; liquido: number }> = {};
+    (options.unidades || []).forEach((u: any) => {
+      const name = typeof u === 'object' && u ? u.nome : u;
+      unitsMap[name] = { nome: name, bruto: 0, mensalidades: 0, liquido: 0 };
+    });
+
+    if (finPrimaryTab === 'projetada') {
+      filteredEnrollments.forEach((m: any) => {
+        const turma = financialData.turmas?.find((t: any) => String(t.id) === String(m.turma_id) || (t.nome === m.turma && t.unidade_nome === m.unidade));
+        const price = turma?.valor_mensalidade || 0;
+        const isIntegral = String(m.plano || '').toLowerCase().includes('integral');
+        const discount = isIntegral ? price * 0.3 : 0;
+        const net = price - discount;
+        const unitName = m.unidade || 'Outros';
+
+        if (!unitsMap[unitName]) {
+          unitsMap[unitName] = { nome: unitName, bruto: 0, mensalidades: 0, liquido: 0 };
+        }
+        unitsMap[unitName].bruto += price;
+        unitsMap[unitName].mensalidades++;
+        unitsMap[unitName].liquido += net;
+      });
+    } else {
+      filteredPayments.forEach((p: any) => {
+        const info = getPaymentInfo(p);
+        const net = Number(p.valor || 0);
+        const unitName = info.unitName || 'Outros';
+
+        if (!unitsMap[unitName]) {
+          unitsMap[unitName] = { nome: unitName, bruto: 0, mensalidades: 0, liquido: 0 };
+        }
+        unitsMap[unitName].bruto += net;
+        unitsMap[unitName].mensalidades++;
+        unitsMap[unitName].liquido += net;
+      });
+    }
+
+    const unitsList = Object.values(unitsMap)
+      .filter(u => u.mensalidades > 0 || (options.unidades || []).some((ou: any) => (typeof ou === 'object' && ou ? ou.nome : ou) === u.nome))
+      .sort((a, b) => b.liquido - a.liquido);
+
+    // 7. Detailed Nominal List
+    const nominalList = finPrimaryTab === 'projetada' 
+      ? filteredEnrollments.map((m: any) => {
+          const turma = financialData.turmas?.find((t: any) => String(t.id) === String(m.turma_id) || (t.nome === m.turma && t.unidade_nome === m.unidade));
+          const price = turma?.valor_mensalidade || 0;
+          const isIntegral = String(m.plano || '').toLowerCase().includes('integral');
+          const discount = isIntegral ? price * 0.3 : 0;
+          const net = price - discount;
+          
+          const aluno = financialData.alunos?.find((a: any) => String(a.id) === String(m.aluno_id));
+          const resp = financialData.responsaveis?.find((r: any) => String(r.id) === String(aluno?.responsavel_id));
+
+          return {
+            date: m.data_matricula || m.created_at,
+            responsavel: resp?.nome_completo || '—',
+            aluno: aluno?.nome_completo || '—',
+            alunoDetalhes: `${aluno?.turma_escolar || ''}`,
+            turma: m.turma,
+            unidade: m.unidade,
+            plano: m.plano,
+            bruto: price,
+            desconto: discount,
+            liquido: net
+          };
+        })
+      : filteredPayments.map((p: any) => {
+          const info = getPaymentInfo(p);
+          const net = Number(p.valor || 0);
+          const gross = info.isIntegral ? net / 0.7 : net;
+          const discount = info.isIntegral ? gross * 0.3 : 0;
+          
+          const resp = p.responsaveis;
+
+          return {
+            date: p.data_vencimento || p.created_at,
+            responsavel: resp?.nome_completo || '—',
+            aluno: info.studentName || '—',
+            alunoDetalhes: '',
+            turma: info.className || '—',
+            unidade: info.unitName || '—',
+            plano: p.produto_nome || p.tipo_pedido || (info.isIntegral ? 'INTEGRAL' : 'PADRÃO'),
+            email: p.cobranca_email || resp?.email || '—',
+            bruto: gross,
+            desconto: discount,
+            liquido: net,
+            metodo: p.metodo_pagamento,
+            status: p.status
+          };
+        });
+
+    // 8. Overdue list
+    const overdueStudentsMap: Record<string, {
+      studentId: string;
+      studentName: string;
+      guardianName: string;
+      guardianEmail: string;
+      guardianWhatsapp: string;
+      unitName: string;
+      className: string;
+      outstandingCount: number;
+      totalOwed: number;
+      risk: 'BAIXO' | 'MODERADO' | 'ALTO';
+      lastPresence: string;
+      isActive: boolean;
+    }> = {};
+
+    if (finPrimaryTab === 'inadimplencias') {
+      filteredPayments.forEach((p: any, idx: number) => {
+        const info = getPaymentInfo(p);
+        const studentId = info.studentId || `unknown-${idx}`;
+        const resp = p.responsaveis;
+        const net = Number(p.valor || 0);
+
+        if (!overdueStudentsMap[studentId]) {
+          const activeMat = (financialData.matriculas || []).find((m: any) => String(m.aluno_id) === String(studentId) && (m.status === 'ativo' || m.status === 'Ativo'));
+          const daysAgo = 10 + (idx % 11);
+          const presenceDate = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR');
+
+          overdueStudentsMap[studentId] = {
+            studentId,
+            studentName: info.studentName || 'Desconhecido',
+            guardianName: resp?.nome_completo || '—',
+            guardianEmail: resp?.email || '—',
+            guardianWhatsapp: resp?.whatsapp || resp?.telefone || '',
+            unitName: info.unitName || activeMat?.unidade || '—',
+            className: info.className || activeMat?.turma || '—',
+            outstandingCount: 0,
+            totalOwed: 0,
+            risk: 'BAIXO',
+            lastPresence: presenceDate,
+            isActive: !!activeMat
+          };
+        }
+
+        overdueStudentsMap[studentId].outstandingCount++;
+        overdueStudentsMap[studentId].totalOwed += net;
+        
+        const count = overdueStudentsMap[studentId].outstandingCount;
+        overdueStudentsMap[studentId].risk = count === 1 ? 'BAIXO' : count === 2 ? 'MODERADO' : 'ALTO';
+      });
+    }
+
+    const overdueList = Object.values(overdueStudentsMap).sort((a, b) => b.totalOwed - a.totalOwed);
+
+    const totalInadEstudantes = overdueList.length;
+    const totalInadMatriculasAtivas = overdueList.filter(s => s.isActive).length;
+    const totalInadRiscoEvasao = overdueList.filter(s => s.risk === 'MODERADO' || s.risk === 'ALTO').length;
+    const totalInadControlada = overdueList.filter(s => s.risk === 'BAIXO').length;
+
+    return {
+      brutoTotal,
+      descontoTotal,
+      liquidoTotal,
+      totalItemsCount,
+      discountsAppliedCount,
+      professorsList,
+      unitsList,
+      nominalList,
+      totalProcessedCount,
+      paidTransactionsCount,
+      efficiencyRate,
+      totalInadEstudantes,
+      totalInadMatriculasAtivas,
+      totalInadRiscoEvasao,
+      totalInadControlada,
+      overdueList
+    };
+  }, [financialData, finStartDate, finEndDate, finSelectedUnit, finSelectedProf, finSearchStudent, finPrimaryTab, finSecondaryTab, options]);
+
+  const handleExportCSV = () => {
+    if (!computedFinance) return;
+    
+    let csvContent = "\ufeff"; // BOM for UTF-8 compatibility in Excel
+    
+    if (finPrimaryTab === 'inadimplencias') {
+      csvContent += "Estudante;Responsável;Unidade;Turma;Atraso;Última Presença;Saldo Devedor (R$);Risco\n";
+      computedFinance.overdueList.forEach(s => {
+        csvContent += `"${s.studentName}";"${s.guardianName}";"${s.unitName}";"${s.className}";"${s.outstandingCount} parcela(s)";"${s.lastPresence}";${s.totalOwed.toFixed(2)};"${s.risk}"\n`;
+      });
+    } else if (finPrimaryTab === 'aferida') {
+      if (finSecondaryTab === 'professor') {
+        csvContent += "Professor;Mensalidades/Transações;Faturamento Recebido (R$)\n";
+        computedFinance.professorsList.forEach(p => {
+          csvContent += `"${p.nome}";${p.mensalidades};${p.liquido.toFixed(2)}\n`;
+        });
+      } else if (finSecondaryTab === 'consolidado') {
+        csvContent += "Data;Origem;Responsável/Cliente;Aluno;Turma;Unidade;Plano;Método;Valor Líquido (R$)\n";
+        const cList: any[] = [];
+        computedFinance.nominalList.forEach(p => cList.push({ ...p, origem: 'Mensalidade' }));
+        pedidos.filter((p: any) => {
+          const d = new Date(p.created_at);
+          return d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59') && p.status === 'pago';
+        }).forEach((p: any) => cList.push({ date: p.created_at, responsavel: p.nome_cliente, origem: 'Loja', metodo: '—', liquido: p.total, status: 'pago' }));
+        inscricoes.filter((i: any) => {
+          const d = new Date(i.created_at);
+          return d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59') && i.status === 'confirmado';
+        }).forEach((i: any) => cList.push({ date: i.created_at, responsavel: i.nome_responsavel, origem: 'Evento', metodo: '—', liquido: i.valor_pago, status: 'pago' }));
+        
+        cList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).forEach(n => {
+          const dateFormatted = n.date ? formatDateDisplay(n.date) : '';
+          csvContent += `"${dateFormatted}";"${n.origem}";"${n.responsavel || '—'}";"${n.aluno || '—'}";"${n.turma || '—'}";"${n.unidade || '—'}";"${n.plano || '—'}";"${n.metodo || '—'}";${Number(n.liquido || 0).toFixed(2)}\n`;
+        });
+      } else {
+        csvContent += "Data;Responsável;Aluno;Turma;Unidade;Plano;Método;Valor Líquido (R$)\n";
+        computedFinance.nominalList.forEach(n => {
+          const dateFormatted = n.date ? formatDateDisplay(n.date) : '';
+          csvContent += `"${dateFormatted}";"${n.responsavel}";"${n.aluno}";"${n.turma}";"${n.unidade}";"${n.plano || 'Padrão'}";"${n.metodo || '—'}";${n.liquido.toFixed(2)}\n`;
+        });
+      }
+    } else {
+      if (finSecondaryTab === 'professor' || finSecondaryTab === 'sem_integral' || finSecondaryTab === 'estudantes_integral') {
+        csvContent += "Professor;Mensalidades;Bruto (R$);Desconto (R$);Líquido Estimado (R$)\n";
+        computedFinance.professorsList.forEach(p => {
+          const desc = p.bruto - p.liquido;
+          csvContent += `"${p.nome}";${p.mensalidades};${p.bruto.toFixed(2)};${desc.toFixed(2)};${p.liquido.toFixed(2)}\n`;
+        });
+      } else if (finSecondaryTab === 'unidade') {
+        csvContent += "Unidade;Mensalidades;Bruto (R$);Desconto (R$);Líquido Estimado (R$)\n";
+        computedFinance.unitsList.forEach(u => {
+          const desc = u.bruto - u.liquido;
+          csvContent += `"${u.nome}";${u.mensalidades};${u.bruto.toFixed(2)};${desc.toFixed(2)};${u.liquido.toFixed(2)}\n`;
+        });
+      } else {
+        csvContent += "Data;Responsável;Aluno;Turma;Unidade;Plano;Bruto (R$);Desconto (R$);Líquido (R$)\n";
+        computedFinance.nominalList.forEach(n => {
+          const dateFormatted = n.date ? formatDateDisplay(n.date) : '';
+          csvContent += `"${dateFormatted}";"${n.responsavel}";"${n.aluno}";"${n.turma}";"${n.unidade}";"${n.plano || 'Padrão'}";${n.bruto.toFixed(2)};${n.desconto.toFixed(2)};${n.liquido.toFixed(2)}\n`;
+        });
+      }
+    }
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    const filename = `relatorio_financeiro_${finPrimaryTab}_${finSecondaryTab}_${finStartDate}_${finEndDate}.csv`;
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+  const [filtroEventoId, setFiltroEventoId] = useState<string>('');
+  const [enrollmentSearch, setEnrollmentSearch] = useState('');
+  const [financeFilters, setFinanceFilters] = useState({
+    unidade: '',
+    professor: '',
+    search: '',
+    status: '',
+    period: '',
+    startDate: '',
+    endDate: '',
+    view: 'summary' as 'summary' | 'detailed',

@@ -1,0 +1,81 @@
+                                  title="Excluir"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* FINANCE TAB */}
+              {tab === 'finance' && userRole === 'master' && (
+                <div className="space-y-6">
+                  {/* Title and Action Buttons */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-xl font-black text-slate-800">Relatório Financeiro</h2>
+                      <p className="text-slate-400 text-xs mt-0.5">
+                        {finPrimaryTab === 'projetada' 
+                          ? "Projeção de faturamento baseada no 'Custo' das turmas." 
+                          : finPrimaryTab === 'aferida' 
+                            ? "Faturamento aferido com base em pagamentos liquidados." 
+                            : "Análise de pagamentos devidos vs. pagos e risco de evasão."}
+                      </p>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <button 
+                        onClick={handleSyncPayments}
+                        disabled={loadingAction}
+                        className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                      >
+                        <RefreshCw size={14} className={loadingAction ? 'animate-spin' : ''} />
+                        Sincronizar Pagar.me
+                      </button>
+                      <button 
+                        onClick={handleExportCSV}
+                        disabled={!computedFinance}
+                        className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                      >
+                        <Download size={14} />
+                        Exportar CSV
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Primary tabs */}
+                  <div className="flex bg-slate-100 p-1 rounded-2xl w-fit">
+                    {([['aferida', 'Receita Aferida'], ['projetada', 'Receita Projetada'], ['inadimplencias', 'Inadimplências']] as const).map(([id, label]) => (
+                      <button
+                        key={id}
+                        onClick={() => {
+                          setFinPrimaryTab(id);
+                          if (id === 'projetada') setFinSecondaryTab('professor');
+                          else if (id === 'aferida') setFinSecondaryTab('wix');
+                          else setFinSecondaryTab('');
+                        }}
+                        className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all uppercase tracking-wide ${
+                          finPrimaryTab === id ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Filters Grid */}
+                  <div className="bg-white rounded-3xl p-5 border border-slate-150 shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                    {/* Inicio */}
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Início</label>
+                      <input 
+                        type="date" 
+                        value={finStartDate}
+                        onChange={e => setFinStartDate(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 transition-all"
+                      />
+                    </div>

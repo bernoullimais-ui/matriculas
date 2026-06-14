@@ -1,0 +1,47 @@
+Created At: 2026-06-14T01:21:47Z
+Completed At: 2026-06-14T01:21:47Z
+
+				The command completed successfully.
+				Output:
+				  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [userRole, setUserRole] = useState<'master' | 'administrativo'>(() => {
+  const [adminName, setAdminName] = useState(sessionStorage.getItem('admin_username') || 'Administrador');
+  const [adminNivel, setAdminNivel] = useState(sessionStorage.getItem('admin_usernivel') || 'Gestor Master');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [tab, setTab] = useState<string>('dashboard');
+  const [loading, setLoading] = useState(false);
+  const [searchProduto, setSearchProduto] = useState('');
+  const [lojaProdutosSubTab, setLojaProdutosSubTab] = useState<'catalogo' | 'estoque'>('catalogo');
+  const [estoqueHistorico, setEstoqueHistorico] = useState<any[]>([]);
+  const [loadingEstoqueHistorico, setLoadingEstoqueHistorico] = useState(false);
+  const [estoqueFilterProduto, setEstoqueFilterProduto] = useState<string>('all');
+  const [estoqueFilterStartDate, setEstoqueFilterStartDate] = useState<string>('');
+  const [estoqueFilterEndDate, setEstoqueFilterEndDate] = useState<string>('');
+  const [produtos, setProdutos] = useState<Produto[]>([]);
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [eventos, setEventos] = useState<Evento[]>([]);
+  const [pedidos, setPedidos] = useState<any[]>([]);
+  const [inscricoes, setInscricoes] = useState<any[]>([]);
+  const [showInscricaoDetails, setShowInscricaoDetails] = useState<any | null>(null);
+  const [showInscricaoEdit, setShowInscricaoEdit] = useState<any | null>(null);
+  const [showBulkWhatsAppModal, setShowBulkWhatsAppModal] = useState(false);
+  const [cupons, setCupons] = useState<any[]>([]);
+  const [cuponsDeMatriculas, setCuponsDeMatriculas] = useState<any[]>([]);
+  const [cuponsSubTab, setCuponsSubTab] = useState<'cursos'|'produtos'|'eventos'>('cursos');
+  const [categoriasSubTab, setCategoriasSubTab] = useState<'lista' | 'frete'>('lista');
+  const [entregaCasaHabilitada, setEntregaCasaHabilitada] = useState(false);
+  const [entregaCasaPreco, setEntregaCasaPreco] = useState(0);
+  const [isSavingFrete, setIsSavingFrete] = useState(false);
+  const [cupomCursoForm, setCupomCursoForm] = useState({
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [waitlist, setWaitlist] = useState<any[]>([]);
+  const [enrollments, setEnrollments] = useState<any[]>([]);
+  const [leads, setLeads] = useState<any[]>([]);
+  const [leadWhatsAppModal, setLeadWhatsAppModal] = useState<{ isOpen: boolean, lead: any | null, message: string, isSending?: boolean }>({ isOpen: false, lead: null, message: '' });
+  const [websiteConfigs, setWebsiteConfigs] = useState<any>({
+  const [isSavingWebsite, setIsSavingWebsite] = useState(false);
+  const [financialData, setFinancialData] = useState<any>(null);
+
