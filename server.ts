@@ -6290,7 +6290,62 @@ app.use('/api/admin', requireAdminAuth);
             descricao: `Inscrição em Evento: ${i.nome_aluno || i.nome_responsavel || 'N/A'}`,
             detalhe: `${(i as any).eventos?.titulo || ''} • R$ ${Number(i.valor_pago || 0).toFixed(2)}`,
             data: i.created_at
-app.get("/api/admin/financial-report", async (req, res) => {
+          });
+        });
+      }
+
+      const { data: feedCadastros } = await supabase.from('responsaveis')
+        .select('id, created_at, nome_completo, email')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (feedCadastros) {
+        feedCadastros.forEach((c: any) => {
+          feed.push({
+            id: `cad_${c.id}`,
+            tipo: 'cadastro',
+            descricao: `Novo Cadastro: ${c.nome_completo || 'N/A'}`,
+            detalhe: c.email || '',
+            data: c.created_at
+          });
+        });
+      }
+
+      feed.sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
+
+      // Chart data populated during fetchAllAndSum
+
+      novasMatriculasMes?.forEach(m => {
+        if (m.created_at) {
+          const d = new Date(m.created_at);
+          const dateStr = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth()+1).toString().padStart(2, '0')}`;
+          if (chartDataMap[dateStr]) chartDataMap[dateStr].matriculas += 1;
+        }
+      });
+
+      const chartData = Object.values(chartDataMap);
+
+      res.json({
+        metrics: {
+          alunosAtivos: alunosAtivosCount,
+          matriculasAtivas: matriculasAtivasCount,
+          inadimplentes: inadimplentesCount,
+          receitaMes,
+          matriculasMes: matriculasMesCount,
+          cancelamentosMes: cancelamentosMesCount,
+          transferidosMes: transferidosMesCount
+        },
+        charts: chartData,
+        feed: feed.slice(0, 50)
+      });
+
+    } catch (error: any) {
+      console.error('Erro ao buscar dados do dashboard:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/admin/financial-report", async (req, res) => {
     try {
       console.log("Fetching financial report data...");
 
@@ -6301,7 +6356,7 @@ app.get("/api/admin/financial-report", async (req, res) => {
       const startDate = (req.query.startDate as string) || defaultStart;
       const endDate = (req.query.endDate as string) || defaultEnd;
 
-      const fetchFiltered = async (table: string, selectFields = '*') => {
+      const fetchFiltered = async (table: string, selectFields = '*'): Promise<any[]> => {
         const { data } = await supabase.from(table).select(selectFields)
           .gte('created_at', startDate).lte('created_at', endDate);
         return data || [];
