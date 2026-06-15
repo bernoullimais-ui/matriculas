@@ -830,18 +830,15 @@ export function FinanceTab() {
                       titleRealizada = "Receita Eventos (Paga)";
                       transactionLabel = "Inscrições Pagas";
                     } else if (finSecondaryTab === 'consolidado') {
-                      const isWixOrPagSeguro = (p: any) => (p.provedor_pagamento || '').toLowerCase().includes('wix') || (p.provedor_pagamento || '').toLowerCase().includes('pagseguro');
+                      const lojaConsolidado = filteredLoja.filter(p => p.status === 'pago').reduce((acc, p) => acc + Number(p.total || 0), 0);
+                      const lojaConsolidadoCount = filteredLoja.filter(p => p.status === 'pago').length;
                       
-                      const lojaConsolidado = filteredLoja.filter(p => p.status === 'pago' && !isWixOrPagSeguro(p)).reduce((acc, p) => acc + Number(p.total || 0), 0);
-                      const lojaConsolidadoCount = filteredLoja.filter(p => p.status === 'pago' && !isWixOrPagSeguro(p)).length;
-                      
-                      const eventosConsolidado = filteredEventos.filter(i => isEventoPago(i) && !isWixOrPagSeguro(i)).reduce((acc, i) => acc + Number(i.valor_pago || 0), 0);
-                      const eventosConsolidadoCount = filteredEventos.filter(i => isEventoPago(i) && !isWixOrPagSeguro(i)).length;
+                      const eventosConsolidado = filteredEventos.filter(i => isEventoPago(i)).reduce((acc, i) => acc + Number(i.valor_pago || 0), 0);
+                      const eventosConsolidadoCount = filteredEventos.filter(i => isEventoPago(i)).length;
 
                       const totalConsolidado = computedFinance.liquidoTotal + lojaConsolidado + eventosConsolidado;
                       const totalPaidCount = computedFinance.paidTransactionsCount + lojaConsolidadoCount + eventosConsolidadoCount;
-                      // totalProcessedCount includes all to show total attempts, but for efficiency we might skew. We keep it simple.
-                      const totalProcessedCount = computedFinance.totalProcessedCount + filteredLoja.filter(p => !isWixOrPagSeguro(p)).length + filteredEventos.filter(i => !isWixOrPagSeguro(i)).length;
+                      const totalProcessedCount = computedFinance.totalProcessedCount + filteredLoja.length + filteredEventos.length;
                       
                       displayGross = formatCurrency(totalConsolidado);
                       displayPaidCount = totalPaidCount;
