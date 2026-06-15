@@ -6510,7 +6510,7 @@ app.use('/api/admin', requireAdminAuth);
         return allData;
       };
 
-      // Fetch only payments in the requested date range; fetch lookup tables fully (small size)
+      // Fetch all payments (to ensure CSV imported records aren't missed by created_at)
       const [
         pagamentos,
         pagamentosWix,
@@ -6519,9 +6519,9 @@ app.use('/api/admin', requireAdminAuth);
         alunos,
         rawMatriculas
       ] = await Promise.all([
-        fetchFiltered('pagamentos', '*'),
-        fetchFiltered('pagamentos_wix', '*'),
-        fetchFiltered('pagamentos_pagseguro', '*'),
+        fetchAllFromSupabase('pagamentos', '*'),
+        fetchAllFromSupabase('pagamentos_wix', '*'),
+        fetchAllFromSupabase('pagamentos_pagseguro', '*'),
         fetchAllFromSupabase('responsaveis', 'id, nome_completo, email'),
         fetchAllFromSupabase('alunos', 'id, nome_completo, responsavel_id, turma_escolar, email'),
         fetchAllFromSupabase('matriculas', 'id, aluno_id, turma_id, status, plano, unidade, turma, data_matricula, data_cancelamento')
@@ -6559,9 +6559,9 @@ app.use('/api/admin', requireAdminAuth);
       pagamentosWix.forEach(w => {
         let dateStr = '';
         if (w.data_pagamento_gmt_03) {
-          dateStr = w.data_pagamento_gmt_03.substring(0, 7);
+          dateStr = w.data_pagamento_gmt_03; // Usa a string exata (inclui hora/minuto)
         } else if (typeof w.created_at === 'string') {
-          dateStr = w.created_at.substring(0, 7);
+          dateStr = w.created_at;
         }
         
         const sig = `${w.aluno_id || w.cobranca_email}-${dateStr}-${w.valor}-${w.produto_nome || ''}`;
