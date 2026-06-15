@@ -12,6 +12,8 @@ import EventoDetalhesPage from './pages/Eventos/Evento.tsx';
 import UnifiedAdminPage from './pages/Admin/UnifiedAdmin.tsx';
 import PagamentoManual from './pages/PagamentoManual.tsx';
 import AjudaPage from './pages/Ajuda/index.tsx';
+import PortalLogin from './pages/PortalResponsavel/Login.tsx';
+import PortalDashboard from './pages/PortalResponsavel/Dashboard.tsx';
 import FloatingWhatsAppButton from './components/FloatingWhatsAppButton.tsx';
 import './index.css';
 
@@ -83,6 +85,8 @@ function RootApp() {
         <Route path="/pagar/:id" element={<PagamentoManual />} />
         <Route path="/tutoriais" element={<AjudaPage />} />
         <Route path="/ajuda" element={<AjudaPage />} />
+        <Route path="/area-do-cliente" element={<PortalLogin />} />
+        <Route path="/area-do-cliente/painel" element={<PortalDashboard />} />
       </Routes>
       <FloatingWhatsAppButton />
     </BrowserRouter>

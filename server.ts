@@ -2858,6 +2858,43 @@ app.use('/api/admin', requireAdminAuth);
       res.status(500).send("Erro ao gerar contrato.");
     }
   });
+  app.get("/api/portal/history/:guardianId", async (req, res) => {
+    try {
+      const { guardianId } = req.params;
+      
+      // Get enrollments (matriculas)
+      const { data: matriculas } = await supabase
+        .from('matriculas')
+        .select('*, turmas(*)')
+        .eq('responsavel_id', guardianId);
+        
+      // Get payments history (pagamentos_wix and pagamentos_pagseguro and pagamentos)
+      const { data: payWix } = await supabase.from('pagamentos_wix').select('*').eq('responsavel_id', guardianId);
+      const { data: payPagSeguro } = await supabase.from('pagamentos_pagseguro').select('*').eq('responsavel_id', guardianId);
+      const { data: payManual } = await supabase.from('pagamentos').select('*').eq('responsavel_id', guardianId);
+      const { data: payMensalidades } = await supabase.from('mensalidades').select('*').eq('responsavel_id', guardianId);
+      
+      // Get events inscriptions
+      const { data: eventos } = await supabase.from('evento_inscricoes').select('*, eventos(*)').eq('responsavel_id', guardianId);
+
+      const allPayments = [
+        ...(payWix || []).map((p: any) => ({ ...p, provider: 'Wix', title: p.descricao || 'Pagamento Online', date: p.created_at, status: p.status_transacao })),
+        ...(payPagSeguro || []).map((p: any) => ({ ...p, provider: 'PagSeguro', title: 'Pagamento Online', date: p.created_at, status: p.status })),
+        ...(payManual || []).map((p: any) => ({ ...p, provider: 'Manual', title: 'Pagamento Manual', date: p.created_at, status: p.status })),
+        ...(payMensalidades || []).map((p: any) => ({ ...p, provider: 'Mensalidade', title: `Mensalidade ${p.mes}/${p.ano}`, date: p.created_at, status: p.status }))
+      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      res.json({
+        matriculas: matriculas || [],
+        pagamentos: allPayments,
+        eventos: eventos || []
+      });
+    } catch (err: any) {
+      console.error('Error fetching portal history:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
 
   app.get("/api/portal/documents/receipt/:paymentId", async (req, res) => {
     const { paymentId } = req.params;
