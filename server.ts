@@ -5539,7 +5539,8 @@ app.use('/api/admin', requireAdminAuth);
           turma: newTurma,
           turma_id: classData?.id || null,
           status: 'ativo',
-          pagarme_subscription_id: oldEnrollment.pagarme_subscription_id
+          pagarme_subscription_id: oldEnrollment.pagarme_subscription_id,
+          plano: oldEnrollment.plano
         }]);
 
       if (insertError) throw insertError;
