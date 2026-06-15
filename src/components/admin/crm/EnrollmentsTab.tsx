@@ -75,18 +75,9 @@ export default function EnrollmentsTab() {
     cancelPaymentModal, setCancelPaymentModal 
   } = useModalStore();
 
-  const filteredEnrollments = React.useMemo(() => {
+  const flattenedEnrollments = React.useMemo(() => {
     if (!Array.isArray(enrollments)) return [];
-    if (!enrollmentSearch) return enrollments;
-    const s = enrollmentSearch.toLowerCase();
-    return enrollments.filter((e: any) => 
-      e.nome_completo?.toLowerCase().includes(s) ||
-      e.aluno?.nome_completo?.toLowerCase().includes(s)
-    );
-  }, [enrollments, enrollmentSearch]);
-
-  const filteredFlattenedEnrollments = React.useMemo(() => {
-    return filteredEnrollments.flatMap((responsavel: any) => 
+    return enrollments.flatMap((responsavel: any) => 
       (responsavel.alunos || []).flatMap((aluno: any) => 
         (aluno.matriculas || []).map((matricula: any) => ({
           ...responsavel,
@@ -97,7 +88,16 @@ export default function EnrollmentsTab() {
         }))
       )
     ).sort((a: any, b: any) => new Date(b.matricula.data_matricula).getTime() - new Date(a.matricula.data_matricula).getTime());
-  }, [filteredEnrollments]);
+  }, [enrollments]);
+
+  const filteredFlattenedEnrollments = React.useMemo(() => {
+    if (!enrollmentSearch) return flattenedEnrollments;
+    const s = enrollmentSearch.toLowerCase();
+    return flattenedEnrollments.filter((e: any) => 
+      e.nome_completo?.toLowerCase().includes(s) ||
+      e.aluno?.nome_completo?.toLowerCase().includes(s)
+    );
+  }, [flattenedEnrollments, enrollmentSearch]);
 
   const getPaymentMethodLabel = (method: string) => {
     if (!method) return 'N/A';
