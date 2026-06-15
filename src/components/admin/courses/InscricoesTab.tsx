@@ -127,8 +127,8 @@ export function InscricoesTab() {
       const evento = eventos.find((e: any) => e.id === ins.evento_id)?.titulo || 'Desconhecido';
       const aluno = ins.nome_aluno || 'N/A';
       const responsavel = ins.nome_responsavel || 'N/A';
-      const telefone = ins.whatsapp_responsavel || ins.telefone_responsavel || ins.telefone_contato || ins.telefone || 'N/A';
-      const email = ins.email_responsavel || ins.email_contato || ins.email || 'N/A';
+      const telefone = ins.whatsapp_responsavel || ins.telefone_responsavel || ins.telefone_contato || ins.telefone || ins.respostas_personalizadas?.['WhatsApp do Responsável'] || ins.respostas_personalizadas?.['Telefone'] || ins.respostas_personalizadas?.['WhatsApp'] || 'N/A';
+      const email = ins.email_responsavel || ins.email_contato || ins.email || ins.respostas_personalizadas?.['Email'] || ins.respostas_personalizadas?.['E-mail'] || 'N/A';
       const categoria = ins.categoria || 'N/A';
       const valor = ins.valor_pago ? Number(ins.valor_pago).toFixed(2) : '0.00';
       const status = ins.status || 'N/A';
