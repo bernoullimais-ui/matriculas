@@ -6105,22 +6105,11 @@ app.use('/api/admin', requireAdminAuth);
           const limitEndISO = limitEnd.toISOString();
 
           const [pagamentos, pagamentosWix, pagamentosPagSeguro, eventos, loja] = await Promise.all([
-            supabase.from('pagamentos').select('valor, status, data_vencimento, created_at')
-              .or(`data_vencimento.gte.${limitStartISO},and(data_vencimento.is.null,created_at.gte.${limitStartISO})`)
-              .lte('created_at', limitEndISO)
-              .then(r => r.data || []),
-            supabase.from('pagamentos_wix').select('valor, status_transacao, provedor_pagamento, data_pagamento_gmt_03, created_at, aluno_id, cobranca_email, produto_nome')
-              .gte('created_at', limitStartISO).lte('created_at', limitEndISO)
-              .then(r => r.data || []),
-            supabase.from('pagamentos_pagseguro').select('valor_bruto, status, data_transacao, created_at')
-              .gte('created_at', limitStartISO).lte('created_at', limitEndISO)
-              .then(r => r.data || []),
-            supabase.from('evento_inscricoes').select('valor_pago, status, taxa_paga, provedor_pagamento, created_at')
-              .gte('created_at', limitStartISO).lte('created_at', limitEndISO)
-              .then(r => r.data || []),
-            supabase.from('loja_pedidos').select('total, status, provedor_pagamento, created_at')
-              .gte('created_at', limitStartISO).lte('created_at', limitEndISO)
-              .then(r => r.data || [])
+            fetchAllFromSupabase('pagamentos', 'valor, status, data_vencimento, created_at'),
+            fetchAllFromSupabase('pagamentos_wix', 'valor, status_transacao, provedor_pagamento, data_pagamento_gmt_03, created_at, aluno_id, cobranca_email, produto_nome'),
+            fetchAllFromSupabase('pagamentos_pagseguro', 'valor_bruto, status, data_transacao, created_at'),
+            fetchAllFromSupabase('evento_inscricoes', 'valor_pago, status, taxa_paga, provedor_pagamento, created_at'),
+            fetchAllFromSupabase('loja_pedidos', 'total, status, provedor_pagamento, created_at')
           ]);
 
           pagamentos.forEach((p: any) => {
@@ -6140,9 +6129,9 @@ app.use('/api/admin', requireAdminAuth);
           pagamentosWix.forEach((w: any) => {
             let dateStr = '';
             if (w.data_pagamento_gmt_03) {
-              dateStr = w.data_pagamento_gmt_03.substring(0, 7);
+              dateStr = w.data_pagamento_gmt_03; // Exact string to prevent merging different payments on same day/month
             } else if (typeof w.created_at === 'string') {
-              dateStr = w.created_at.substring(0, 7);
+              dateStr = w.created_at;
             }
             const sig = `${w.aluno_id || w.cobranca_email}-${dateStr}-${w.valor}-${w.produto_nome || ''}`;
             const existing = uniqueWixMap.get(sig);
@@ -6198,8 +6187,7 @@ app.use('/api/admin', requireAdminAuth);
           });
 
           eventos.forEach((i: any) => {
-            const isWixOrPagSeguro = (i.provedor_pagamento || '').toLowerCase().includes('wix') || (i.provedor_pagamento || '').toLowerCase().includes('pagseguro');
-            if (!isWixOrPagSeguro && (i.taxa_paga || (i.status || '').toLowerCase() === 'confirmada' || i.status === 'pago')) {
+            if (i.taxa_paga || (i.status || '').toLowerCase() === 'confirmada' || i.status === 'pago') {
               const d = new Date(i.created_at);
               if (d >= limitStart && d <= limitEnd) {
                 const val = Number(i.valor_pago || 0);
@@ -6212,8 +6200,7 @@ app.use('/api/admin', requireAdminAuth);
           });
 
           loja.forEach((p: any) => {
-            const isWixOrPagSeguro = (p.provedor_pagamento || '').toLowerCase().includes('wix') || (p.provedor_pagamento || '').toLowerCase().includes('pagseguro');
-            if (!isWixOrPagSeguro && p.status === 'pago') {
+            if (p.status === 'pago') {
               const d = new Date(p.created_at);
               if (d >= limitStart && d <= limitEnd) {
                 const val = Number(p.total || 0);
