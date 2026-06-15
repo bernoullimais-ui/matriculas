@@ -336,8 +336,8 @@ export default function EnrollmentsTab() {
       
       toast.success('Acesso concedido', { id: toastId });
       
-      // Redirect to the student portal page
-      window.location.href = '/';
+      // Redirect to the student portal page in a new tab
+      window.open('https://www.sportforkids.com.br/portal', '_blank');
     } catch (error) {
       console.error('Error impersonating:', error);
       toast.error('Erro na requisição');
