@@ -397,6 +397,7 @@ export default function EnrollmentsTab() {
                             const payment = e.pagamentos?.find((p: any) => p.matricula_id === e.matricula.id);
                             const methodLabel = payment ? getPaymentMethodLabel(payment.metodo_pagamento) : 'N/A';
                             const paymentStatus = payment?.status?.toLowerCase() || 'pendente';
+                            const matriculaStatus = (e.matricula.status || '').toLowerCase();
                             
                             return (
                               <tr key={e.matricula.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50 transition-colors">
@@ -439,11 +440,11 @@ export default function EnrollmentsTab() {
                                     {e.matricula.unidade}
                                   </div>
                                   <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
-                                    e.matricula.status === 'ativo'
+                                    matriculaStatus === 'ativo'
                                       ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                                      : e.matricula.status === 'pendente'
+                                      : matriculaStatus === 'pendente'
                                         ? 'bg-amber-50 text-amber-700 border border-amber-100'
-                                        : e.matricula.status === 'trancado'
+                                        : matriculaStatus === 'trancado'
                                           ? 'bg-orange-50 text-orange-700 border border-orange-100'
                                           : 'bg-rose-50 text-rose-700 border border-rose-100'
                                   }`}>
@@ -476,7 +477,7 @@ export default function EnrollmentsTab() {
                                   {sessionStorage.getItem('admin_role') === 'master' && (
                                     <>
                                       <button 
-                                        disabled={e.matricula.status !== 'ativo' && e.matricula.status !== 'pendente'}
+                                        disabled={matriculaStatus !== 'ativo' && matriculaStatus !== 'pendente'}
                                         onClick={() => setFreezeModal({ isOpen: true, enrollmentId: e.matricula.id, startDate: getTodayDateString(), endDate: '' })}
                                         className="p-1 text-amber-500 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
                                         title="Suspender Matrícula"
@@ -484,7 +485,7 @@ export default function EnrollmentsTab() {
                                         <Lock size={16} />
                                       </button>
                                       <button 
-                                        disabled={e.matricula.status !== 'ativo' && e.matricula.status !== 'pendente'}
+                                        disabled={matriculaStatus !== 'ativo' && matriculaStatus !== 'pendente'}
                                         onClick={() => setTransferModal({ isOpen: true, enrollmentId: e.matricula.id, targetTurma: '', targetUnidade: '' })}
                                         className="p-1 text-blue-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
                                         title="Transferir Turma"
@@ -492,7 +493,7 @@ export default function EnrollmentsTab() {
                                         <Truck size={16} />
                                       </button>
                                       <button 
-                                        disabled={e.matricula.status !== 'ativo' && e.matricula.status !== 'pendente'}
+                                        disabled={matriculaStatus !== 'ativo' && matriculaStatus !== 'pendente'}
                                         onClick={() => setCancelModal({ isOpen: true, enrollmentId: e.matricula.id, reason: '', date: getTodayDateString() })}
                                         className="p-1 text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
                                         title="Cancelar Matrícula"
