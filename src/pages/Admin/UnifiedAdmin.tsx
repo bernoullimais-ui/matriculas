@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-  LayoutDashboard, Users, ShoppingBag, Calendar, DollarSign, Building2, Settings, LogOut, ChevronDown, ChevronRight, Menu, X, UserCog, ClipboardList, Clock, MessageSquare, Package, Tags, Ticket, Receipt, FileText, Calculator, BarChart3
+  LayoutDashboard, Users, ShoppingBag, Calendar, DollarSign, Building2, Settings, LogOut, ChevronDown, ChevronRight, Menu, X, UserCog, ClipboardList, Clock, MessageSquare, Package, Tags, Ticket, Receipt, FileText, Calculator, BarChart3, Bell
 } from 'lucide-react';
 
 import { useAdminStore } from '../../stores/adminStore';
@@ -40,7 +40,43 @@ export default function UnifiedAdmin() {
     b2b: false
   });
   
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (isLogged) {
+      const token = sessionStorage.getItem('admin_token');
+      fetch('/api/admin/notifications', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.notifications) {
+            setNotifications(data.notifications);
+            setUnreadCount(data.notifications.filter((n: any) => !n.is_read).length);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [isLogged]);
+
+  const markAllAsRead = async () => {
+    try {
+      const token = sessionStorage.getItem('admin_token');
+      await fetch('/api/admin/notifications/read', { 
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      setNotifications(notifications.map(n => ({ ...n, is_read: true })));
+      setUnreadCount(0);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -274,16 +310,59 @@ export default function UnifiedAdmin() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50 relative">
-        <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between shrink-0 lg:hidden z-30">
+        <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between shrink-0 z-30 relative">
           <div className="flex items-center gap-3">
-            <button onClick={() => setSidebarOpen(true)} className="p-2 -ml-2 text-slate-500 hover:bg-slate-50 rounded-xl">
+            <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 -ml-2 text-slate-500 hover:bg-slate-50 rounded-xl">
               <Menu size={24} />
             </button>
-            <span className="font-bold text-slate-800">Painel SFK</span>
+            <span className="font-bold text-slate-800 lg:hidden">Painel SFK</span>
+          </div>
+          
+          <div className="flex items-center gap-4 relative">
+            <button 
+              onClick={() => setShowNotifications(!showNotifications)}
+              className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors relative"
+            >
+              <Bell size={20} />
+              {unreadCount > 0 && (
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full ring-2 ring-white"></span>
+              )}
+            </button>
+
+            {showNotifications && (
+              <div className="absolute top-12 right-0 w-80 bg-white border border-slate-100 shadow-xl rounded-2xl overflow-hidden z-50">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50/50">
+                  <h3 className="font-bold text-slate-800 text-sm">Notificações</h3>
+                  {unreadCount > 0 && (
+                    <button onClick={markAllAsRead} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 uppercase tracking-wider">
+                      Marcar Lidas
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-96 overflow-y-auto">
+                  {notifications.length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 text-xs font-medium">Nenhuma notificação recente.</div>
+                  ) : (
+                    notifications.map((n: any) => (
+                      <div key={n.id} className={`p-4 border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors ${!n.is_read ? 'bg-indigo-50/30' : ''}`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${!n.is_read ? 'bg-indigo-500' : 'bg-slate-300'}`}></span>
+                          <span className="text-xs font-bold text-slate-700">{n.title}</span>
+                          <span className="text-[10px] text-slate-400 ml-auto font-medium">
+                            {new Date(n.created_at).toLocaleDateString('pt-BR')}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 leading-relaxed pl-4">{n.message}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 lg:p-8">
+        <div className="flex-1 overflow-y-auto p-4 lg:p-8 relative">
           <div className="max-w-[1600px] mx-auto">
             {tab === 'dashboard' && <AdminDashboard />}
             {tab === 'analytics' && <AnalyticsTab />}

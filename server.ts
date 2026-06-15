@@ -1413,6 +1413,86 @@ app.use('/api/admin', requireAdminAuth);
       res.status(500).json({ error: error.message });
     }
   });
+  app.get("/api/admin/notifications", async (req, res) => {
+    try {
+      const adminId = 'admin';
+      
+      const { data: readData, error: readError } = await supabase.from('admin_notifications_read').select('last_read_at').eq('admin_id', adminId).maybeSingle();
+      const lastReadAt = readData ? new Date(readData.last_read_at) : new Date((global as any).adminLastReadAt || 0);
+
+      const { data: matriculas } = await supabase.from('matriculas')
+        .select('id, created_at, nome_aluno')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      const { data: pagamentosWix } = await supabase.from('pagamentos_wix')
+        .select('id, created_at, status_transacao, valor, cobranca_email, aluno_id')
+        .in('status_transacao', ['DECLINED', 'FAILED', 'CHARGEBACK', 'falhou', 'recusado'])
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      const { data: pagamentosPagSeguro } = await supabase.from('pagamentos_pagseguro')
+        .select('id, created_at, status, valor, email, aluno_id')
+        .in('status', ['DECLINED', 'FAILED', 'CHARGEBACK', 'falhou', 'recusado', 'CANCELED'])
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      let notifications: any[] = [];
+      if (matriculas) {
+        matriculas.forEach(m => notifications.push({
+          id: `mat_${m.id}`,
+          type: 'matricula',
+          title: 'Nova Matrícula',
+          message: `O aluno ${m.nome_aluno || 'N/A'} realizou uma nova matrícula.`,
+          created_at: m.created_at,
+          is_read: new Date(m.created_at) <= lastReadAt
+        }));
+      }
+      
+      const pushFailedPayments = (arr: any[], provider: string) => {
+        if (!arr) return;
+        arr.forEach(p => notifications.push({
+          id: `pay_${p.id}`,
+          type: 'falha_pagamento',
+          title: 'Falha de Pagamento',
+          message: `Pagamento recusado (${provider}): R$ ${Number(p.valor || 0).toFixed(2)}. Email/Aluno: ${p.cobranca_email || p.email || p.aluno_id || 'N/A'}`,
+          created_at: p.created_at,
+          is_read: new Date(p.created_at) <= lastReadAt
+        }));
+      };
+
+      pushFailedPayments(pagamentosWix || [], 'Wix');
+      pushFailedPayments(pagamentosPagSeguro || [], 'PagSeguro');
+
+      notifications.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      
+      notifications = notifications.slice(0, 30);
+
+      res.json({ notifications, lastReadAt });
+    } catch (error: any) {
+      console.error('Erro ao buscar notificações:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/notifications/read", async (req, res) => {
+    try {
+      const adminId = 'admin';
+      const now = new Date().toISOString();
+      const { error } = await supabase.from('admin_notifications_read').upsert({ admin_id: adminId, last_read_at: now });
+      
+      if (error && error.code === '42P01') {
+        // Fallback to memory if table doesn't exist yet
+        (global as any).adminLastReadAt = now;
+      }
+      
+      res.json({ success: true, last_read_at: now });
+    } catch (error: any) {
+      console.error('Erro ao ler notificações:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
 
   app.get("/api/admin/website-configs", async (req, res) => {
     try {

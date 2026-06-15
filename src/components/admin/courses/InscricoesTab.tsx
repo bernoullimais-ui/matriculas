@@ -118,7 +118,34 @@ export function InscricoesTab() {
       toast.error('Erro de rede.');
     }
   };
+  const handleExportCSV = () => {
+    let csvContent = "\ufeff"; // BOM for UTF-8 Excel compatibility
+    csvContent += "Data;Evento;Aluno;Responsável;Telefone;Email;Valor Pago (R$);Status;Presença\n";
+    
+    filteredInscricoes.forEach((ins: any) => {
+      const data = ins.created_at ? formatDateTime(ins.created_at) : 'N/A';
+      const evento = eventos.find((e: any) => e.id === ins.evento_id)?.titulo || 'Desconhecido';
+      const aluno = ins.nome_aluno || 'N/A';
+      const responsavel = ins.nome_responsavel || 'N/A';
+      const telefone = ins.telefone_contato || ins.telefone || 'N/A';
+      const email = ins.email_contato || ins.email || 'N/A';
+      const valor = ins.valor_pago ? Number(ins.valor_pago).toFixed(2) : '0.00';
+      const status = ins.status || 'N/A';
+      const presenca = ins.checkin ? 'Presente' : 'Ausente';
 
+      csvContent += `"${data}";"${evento}";"${aluno}";"${responsavel}";"${telefone}";"${email}";${valor};"${status}";"${presenca}"\n`;
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    const filename = `inscricoes_eventos_${new Date().toISOString().split('T')[0]}.csv`;
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   return (
     <>
@@ -225,6 +252,13 @@ export function InscricoesTab() {
                     </select>
                     <div className="flex items-center gap-4">
                       <span className="text-xs text-slate-500 font-semibold">{filteredInscricoes.length} inscrições encontradas</span>
+                      <button
+                        onClick={handleExportCSV}
+                        className="px-3 py-1.5 bg-indigo-50 text-indigo-600 font-bold rounded-lg hover:bg-indigo-100 transition-colors text-xs flex items-center gap-1"
+                      >
+                        <RefreshCw size={14} />
+                        Exportar CSV
+                      </button>
                       <button
                         onClick={() => setShowBulkWhatsAppModal(true)}
                         className="px-3 py-1.5 bg-emerald-50 text-emerald-600 font-bold rounded-lg hover:bg-emerald-100 transition-colors text-xs flex items-center gap-1"
