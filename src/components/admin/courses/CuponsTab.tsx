@@ -175,6 +175,7 @@ export function CuponsTab() {
               <td className="px-4 py-3 text-xs">
                 <div>Global: <span className="font-semibold">{c.limite_total_uso || c.limite_uso || '∞'}</span></div>
                 <div>Por cliente: <span className="font-semibold">{c.limite_por_usuario || '∞'}</span></div>
+                <div className="mt-1 pt-1 border-t border-slate-100 text-indigo-600">Usados: <span className="font-bold">{c.cupom_usos?.length || 0} vez(es)</span></div>
               </td>
               <td className="px-4 py-3 text-xs">
                 {isCurso && (

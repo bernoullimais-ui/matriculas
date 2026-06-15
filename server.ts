@@ -5851,7 +5851,7 @@ app.use('/api/admin', requireAdminAuth);
     try {
       const { data, error } = await supabase
         .from('cupons')
-        .select('*')
+        .select('*, cupom_usos(id)')
         .order('created_at', { ascending: false });
       if (error) throw error;
       res.json(data);
