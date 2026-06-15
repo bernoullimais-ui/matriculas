@@ -10008,6 +10008,7 @@ app.post('/api/webhooks/wix', async (req, res) => {
             ...respostas,
             "Data de Nascimento do Aluno": aluno_data_nascimento,
             "WhatsApp do Responsável": responsavel_whatsapp,
+            "CPF do Responsável": cpf_responsavel,
             "metodo_pagamento": metodo_pagamento === 'pix' ? 'PIX' : 'Cartão de Crédito'
           },
           valor_pago: finalTaxa,
