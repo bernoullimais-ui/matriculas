@@ -289,9 +289,59 @@ export default function EnrollmentsTab() {
   };
 
   const handleImpersonate = async (cpf: string) => {
-    if (!cpf) return toast.error('Responsável não possui CPF.');
-    toast.success(`Acessando como ${cpf}... (simulação)`);
-    console.log(`Impersonating ${cpf}`);
+    if (!cpf) return toast.error('Responsável não possui CPF/ID válido.');
+    
+    try {
+      const toastId = toast.loading('Acessando painel...');
+      const adminToken = sessionStorage.getItem('admin_token');
+      
+      const response = await fetch('/api/admin/impersonate', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminToken}`
+        },
+        body: JSON.stringify({ id: cpf }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        toast.error(data.error || 'Erro ao acessar painel', { id: toastId });
+        return;
+      }
+      
+      const studentsData = (data.alunos || []).map((a: any) => ({
+        id: a.aluno_id || a.id,
+        enrollmentId: a.id,
+        nome_completo: a.nome_completo,
+        serie_ano: a.serie_ano,
+        data_nascimento: a.data_nascimento,
+        turma: a.turma,
+        unidade: a.unidade,
+        status: a.status,
+        data_matricula: a.data_matricula,
+        pagarme_subscription_id: a.pagarme_subscription_id,
+        data_cancelamento: a.data_cancelamento,
+        horario: a.horario
+      }));
+      
+      localStorage.setItem('guardian', JSON.stringify({ ...data, students: studentsData }));
+      localStorage.setItem('admin_impersonating', 'true');
+      if (data.isReadOnly) {
+        localStorage.setItem('admin_read_only', 'true');
+      } else {
+        localStorage.removeItem('admin_read_only');
+      }
+      
+      toast.success('Acesso concedido', { id: toastId });
+      
+      // Redirect to the student portal page
+      window.location.href = '/';
+    } catch (error) {
+      console.error('Error impersonating:', error);
+      toast.error('Erro na requisição');
+    }
   };
 
   const confirmCancelPayment = async () => {
