@@ -4,6 +4,7 @@ import { Calendar, MapPin, ChevronLeft, Trophy, Users, Clock, CreditCard, ArrowR
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { usePageAnalytics } from '../../hooks/usePageAnalytics';
+import LoginModal from '../../components/LoginModal';
 
 interface Evento {
   id: string;
@@ -61,6 +62,7 @@ export default function EventoDetalhesPage() {
   }, [evento]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [guardian, setGuardian] = useState<any>(null);
   const [alunoSelecionado, setAlunoSelecionado] = useState<string>('');
   const [categoriaSelecionada, setCategoriaSelecionada] = useState<string>('');
@@ -96,15 +98,64 @@ export default function EventoDetalhesPage() {
   const [installmentSettings, setInstallmentSettings] = useState({ max_parcelas: 1, min_valor: 50.00 });
   const [selectedInstallment, setSelectedInstallment] = useState(1);
 
+  const handleLoginSuccess = (data: any, registeredUnit?: string) => {
+    const guardianData = data.guardian || data;
+    localStorage.setItem('guardian', JSON.stringify(guardianData));
+    
+    if (guardianData.students && (!guardianData.alunos || guardianData.alunos.length === 0)) {
+      guardianData.alunos = guardianData.students;
+    }
+    
+    setGuardian(guardianData);
+    setNomeResponsavel(guardianData.nome_completo || '');
+    setResponsavelWhatsapp(guardianData.celular || guardianData.telefone || '');
+    setResponsavelCpf(guardianData.cpf || '');
+    setIsLoginModalOpen(false);
+    
+    // Also fetch updated alunos to be safe
+    if (guardianData.id) {
+      fetch(`/api/guardian/${guardianData.id}/alunos`)
+        .then(res => res.json())
+        .then(resData => {
+          if (resData.alunos) {
+            const updated = { ...guardianData, alunos: resData.alunos };
+            setGuardian(updated);
+            localStorage.setItem('guardian', JSON.stringify(updated));
+          }
+        })
+        .catch(err => console.error('Erro ao atualizar alunos:', err));
+    }
+  };
+
   useEffect(() => {
     const stored = localStorage.getItem('guardian');
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
+        
+        // Tratar caso de impersonation (admin logando como pai, onde a chave pode ser 'students')
+        if (parsed.students && (!parsed.alunos || parsed.alunos.length === 0)) {
+          parsed.alunos = parsed.students;
+        }
+        
         setGuardian(parsed);
         setNomeResponsavel(parsed.nome_completo || '');
         setResponsavelWhatsapp(parsed.celular || parsed.telefone || '');
         setResponsavelCpf(parsed.cpf || '');
+        
+        // Refresh alunos list to avoid stale localStorage data
+        if (parsed.id) {
+          fetch(`/api/guardian/${parsed.id}/alunos`)
+            .then(res => res.json())
+            .then(data => {
+              if (data.alunos) {
+                const updated = { ...parsed, alunos: data.alunos };
+                setGuardian(updated);
+                localStorage.setItem('guardian', JSON.stringify(updated));
+              }
+            })
+            .catch(err => console.error('Erro ao atualizar alunos:', err));
+        }
       } catch (e) {
         console.error(e);
       }
@@ -451,7 +502,7 @@ export default function EventoDetalhesPage() {
                   Faça login no Portal dos Responsáveis para se inscrever neste evento.
                 </p>
                 <button
-                  onClick={() => navigate('/')}
+                  onClick={() => setIsLoginModalOpen(true)}
                   className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-sm transition-all"
                 >
                   Ir para Login
@@ -933,6 +984,12 @@ export default function EventoDetalhesPage() {
           </div>
         )}
       </AnimatePresence>
+
+      <LoginModal 
+        isOpen={isLoginModalOpen} 
+        onClose={() => setIsLoginModalOpen(false)} 
+        onLoginSuccess={handleLoginSuccess}
+      />
     </div>
   );
 }

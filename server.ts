@@ -1262,12 +1262,30 @@ app.post('/api/admin/login', async (req, res) => {
 
     return res.json({ 
       token: data.session.access_token, 
+      refreshToken: data.session.refresh_token,
       role: resolvedRole,
       userName,
       userNivel
     });
   } catch (err) {
     return res.status(500).json({ error: 'Erro interno no login.' });
+  }
+});
+
+app.post('/api/admin/refresh', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) return res.status(400).json({ error: 'No refresh token provided' });
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data.session) {
+      return res.status(401).json({ error: 'Sessão expirada.' });
+    }
+    return res.json({
+      token: data.session.access_token,
+      refreshToken: data.session.refresh_token
+    });
+  } catch(e) {
+    return res.status(500).json({ error: 'Erro ao renovar token' });
   }
 });
 
@@ -2349,6 +2367,65 @@ app.use('/api/admin', requireAdminAuth);
       });
     } catch (error: any) {
       console.error("Error completing guardian profile:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/guardian/:id/alunos", async (req, res) => {
+    const { id } = req.params;
+    try {
+      const { data: students, error: sError } = await supabase
+        .from('alunos')
+        .select('*, matriculas(*)')
+        .eq('responsavel_id', id);
+
+      if (sError) throw sError;
+
+      const { data: turmasComp } = await supabase
+        .from('turmas')
+        .select('nome, dias_horarios');
+
+      const allTurmas = turmasComp || [];
+      const turmaScheduleMap = new Map();
+      allTurmas.forEach(t => {
+        if (t.nome && t.dias_horarios) {
+          const normalizedName = t.nome.trim().toLowerCase();
+          turmaScheduleMap.set(normalizedName, t.dias_horarios);
+        }
+      });
+
+      const flatAlunos: any[] = [];
+      students?.forEach((aluno: any) => {
+        if (aluno.matriculas && aluno.matriculas.length > 0) {
+          aluno.matriculas.forEach((mat: any) => {
+            const lookupName = (mat.turma || "").trim().toLowerCase();
+            flatAlunos.push({
+              ...aluno,
+              id: mat.id,
+              aluno_id: aluno.id,
+              turma: mat.turma,
+              unidade: mat.unidade,
+              status: mat.status,
+              data_cancelamento: mat.data_cancelamento,
+              data_matricula: mat.data_matricula,
+              pagarme_subscription_id: mat.pagarme_subscription_id,
+              horario: turmaScheduleMap.get(lookupName) || null,
+              matriculas: undefined
+            });
+          });
+        } else {
+          flatAlunos.push({
+            ...aluno,
+            aluno_id: aluno.id,
+            turma: null,
+            unidade: null
+          });
+        }
+      });
+
+      res.json({ alunos: flatAlunos });
+    } catch (error: any) {
+      console.error("Error fetching guardian alunos:", error);
       res.status(500).json({ error: error.message });
     }
   });

@@ -79,6 +79,14 @@ export default function UnifiedAdmin() {
 
   const navigate = useNavigate();
 
+  const handleLogout = () => {
+    sessionStorage.removeItem('admin_token');
+    sessionStorage.removeItem('admin_refresh_token');
+    sessionStorage.removeItem('admin_role');
+    setIsLogged(false);
+    navigate('/gestao');
+  };
+
   useEffect(() => {
     const token = sessionStorage.getItem('admin_token');
     if (token) {
@@ -86,6 +94,49 @@ export default function UnifiedAdmin() {
       loadData();
     }
   }, [loadData]);
+
+  useEffect(() => {
+    let dataInterval: NodeJS.Timeout;
+    let tokenInterval: NodeJS.Timeout;
+
+    if (isLogged) {
+      // Refresh data silently every 5 minutes
+      dataInterval = setInterval(() => {
+        loadData();
+      }, 5 * 60 * 1000);
+
+      // Refresh token silently every 30 minutes
+      tokenInterval = setInterval(async () => {
+        const refreshToken = sessionStorage.getItem('admin_refresh_token');
+        if (refreshToken) {
+          try {
+            const res = await fetch('/api/admin/refresh', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refreshToken })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              sessionStorage.setItem('admin_token', data.token);
+              if (data.refreshToken) {
+                sessionStorage.setItem('admin_refresh_token', data.refreshToken);
+              }
+            } else {
+              handleLogout();
+              toast.error('Sessão expirada. Faça login novamente.');
+            }
+          } catch (e) {
+            console.error('Erro ao renovar token:', e);
+          }
+        }
+      }, 30 * 60 * 1000);
+    }
+
+    return () => {
+      if (dataInterval) clearInterval(dataInterval);
+      if (tokenInterval) clearInterval(tokenInterval);
+    };
+  }, [isLogged, loadData]); // handleLogout not included to avoid infinite rerenders if not wrapped in useCallback, but it's safe since it's just a ref to the function.
 
   const [email, setEmail] = useState('');
 
@@ -101,6 +152,9 @@ export default function UnifiedAdmin() {
       if (res.ok) {
         const data = await res.json();
         sessionStorage.setItem('admin_token', data.token);
+        if (data.refreshToken) {
+          sessionStorage.setItem('admin_refresh_token', data.refreshToken);
+        }
         sessionStorage.setItem('admin_role', data.role);
         setIsLogged(true);
         loadData();
@@ -112,13 +166,6 @@ export default function UnifiedAdmin() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleLogout = () => {
-    sessionStorage.removeItem('admin_token');
-    sessionStorage.removeItem('admin_role');
-    setIsLogged(false);
-    navigate('/gestao');
   };
 
   const toggleMenu = (menu: keyof typeof menuOpen) => {
