@@ -62,6 +62,7 @@ const getFilteredTransferTurmas = (enrollment: any, targetUnidade: string, optio
 export default function EnrollmentsTab() {
   const { enrollments, options, loadData } = useAdminStore();
   const [enrollmentSearch, setEnrollmentSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('todos');
   const [loadingAction, setLoadingAction] = useState(false);
   
   const { 
@@ -91,13 +92,29 @@ export default function EnrollmentsTab() {
   }, [enrollments]);
 
   const filteredFlattenedEnrollments = React.useMemo(() => {
-    if (!enrollmentSearch) return flattenedEnrollments;
+    let result = flattenedEnrollments;
+    
+    if (statusFilter !== 'todos') {
+      result = result.filter((e: any) => {
+        const status = (e.matricula.status || '').toLowerCase();
+        if (statusFilter === 'ativos') return status === 'ativo';
+        if (statusFilter === 'cancelados') return status === 'cancelado';
+        if (statusFilter === 'pendentes') return status === 'pendente';
+        return true;
+      });
+    }
+
+    if (!enrollmentSearch) return result;
+    
     const s = enrollmentSearch.toLowerCase();
-    return flattenedEnrollments.filter((e: any) => 
+    return result.filter((e: any) => 
       e.nome_completo?.toLowerCase().includes(s) ||
-      e.aluno?.nome_completo?.toLowerCase().includes(s)
+      e.aluno?.nome_completo?.toLowerCase().includes(s) ||
+      e.matricula?.plano?.toLowerCase().includes(s) ||
+      e.matricula?.turma?.toLowerCase().includes(s) ||
+      e.matricula?.unidade?.toLowerCase().includes(s)
     );
-  }, [flattenedEnrollments, enrollmentSearch]);
+  }, [flattenedEnrollments, enrollmentSearch, statusFilter]);
 
   const getPaymentMethodLabel = (method: string) => {
     if (!method) return 'N/A';
@@ -371,11 +388,26 @@ export default function EnrollmentsTab() {
                   <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex gap-4 items-center">
                     <input 
                       type="text" 
-                      placeholder="Pesquisar por aluno ou responsável..." 
+                      placeholder="Pesquisar por aluno, responsável, turma, plano..." 
                       value={enrollmentSearch}
                       onChange={e => setEnrollmentSearch(e.target.value)}
                       className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                     />
+                    <div className="flex bg-slate-100 p-1 rounded-xl">
+                      {['todos', 'ativos', 'pendentes', 'cancelados'].map((sf) => (
+                        <button
+                          key={sf}
+                          onClick={() => setStatusFilter(sf)}
+                          className={`px-3 py-1.5 text-xs font-semibold rounded-lg capitalize transition-colors ${
+                            statusFilter === sf 
+                              ? 'bg-white text-indigo-700 shadow-sm' 
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          {sf}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
