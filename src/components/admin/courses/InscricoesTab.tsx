@@ -120,20 +120,21 @@ export function InscricoesTab() {
   };
   const handleExportCSV = () => {
     let csvContent = "\ufeff"; // BOM for UTF-8 Excel compatibility
-    csvContent += "Data;Evento;Aluno;Responsável;Telefone;Email;Valor Pago (R$);Status;Presença\n";
+    csvContent += "Data;Evento;Aluno;Responsável;Telefone;Email;Categoria;Valor Pago (R$);Status;Presença\n";
     
     filteredInscricoes.forEach((ins: any) => {
       const data = ins.created_at ? formatDateTime(ins.created_at) : 'N/A';
       const evento = eventos.find((e: any) => e.id === ins.evento_id)?.titulo || 'Desconhecido';
       const aluno = ins.nome_aluno || 'N/A';
       const responsavel = ins.nome_responsavel || 'N/A';
-      const telefone = ins.telefone_contato || ins.telefone || 'N/A';
-      const email = ins.email_contato || ins.email || 'N/A';
+      const telefone = ins.whatsapp_responsavel || ins.telefone_responsavel || ins.telefone_contato || ins.telefone || 'N/A';
+      const email = ins.email_responsavel || ins.email_contato || ins.email || 'N/A';
+      const categoria = ins.categoria || 'N/A';
       const valor = ins.valor_pago ? Number(ins.valor_pago).toFixed(2) : '0.00';
       const status = ins.status || 'N/A';
       const presenca = ins.checkin ? 'Presente' : 'Ausente';
 
-      csvContent += `"${data}";"${evento}";"${aluno}";"${responsavel}";"${telefone}";"${email}";${valor};"${status}";"${presenca}"\n`;
+      csvContent += `"${data}";"${evento}";"${aluno}";"${responsavel}";"${telefone}";"${email}";"${categoria}";${valor};"${status}";"${presenca}"\n`;
     });
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
