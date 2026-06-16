@@ -427,6 +427,7 @@ export function ProdutosTab() {
   const totalStockUnits = React.useMemo(() => stockItems.reduce((acc, curr) => acc + curr.stock, 0), [stockItems]);
   const lowStockCount = React.useMemo(() => stockItems.filter(item => item.stock < 5 && item.stock > 0).length, [stockItems]);
   const outOfStockCount = React.useMemo(() => stockItems.filter(item => item.stock === 0).length, [stockItems]);
+  const totalMovements = React.useMemo(() => estoqueHistorico.length, [estoqueHistorico]);
 
   return (
 
