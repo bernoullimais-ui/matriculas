@@ -7591,7 +7591,6 @@ app.use('/api/admin', requireAdminAuth);
           
           const isPaid = 
             event.type === 'order.paid' || 
-            event.type === 'charge.paid' || 
             event.type === 'invoice.paid';
             
           const isFailed = 
@@ -7651,7 +7650,6 @@ app.use('/api/admin', requireAdminAuth);
           
           const isPaid = 
             event.type === 'order.paid' || 
-            event.type === 'charge.paid' || 
             event.type === 'invoice.paid';
             
           const isFailed = 
@@ -7683,7 +7681,7 @@ app.use('/api/admin', requireAdminAuth);
                 try {
                   const targetPhone = currentInscricao.telefone_responsavel || (currentInscricao.respostas_personalizadas as any)?.['WhatsApp do Responsável'];
                   if (targetPhone) {
-                    const numInscricao = String(currentInscricao.id).padStart(6, '0');
+                    const numInscricao = currentInscricao.numero_inscricao || String(currentInscricao.id).padStart(6, '0');
                     const dataEv = new Date(currentInscricao.eventos.data_inicio);
                     const dataFormatada = dataEv.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: 'numeric', month: 'long', year: 'numeric' });
                     const horaFormatada = dataEv.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
