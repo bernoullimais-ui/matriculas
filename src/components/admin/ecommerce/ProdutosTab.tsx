@@ -78,6 +78,8 @@ export function ProdutosTab() {
   const [estoqueReportSection, setEstoqueReportSection] = useState<'niveis' | 'historico'>('niveis');
   const [estoqueFilterStatus, setEstoqueFilterStatus] = useState<'all' | 'low' | 'out'>('all');
   const [estoqueHistorico, setEstoqueHistorico] = useState<any[]>([]);
+  const [produtoEstoqueHistorico, setProdutoEstoqueHistorico] = useState<any[]>([]);
+  const [loadingProdutoEstoqueHistorico, setLoadingProdutoEstoqueHistorico] = useState(false);
   const [loadingEstoqueHistorico, setLoadingEstoqueHistorico] = useState(false);
   const [estoqueFilterProduto, setEstoqueFilterProduto] = useState<string>('all');
   const [estoqueFilterStartDate, setEstoqueFilterStartDate] = useState<string>('');
@@ -106,6 +108,31 @@ export function ProdutosTab() {
       fetchStockHistory();
     }
   }, [lojaProdutosSubTab]);
+
+  useEffect(() => {
+    if (isEditing && selectedId) {
+      fetchProductStockHistory(selectedId);
+    } else {
+      setProdutoEstoqueHistorico([]);
+    }
+  }, [isEditing, selectedId]);
+
+  const fetchProductStockHistory = async (id: string) => {
+    setLoadingProdutoEstoqueHistorico(true);
+    try {
+      const res = await fetch(`/api/admin/loja/produtos/${id}/estoque/historico`, {
+        headers: { 'Authorization': `Bearer ${sessionStorage.getItem('admin_token')}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setProdutoEstoqueHistorico(data || []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingProdutoEstoqueHistorico(false);
+    }
+  };
 
   const fetchStockHistory = async () => {
     setLoadingEstoqueHistorico(true);
@@ -218,7 +245,8 @@ export function ProdutosTab() {
         }
         setEntradaQuantidade(0);
         setEntradaData(new Date().toISOString().split('T')[0]);
-        fetchStockHistory(selectedId);
+        fetchProductStockHistory(selectedId);
+        fetchStockHistory();
         loadData();
       } else {
         toast.error(data.error || 'Erro ao registrar estoque.');
@@ -857,7 +885,12 @@ export function ProdutosTab() {
 
                     <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-4">
                       <h4 className="font-bold text-slate-800 text-sm">Histórico de Entrada de Estoque</h4>
-                      {estoqueHistorico.length > 0 ? (
+                      {loadingProdutoEstoqueHistorico ? (
+                        <div className="py-6 text-center flex items-center justify-center flex-col gap-2">
+                          <div className="w-5 h-5 border-2 border-slate-200 border-t-indigo-650 rounded-full animate-spin" />
+                          <span className="text-[10px] text-slate-400">Carregando histórico...</span>
+                        </div>
+                      ) : produtoEstoqueHistorico.length > 0 ? (
                         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden divide-y divide-slate-100">
                           <div className="flex items-center px-4 py-2 bg-slate-50 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                             <span className="w-32">Data</span>
@@ -865,7 +898,7 @@ export function ProdutosTab() {
                             <span className="w-24 text-center">Quantidade</span>
                             <span className="w-24 text-right">Motivo</span>
                           </div>
-                          {estoqueHistorico.map((item) => (
+                          {produtoEstoqueHistorico.map((item) => (
                             <div key={item.id} className="flex items-center px-4 py-3 text-xs text-slate-750">
                               <span className="w-32 font-medium text-slate-500">
                                 {formatDateTime(item.created_at)}
