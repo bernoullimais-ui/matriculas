@@ -185,7 +185,8 @@ export default function ProdutoPage({ cart, setCart }: ProdutoPageProps) {
     if (!produto) return 0;
     if (!produto.is_kit) {
       const varianteKey = Object.values(varianteSelecionada).join(' - ');
-      return produto.estoque_por_variante?.[varianteKey] ?? produto.estoque_por_variante?.['default'] ?? 999;
+      const hasVariants = produto.variantes && produto.variantes.length > 0;
+      return produto.estoque_por_variante?.[varianteKey] ?? (hasVariants ? 0 : (produto.estoque_por_variante?.['default'] ?? 0));
     }
     
     // For kits, the stock is determined by the minimum stock of its components

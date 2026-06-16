@@ -396,7 +396,7 @@ export function ProdutosTab() {
       
       const combs = getCombinations(p.variantes);
       combs.forEach((comb) => {
-        const stock = p.estoque_por_variante?.[comb] ?? p.estoque_por_variante?.['default'] ?? 0;
+        const stock = p.estoque_por_variante?.[comb] ?? (comb === 'default' ? (p.estoque_por_variante?.['default'] ?? 0) : 0);
         items.push({
           productId: p.id,
           productName: p.nome,
