@@ -132,6 +132,7 @@ export default function EnrollmentModal({
 }) {
   const { theme, loading: themeLoading } = useFranquiaTheme();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorModalAction, setErrorModalAction] = useState<{ label: string; action: () => void } | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [step, setStep] = useState<Step>('guardian');
   const [showWelcomeModal, setShowWelcomeModal] = useState(() => {
@@ -2453,10 +2454,15 @@ export default function EnrollmentModal({
               const ident = data.identifier || g.cpf || g.email;
               setIsAccessingPanel(true);
               setLoginIdentifier(ident);
-              setErrorMessage(`${data.error} Redirecionando para recuperação de senha...`);
-              setTimeout(() => {
-                recoverLoginPassword(ident);
-              }, 1500);
+              setErrorMessage(data.error || 'Já existe um cadastro com este E-mail/CPF.');
+              setErrorModalAction({
+                label: 'Esqueci Minha Senha',
+                action: () => {
+                  setErrorMessage(null);
+                  setErrorModalAction(null);
+                  recoverLoginPassword(ident);
+                }
+              });
               return;
             }
             throw new Error(data.error || 'Erro ao registrar responsável');
@@ -8655,7 +8661,10 @@ export default function EnrollmentModal({
                 <h2 className="text-xl font-bold text-red-900">Atenção</h2>
               </div>
               <button 
-                onClick={() => setErrorMessage(null)}
+                onClick={() => {
+                  setErrorMessage(null);
+                  setErrorModalAction(null);
+                }}
                 className="p-2 hover:bg-red-100 rounded-full transition-colors"
               >
                 <X size={20} className="text-red-400" />
@@ -8666,12 +8675,26 @@ export default function EnrollmentModal({
               <p className="text-slate-700 whitespace-pre-wrap">{errorMessage}</p>
             </div>
 
-            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+              {errorModalAction && (
+                <button 
+                  onClick={errorModalAction.action}
+                  className="px-6 py-2 text-white font-bold rounded-xl hover:opacity-90 transition-all"
+                  style={{
+                    backgroundColor: theme?.primary_color || '#ef4444'
+                  }}
+                >
+                  {errorModalAction.label}
+                </button>
+              )}
               <button 
-                onClick={() => setErrorMessage(null)}
+                onClick={() => {
+                  setErrorMessage(null);
+                  setErrorModalAction(null);
+                }}
                 className="px-6 py-2 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-all"
               >
-                Entendi
+                {errorModalAction ? 'Cancelar' : 'Entendi'}
               </button>
             </div>
           </motion.div>
