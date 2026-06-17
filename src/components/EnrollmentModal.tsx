@@ -1925,8 +1925,9 @@ export default function EnrollmentModal({
     }
   };
 
-  const recoverLoginPassword = async () => {
-    if (!loginIdentifier) {
+  const recoverLoginPassword = async (overrideIdentifier?: string) => {
+    const idToUse = overrideIdentifier || loginIdentifier;
+    if (!idToUse) {
       setAccessError('Por favor, informe seu CPF ou E-mail primeiro.');
       return;
     }
@@ -1936,7 +1937,7 @@ export default function EnrollmentModal({
       const response = await fetch('/api/guardian/recover-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: loginIdentifier })
+        body: JSON.stringify({ identifier: idToUse })
       });
       
       const contentType = response.headers.get("content-type");
@@ -2448,6 +2449,16 @@ export default function EnrollmentModal({
           
           const data = await response.json();
           if (!response.ok) {
+            if (data.code === 'GUARDIAN_ALREADY_EXISTS') {
+              const ident = data.identifier || g.cpf || g.email;
+              setIsAccessingPanel(true);
+              setLoginIdentifier(ident);
+              setErrorMessage(`${data.error} Redirecionando para recuperação de senha...`);
+              setTimeout(() => {
+                recoverLoginPassword(ident);
+              }, 1500);
+              return;
+            }
             throw new Error(data.error || 'Erro ao registrar responsável');
           }
           
@@ -6058,7 +6069,7 @@ export default function EnrollmentModal({
                             </div>
                             <div className="flex justify-end">
                               <button 
-                                onClick={recoverLoginPassword}
+                                onClick={() => recoverLoginPassword()}
                                 disabled={recoveringPassword || !loginIdentifier}
                                 className="text-emerald-700 text-xs font-bold hover:underline flex items-center gap-1 mt-1"
                               >

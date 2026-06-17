@@ -2582,6 +2582,28 @@ app.use('/api/admin', requireAdminAuth);
     const { name, cpf, email, phone, address, password } = req.body;
     try {
       const cleanCPF = sanitizeCPF(cpf);
+      const normalizedEmail = email ? email.trim().toLowerCase() : '';
+
+      // Check if email or CPF already exists
+      const { data: existingGuardian, error: checkError } = await supabase
+        .from('responsaveis')
+        .select('id, email, cpf')
+        .or(`email.eq.${normalizedEmail},cpf.eq.${cleanCPF}`)
+        .maybeSingle();
+
+      if (checkError) {
+        console.error("[Register] Error checking existing guardian:", checkError);
+      }
+
+      if (existingGuardian) {
+        const isCpfMatch = existingGuardian.cpf === cleanCPF;
+        return res.status(400).json({ 
+          code: 'GUARDIAN_ALREADY_EXISTS',
+          error: isCpfMatch ? 'Já existe um cadastro com este CPF.' : 'Já existe um cadastro com este e-mail.',
+          identifier: isCpfMatch ? cpf : email
+        });
+      }
+
       const { data, error } = await supabase
         .from('responsaveis')
         .insert([{
