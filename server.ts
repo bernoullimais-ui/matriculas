@@ -7751,6 +7751,31 @@ app.use('/api/admin', requireAdminAuth);
           return res.status(200).json({ received: true, type: 'evento' });
         }
         
+        if (originalCode && originalCode.startsWith('mens_pix_')) {
+          console.log(`[Webhook Pagar.me] Processando mensalidade PIX: ${originalCode}`);
+          const parts = originalCode.split('_');
+          const matId = parts[2];
+          const mesRef = `${parts[3]}-${parts[4]}`;
+          
+          const isPaid = 
+            event.type === 'order.paid' || 
+            event.type === 'invoice.paid';
+
+          if (isPaid) {
+             const { data: fatura } = await supabase.from('faturas_pix').select('*').eq('matricula_id', matId).eq('mes_referencia', mesRef).maybeSingle();
+             if (fatura && fatura.status !== 'pago') {
+               await supabase.from('faturas_pix').update({ status: 'pago' }).eq('id', fatura.id);
+               
+               const { data: matInfo } = await supabase.from('matriculas').select('*, responsaveis(*)').eq('id', matId).maybeSingle();
+               if (matInfo && matInfo.responsaveis) {
+                 const msg = `Olá ${matInfo.responsaveis.nome_completo}! O pagamento da mensalidade via PIX foi confirmado com sucesso. Muito obrigado!`;
+                 await sendWhatsAppMessage(matInfo.responsaveis.telefone || '11999999999', matInfo.responsaveis.nome_completo, msg, matInfo.unidade).catch(e => console.error("Erro whats webhook pix", e));
+               }
+             }
+          }
+          return res.status(200).json({ received: true, type: 'mensalidade_pix' });
+        }
+        
         const isRecurringCode = paymentId && /-\d+$/.test(paymentId);
         
         // Don't split if it's a recurring code (e.g., -02, -03), so the recurring block can handle finding the next pending installment
@@ -8876,6 +8901,143 @@ async function dispararAvisoFalhaWix(celular: string, nome: string) {
 
 
   
+// --- INÍCIO MOTOR DE ASSINATURA PIX ---
+app.get('/api/cron/mensalidades-pix', async (req, res) => {
+  try {
+    const { data: matriculas } = await supabase.from('matriculas')
+      .select('*, alunos(*), responsaveis(*), turmas(*)')
+      .eq('pagarme_subscription_id', 'internal_pix')
+      .in('status', ['ativo', 'Ativo']);
+
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const currentMonthRef = today.toISOString().slice(0, 7); // 'YYYY-MM'
+    
+    let geradas = 0;
+    let canceladas = 0;
+
+    if (matriculas) {
+      for (const mat of matriculas) {
+        const student = mat.alunos;
+        const guardian = mat.responsaveis;
+        const turma = mat.turmas;
+        if (!student || !guardian || !turma) continue;
+
+        let baseDay = mat.dia_vencimento;
+        if (!baseDay) {
+          const created = new Date(mat.created_at || new Date());
+          baseDay = created.getDate();
+        }
+
+        let nextDueDate = new Date(today.getFullYear(), today.getMonth(), baseDay);
+        if (nextDueDate < today && (today.getTime() - nextDueDate.getTime()) > 5 * 24 * 60 * 60 * 1000) {
+           nextDueDate = new Date(today.getFullYear(), today.getMonth() + 1, baseDay);
+        }
+
+        const diffTime = nextDueDate.getTime() - today.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays <= 3 && diffDays >= 0) {
+          const faturaMesRef = nextDueDate.toISOString().slice(0, 7);
+          const { data: existing } = await supabase.from('faturas_pix')
+            .select('id')
+            .eq('matricula_id', mat.id)
+            .eq('mes_referencia', faturaMesRef)
+            .single();
+
+          if (!existing) {
+            const amount = Math.round(Number(mat.valor_mensal || turma.valor_mensalidade || 0) * 100);
+            if (amount > 0) {
+              const codeId = `mens_pix_${mat.id}_${faturaMesRef}`;
+              try {
+                const order = await createPagarmeOrder({
+                  customer: {
+                    name: guardian.nome_completo,
+                    email: guardian.email || "contato@sportforkids.com.br",
+                    cpf: guardian.cpf,
+                    phone: guardian.telefone || "11999999999"
+                  },
+                  paymentMethod: 'pix',
+                  amount: amount,
+                  description: `Mensalidade PIX - ${student.nome_completo} (${turma.nome})`,
+                  code: codeId
+                });
+
+                await supabase.from('faturas_pix').insert([{
+                  matricula_id: mat.id,
+                  mes_referencia: faturaMesRef,
+                  pagarme_order_id: order.id,
+                  status: 'pendente'
+                }]);
+
+                const firstCharge = order.charges?.[0];
+                if (firstCharge?.last_transaction?.transaction_type === 'pix') {
+                  const qrCodeUrl = firstCharge.last_transaction.qr_code_url;
+                  const qrCode = firstCharge.last_transaction.qr_code;
+                  
+                  const msg = `Olá ${guardian.nome_completo}! A mensalidade de ${student.nome_completo} com vencimento para ${nextDueDate.toLocaleDateString('pt-BR')} já está disponível para pagamento via PIX.\n\nValor: R$ ${(amount/100).toFixed(2)}\n\n*PIX Copia e Cola:*\n${qrCode}\n\nSe preferir, pague pelo link do QR Code: ${qrCodeUrl}\n\nObrigado!`;
+                  await sendWhatsAppMessage(guardian.telefone || '11999999999', guardian.nome_completo, msg, mat.unidade).catch(e => console.error("Erro whats cron", e));
+                }
+                geradas++;
+              } catch (err) {
+                console.error(`Erro ao gerar fatura PIX para matricula ${mat.id}:`, err);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const { data: faturasPendentes } = await supabase.from('faturas_pix')
+      .select('*, matriculas(*, alunos(*), responsaveis(*), turmas(*))')
+      .eq('status', 'pendente');
+
+    if (faturasPendentes) {
+      let secretKey = getPagarmeSecretKey();
+      const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+
+      for (const fatura of faturasPendentes) {
+        const mat = fatura.matriculas;
+        if (!mat || mat.status !== 'ativo') continue;
+        
+        try {
+          const resOrder = await axios.get(`https://api.pagar.me/core/v5/orders/${fatura.pagarme_order_id}`, {
+            headers: { 'Authorization': `Basic ${authHeader}` }
+          });
+          const orderData = resOrder.data;
+
+          if (orderData.status === 'paid') {
+            await supabase.from('faturas_pix').update({ status: 'pago' }).eq('id', fatura.id);
+            continue;
+          }
+
+          const created = new Date(orderData.created_at);
+          const daysSinceCreation = Math.floor((today.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+          
+          if (daysSinceCreation >= 8 && orderData.status !== 'paid') {
+            const guardian = mat.responsaveis;
+            const student = mat.alunos;
+            if (guardian && student) {
+               const msgAtraso = `Olá ${guardian.nome_completo}. Identificamos que o pagamento da mensalidade PIX de ${student.nome_completo} não foi confirmado. Caso não seja regularizado nas próximas 48h, a matrícula será cancelada automaticamente. Por favor, regularize ou entre em contato conosco!`;
+               await sendWhatsAppMessage(guardian.telefone || '11999999999', guardian.nome_completo, msgAtraso, mat.unidade).catch(e => console.error("Erro whats atraso", e));
+            }
+            await supabase.from('faturas_pix').update({ status: 'atraso_notificado' }).eq('id', fatura.id);
+          }
+
+        } catch(err) {
+          console.error(`Erro ao verificar Pagar.me para fatura ${fatura.id}`, err);
+        }
+      }
+    }
+
+    res.json({ success: true, geradas, canceladas });
+  } catch (err: any) {
+    console.error("[CRON PIX] Erro:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+// --- FIM MOTOR DE ASSINATURA PIX ---
+
 // Rota para disparar o cron job manualmente ou via Vercel Cron
 app.get('/api/cron/wix-sync', async (req, res) => {
   try {
@@ -11813,7 +11975,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       const finalAmount = Math.max(1, Number(valor_mensal) - (valorDesconto || 0));
 
-      const subscription = await createPagarmeSubscription({
+      const order = await createPagarmeOrder({
         customer: {
           name: guardian.nome_completo,
           email: guardian.email || "contato@sportforkids.com.br",
@@ -11823,9 +11985,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         paymentMethod: 'pix',
         amount: Math.round(finalAmount * 100),
         description: `Mensalidade Exceção PIX - ${student.nome_completo} (${turma.nome})`,
-        code: mockPaymentId,
-        cycles: 12,
-        start_at: new Date().toISOString() // Start today so first invoice generates immediately
+        code: mockPaymentId
       });
 
       const { data: matricula, error: matError } = await supabase.from('matriculas').insert([{
@@ -11835,7 +11995,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         turma_id: turma.id,
         status: 'pendente',
         plano: 'Mensal',
-        pagarme_subscription_id: subscription.id,
+        pagarme_subscription_id: 'internal_pix',
         motivo_excecao_pix: motivo_excecao,
         criado_por_admin_id: adminId,
         tipo_pagamento: 'pix_excecao',
@@ -11851,7 +12011,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         valor: finalAmount,
         status: 'pendente',
         metodo_pagamento: 'pix',
-        pagarme: subscription.id,
+        pagarme: order.id,
         data_vencimento: new Date().toISOString()
       }]);
 

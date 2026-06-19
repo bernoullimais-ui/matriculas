@@ -44,6 +44,10 @@
     {
       "path": "/api/cron/pagarme-sync",
       "schedule": "10 * * * *"
+    },
+    {
+      "path": "/api/cron/mensalidades-pix",
+      "schedule": "0 11 * * *"
     }
   ]
 }
