@@ -7775,6 +7775,69 @@ app.use('/api/admin', requireAdminAuth);
           }
           return res.status(200).json({ received: true, type: 'mensalidade_pix' });
         }
+        if (originalCode && originalCode.startsWith('pix_exc_')) {
+          console.log(`[Webhook Pagar.me] Processando Exceção PIX: ${originalCode}`);
+          
+          const isPaid = 
+            event.type === 'order.paid' || 
+            event.type === 'charge.paid' ||
+            event.type === 'invoice.paid';
+
+          let handledAsFirstPayment = false;
+
+          if (isPaid) {
+            const orderId = data.order?.id || (data.id && data.id.startsWith('or_') ? data.id : null) || data.charge?.order?.id;
+            let pagamento = null;
+
+            if (orderId) {
+              const { data: p } = await supabase.from('pagamentos').select('*').eq('pagarme', orderId).maybeSingle();
+              pagamento = p;
+            }
+
+            // Fallback: se não achar pelo orderId (ex: foi criado via enroll-pix-new com sub_id), tenta pelo QR Code
+            if (!pagamento) {
+              const qrCode = data.charges?.[0]?.last_transaction?.qr_code || data.last_transaction?.qr_code || data.charges?.[0]?.last_transaction?.pix_qr_code || data.last_transaction?.pix_qr_code;
+              if (qrCode) {
+                const { data: pQr } = await supabase.from('pagamentos').select('*').eq('qr_code', qrCode).maybeSingle();
+                pagamento = pQr;
+              }
+            }
+
+            if (pagamento) {
+              handledAsFirstPayment = true;
+              if (pagamento.status !== 'pago') {
+                await supabase.from('pagamentos').update({ 
+                  status: 'pago',
+                  data_pagamento: new Date().toISOString()
+                }).eq('id', pagamento.id);
+                
+                if (pagamento.matricula_id) {
+                  const { data: matricula } = await supabase.from('matriculas').select('*, alunos(nome_completo), responsaveis(*)').eq('id', pagamento.matricula_id).maybeSingle();
+                  
+                  if (matricula && matricula.status === 'pendente') {
+                    await supabase.from('matriculas').update({ 
+                      status: 'ativo',
+                      data_matricula: new Date().toISOString()
+                    }).eq('id', matricula.id);
+                  }
+
+                  if (matricula && matricula.responsaveis) {
+                    const studentName = matricula.alunos?.nome_completo || 'seu filho(a)';
+                    const msg = `Olá ${matricula.responsaveis.nome_completo}! O pagamento via PIX para a matrícula de ${studentName} foi confirmado com sucesso. Muito obrigado!`;
+                    await sendWhatsAppMessage(matricula.responsaveis.telefone || '11999999999', matricula.responsaveis.nome_completo, msg, matricula.unidade).catch(e => console.error("Erro whats webhook exceção pix", e));
+                  }
+                }
+              }
+            }
+          }
+          
+          if (handledAsFirstPayment) {
+            return res.status(200).json({ received: true, type: 'excecao_pix' });
+          } else {
+            console.log(`[Webhook Pagar.me] Exceção PIX não encontrou pagamento inicial. Deixando fluir para lógica geral (possível renovação).`);
+            // não retorna, deixa seguir para a lógica geral de renovação
+          }
+        }
         
         const isRecurringCode = paymentId && /-\d+$/.test(paymentId);
         
@@ -11985,7 +12048,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         paymentMethod: 'pix',
         amount: Math.round(finalAmount * 100),
         description: `Mensalidade Exceção PIX - ${student.nome_completo} (${turma.nome})`,
-        code: mockPaymentId
+        code: mockPaymentId,
+        franquia: unidade
       });
 
       const { data: matricula, error: matError } = await supabase.from('matriculas').insert([{
@@ -12023,19 +12087,33 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
            orderOrCharge = order.charges[0];
         }
 
+        let secretKey = getPagarmeSecretKey();
+        const franquiaConfig = await getFranquiaConfig(unidade);
+        if (franquiaConfig) {
+          if (franquiaConfig.modelo_pagamento === 'saas') {
+            secretKey = franquiaConfig.pagarme_api_key;
+          } else if (franquiaConfig.modelo_pagamento === 'split') {
+            secretKey = process.env.VITE_PAGARME_MASTER_KEY || process.env.PAGARME_MASTER_KEY || secretKey;
+          }
+        }
+        const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+
         if (!orderOrCharge) {
-            let secretKey = getPagarmeSecretKey();
-            const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
             const orderRes = await axios.get(`https://api.pagar.me/core/v5/orders/${order.id}`, {
               headers: { 'Authorization': `Basic ${authHeader}` }
             });
             orderOrCharge = orderRes.data?.charges?.[0];
         }
 
-        if (orderOrCharge && orderOrCharge.last_transaction) {
-          pixQrCode = orderOrCharge.last_transaction.qr_code || orderOrCharge.last_transaction.pix_qr_code || orderOrCharge.last_transaction.boleto_url || "";
-          pixQrCodeUrl = orderOrCharge.last_transaction.qr_code_url || orderOrCharge.last_transaction.pix_qr_code_url || orderOrCharge.last_transaction.boleto_url || "";
+        if (typeof orderOrCharge === 'string') {
+            const chargeRes = await axios.get(`https://api.pagar.me/core/v5/charges/${orderOrCharge}`, {
+              headers: { 'Authorization': `Basic ${authHeader}` }
+            });
+            orderOrCharge = chargeRes.data;
         }
+
+        pixQrCode = orderOrCharge?.last_transaction?.qr_code || orderOrCharge?.last_transaction?.pix_qr_code || order?.qr_code || order?.pix_qr_code || orderOrCharge?.last_transaction?.boleto_url || "";
+        pixQrCodeUrl = orderOrCharge?.last_transaction?.qr_code_url || orderOrCharge?.last_transaction?.pix_qr_code_url || order?.qr_code_url || order?.pix_qr_code_url || orderOrCharge?.last_transaction?.boleto_url || "";
       } catch (err: any) {
         console.error("[PIX Excecao] Erro ao buscar charge:", err.message);
       }
@@ -12101,7 +12179,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         description: `Mensalidade Exceção PIX - ${newStudent.nome_completo} (${turma.nome})`,
         code: mockPaymentId,
         cycles: 12,
-        start_at: new Date().toISOString()
+        start_at: new Date().toISOString(),
+        franquia: unidade
       });
 
       const { data: matricula, error: matError } = await supabase.from('matriculas').insert([{
@@ -12130,13 +12209,29 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
            orderOrCharge = subscription.current_cycle.charge;
         }
 
+        let secretKey = getPagarmeSecretKey();
+        const franquiaConfig = await getFranquiaConfig(unidade);
+        if (franquiaConfig) {
+          if (franquiaConfig.modelo_pagamento === 'saas') {
+            secretKey = franquiaConfig.pagarme_api_key;
+          } else if (franquiaConfig.modelo_pagamento === 'split') {
+            secretKey = process.env.VITE_PAGARME_MASTER_KEY || process.env.PAGARME_MASTER_KEY || secretKey;
+          }
+        }
+        const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+
         if (!orderOrCharge) {
-            let secretKey = getPagarmeSecretKey();
-            const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
             const subRes = await axios.get(`https://api.pagar.me/core/v5/subscriptions/${subscription.id}`, {
               headers: { 'Authorization': `Basic ${authHeader}` }
             });
             orderOrCharge = subRes.data?.current_cycle?.charge || subRes.data?.charges?.[0];
+        }
+
+        if (typeof orderOrCharge === 'string') {
+            const chargeRes = await axios.get(`https://api.pagar.me/core/v5/charges/${orderOrCharge}`, {
+              headers: { 'Authorization': `Basic ${authHeader}` }
+            });
+            orderOrCharge = chargeRes.data;
         }
 
         if (orderOrCharge && orderOrCharge.last_transaction) {
@@ -12201,54 +12296,71 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       const mat = payment.matriculas;
       
       const orderCode = `retry_pix_${Date.now()}`;
-      const orderPayload = {
-        code: orderCode,
-        items: [{
-          amount: Math.round(payment.valor * 100),
-          description: `Reenvio Mensalidade PIX`,
-          quantity: 1,
-          code: orderCode
-        }],
+      
+      const orderData = await createPagarmeOrder({
         customer: {
           name: guardian.nome_completo,
           email: guardian.email || 'contato@sportforkids.com.br',
-          type: 'individual',
-          document: guardian.cpf.replace(/\D/g, '').padStart(11, '0'),
-          phones: {
-            mobile_phone: {
-              country_code: "55",
-              area_code: guardian.telefone ? guardian.telefone.replace(/\D/g, '').substring(0, 2) : "11",
-              number: guardian.telefone ? guardian.telefone.replace(/\D/g, '').substring(2) : "999999999"
-            }
-          }
+          cpf: guardian.cpf,
+          phone: guardian.telefone || "11999999999"
         },
-        metadata: { payment_id: payment.id },
-        payments: [{
-          payment_method: 'pix',
-          pix: { expires_in: 86400 }
-        }]
-      };
-
-      let secretKey = getPagarmeSecretKey();
-      const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
-      const { data: orderData } = await axios.post('https://api.pagar.me/core/v5/orders', orderPayload, {
-        headers: { 'Authorization': `Basic ${authHeader}`, 'Content-Type': 'application/json' }
+        amount: Math.round(payment.valor * 100),
+        paymentMethod: 'pix',
+        description: `Reenvio Mensalidade PIX`,
+        code: orderCode,
+        franquia: mat?.unidade
       });
 
-      const qrCode = orderData.charges?.[0]?.last_transaction?.qr_code || orderData.charges?.[0]?.last_transaction?.pix_qr_code || orderData.qr_code;
-      const qrCodeUrl = orderData.charges?.[0]?.last_transaction?.qr_code_url || orderData.charges?.[0]?.last_transaction?.pix_qr_code_url || orderData.qr_code_url;
+      let qrCode = orderData.charges?.[0]?.last_transaction?.qr_code || orderData.charges?.[0]?.last_transaction?.pix_qr_code || orderData.qr_code;
+      let qrCodeUrl = orderData.charges?.[0]?.last_transaction?.qr_code_url || orderData.charges?.[0]?.last_transaction?.pix_qr_code_url || orderData.qr_code_url;
 
-      if (qrCode) {
-        const msg = `Olá, *${guardian.nome_completo}*! Segue a nova cobrança da mensalidade.\n\nPara visualizar as informações da matrícula e realizar o pagamento via PIX, acesse o link abaixo:\n\nhttps://sportforkids.com.br/pix/${payment.id}`;
-        await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, msg);
-        
-        // Update payment with new qr codes
-        await supabase.from('pagamentos').update({ 
-          qr_code: qrCode, 
-          qr_code_url: qrCodeUrl,
-          status: 'pendente' 
-        }).eq('id', payment.id);
+      if (!qrCode || !qrCodeUrl) {
+        try {
+          let secretKey = getPagarmeSecretKey();
+          const franquiaConfig = await getFranquiaConfig(mat?.unidade);
+          if (franquiaConfig) {
+            if (franquiaConfig.modelo_pagamento === 'saas') {
+              secretKey = franquiaConfig.pagarme_api_key;
+            } else if (franquiaConfig.modelo_pagamento === 'split') {
+              secretKey = process.env.VITE_PAGARME_MASTER_KEY || process.env.PAGARME_MASTER_KEY || secretKey;
+            }
+          }
+          const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+          const orderRes = await axios.get(`https://api.pagar.me/core/v5/orders/${orderData.id}`, {
+            headers: { 'Authorization': `Basic ${authHeader}` }
+          });
+          let fetchedCharge = orderRes.data?.charges?.[0];
+          
+          if (typeof fetchedCharge === 'string') {
+             const chargeRes = await axios.get(`https://api.pagar.me/core/v5/charges/${fetchedCharge}`, {
+               headers: { 'Authorization': `Basic ${authHeader}` }
+             });
+             fetchedCharge = chargeRes.data;
+          }
+          
+          if (fetchedCharge && fetchedCharge.last_transaction) {
+             qrCode = fetchedCharge.last_transaction.qr_code || fetchedCharge.last_transaction.pix_qr_code || fetchedCharge.last_transaction.boleto_url || "";
+             qrCodeUrl = fetchedCharge.last_transaction.qr_code_url || fetchedCharge.last_transaction.pix_qr_code_url || fetchedCharge.last_transaction.boleto_url || "";
+          }
+        } catch (err: any) {
+          console.error("[PIX Resend] Erro fallback Pagar.me:", err.message);
+        }
       }
+
+      if (!qrCode) {
+         throw new Error("Pagar.me não retornou QR Code. Verifique se o PIX está habilitado.");
+      }
+
+      const msg = `Olá, *${guardian.nome_completo}*! Segue a nova cobrança da mensalidade.\n\nPara visualizar as informações da matrícula e realizar o pagamento via PIX, acesse o link abaixo:\n\nhttps://sportforkids.com.br/pix/${payment.id}`;
+      await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, msg);
+      
+      // Update payment with new qr codes
+      await supabase.from('pagamentos').update({ 
+        qr_code: qrCode, 
+        qr_code_url: qrCodeUrl,
+        pagarme: orderData.id,
+        status: 'pendente' 
+      }).eq('id', payment.id);
 
       res.json({ success: true, orderData });
     } catch (err: any) {
