@@ -11785,6 +11785,219 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     }
   });
 
+  
+  // --- INÍCIO: FLUXO DE EXCEÇÃO PIX ---
+  app.post("/api/admin/enroll-pix-existing", async (req, res) => {
+    try {
+      const { adminId, guardianId, studentId, turmaId, unidade, valor_mensal, dia_vencimento, motivo_excecao, cupom_id } = req.body;
+      
+      const { data: guardian } = await supabase.from('responsaveis').select('*').eq('id', guardianId).single();
+      const { data: student } = await supabase.from('alunos').select('*').eq('id', studentId).single();
+      const { data: turma } = await supabase.from('turmas').select('*').eq('id', turmaId).single();
+
+      if (!guardian || !student || !turma) throw new Error("Dados não encontrados.");
+
+      const mockPaymentId = `pix_exc_${Date.now()}`;
+      let nextBillingDate = new Date();
+      if (dia_vencimento) {
+        nextBillingDate.setDate(Number(dia_vencimento));
+        if (nextBillingDate <= new Date()) {
+           nextBillingDate.setMonth(nextBillingDate.getMonth() + 1);
+        }
+      }
+
+      const subscription = await createPagarmeSubscription({
+        customer: {
+          name: guardian.nome_completo,
+          email: guardian.email || "contato@sportforkids.com.br",
+          cpf: guardian.cpf,
+          phone: guardian.telefone || "11999999999"
+        },
+        paymentMethod: 'pix',
+        amount: Math.round(Number(valor_mensal) * 100),
+        description: `Mensalidade Exceção PIX - ${student.nome_completo} (${turma.nome})`,
+        code: mockPaymentId,
+        cycles: 12,
+        start_at: new Date().toISOString() // Start today so first invoice generates immediately
+      });
+
+      const { data: matricula, error: matError } = await supabase.from('matriculas').insert([{
+        aluno_id: studentId,
+        unidade,
+        turma: turma.nome,
+        turma_id: turma.id,
+        status: 'pendente',
+        plano: 'Mensal',
+        pagarme_subscription_id: subscription.id,
+        motivo_excecao_pix: motivo_excecao,
+        criado_por_admin_id: adminId,
+        tipo_pagamento: 'pix_excecao',
+        cupom_id: cupom_id || null
+      }]).select().single();
+
+      if (matError) throw matError;
+
+      // Create initial payment record
+      await supabase.from('pagamentos').insert([{
+        responsavel_id: guardianId,
+        matricula_id: matricula.id,
+        valor: Number(valor_mensal),
+        status: 'pendente',
+        metodo_pagamento: 'pix',
+        pagarme: subscription.id,
+        data_vencimento: new Date().toISOString()
+      }]);
+
+      res.json({ success: true, matricula });
+    } catch (err: any) {
+      console.error("[PIX Excecao] Erro:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/admin/enroll-pix-new", async (req, res) => {
+    try {
+      const { adminId, guardian, student, turmaId, unidade, valor_mensal, dia_vencimento, motivo_excecao, cupom_id } = req.body;
+      
+      const cleanCPF = sanitizeCPF(guardian.cpf);
+      
+      // 1. Create Guardian
+      const { data: newGuardian, error: gError } = await supabase.from('responsaveis').insert([{
+        nome_completo: guardian.name,
+        cpf: cleanCPF,
+        email: guardian.email,
+        telefone: guardian.phone,
+        endereco: guardian.address
+      }]).select().single();
+      
+      if (gError) throw gError;
+
+      // 2. Create Student
+      const { data: newStudent, error: sError } = await supabase.from('alunos').insert([{
+        nome_completo: student.name,
+        data_nascimento: student.birthdate,
+        responsavel_id: newGuardian.id
+      }]).select().single();
+
+      if (sError) throw sError;
+
+      const { data: turma } = await supabase.from('turmas').select('*').eq('id', turmaId).single();
+
+      const mockPaymentId = `pix_exc_${Date.now()}`;
+
+      const subscription = await createPagarmeSubscription({
+        customer: {
+          name: newGuardian.nome_completo,
+          email: newGuardian.email || "contato@sportforkids.com.br",
+          cpf: newGuardian.cpf,
+          phone: newGuardian.telefone || "11999999999"
+        },
+        paymentMethod: 'pix',
+        amount: Math.round(Number(valor_mensal) * 100),
+        description: `Mensalidade Exceção PIX - ${newStudent.nome_completo} (${turma.nome})`,
+        code: mockPaymentId,
+        cycles: 12,
+        start_at: new Date().toISOString()
+      });
+
+      const { data: matricula, error: matError } = await supabase.from('matriculas').insert([{
+        aluno_id: newStudent.id,
+        unidade,
+        turma: turma.nome,
+        turma_id: turma.id,
+        status: 'pendente',
+        plano: 'Mensal',
+        pagarme_subscription_id: subscription.id,
+        motivo_excecao_pix: motivo_excecao,
+        criado_por_admin_id: adminId,
+        tipo_pagamento: 'pix_excecao',
+        cupom_id: cupom_id || null
+      }]).select().single();
+
+      if (matError) throw matError;
+
+      await supabase.from('pagamentos').insert([{
+        responsavel_id: newGuardian.id,
+        matricula_id: matricula.id,
+        valor: Number(valor_mensal),
+        status: 'pendente',
+        metodo_pagamento: 'pix',
+        pagarme: subscription.id,
+        data_vencimento: new Date().toISOString()
+      }]);
+
+      res.json({ success: true, matricula });
+    } catch (err: any) {
+      console.error("[PIX Excecao Novo] Erro:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/admin/resend-pix", async (req, res) => {
+    try {
+      const { paymentId } = req.body;
+      
+      const { data: payment } = await supabase.from('pagamentos').select('*, responsaveis(*), matriculas(*)').eq('id', paymentId).single();
+      if (!payment) throw new Error("Pagamento não encontrado.");
+      
+      const guardian = payment.responsaveis;
+      
+      const orderCode = `retry_pix_${Date.now()}`;
+      const orderPayload = {
+        code: orderCode,
+        items: [{
+          amount: Math.round(payment.valor * 100),
+          description: `Reenvio Mensalidade PIX`,
+          quantity: 1,
+          code: orderCode
+        }],
+        customer: {
+          name: guardian.nome_completo,
+          email: guardian.email || 'contato@sportforkids.com.br',
+          type: 'individual',
+          document: guardian.cpf.replace(/\D/g, '').padStart(11, '0'),
+          phones: {
+            mobile_phone: {
+              country_code: "55",
+              area_code: guardian.telefone ? guardian.telefone.replace(/\D/g, '').substring(0, 2) : "11",
+              number: guardian.telefone ? guardian.telefone.replace(/\D/g, '').substring(2) : "999999999"
+            }
+          }
+        },
+        metadata: { payment_id: payment.id },
+        payments: [{
+          payment_method: 'pix',
+          pix: { expires_in: 86400 }
+        }]
+      };
+
+      let secretKey = getPagarmeSecretKey();
+      const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+      const { data: orderData } = await axios.post('https://api.pagar.me/core/v5/orders', orderPayload, {
+        headers: { 'Authorization': `Basic ${authHeader}`, 'Content-Type': 'application/json' }
+      });
+
+      const qrCode = getNestedVal(orderData, 'qr_code') || getNestedVal(orderData, 'pix_qr_code');
+      const qrCodeUrl = getNestedVal(orderData, 'qr_code_url') || getNestedVal(orderData, 'pix_qr_code_url');
+
+      if (qrCode) {
+        const msg = `Olá, *${guardian.nome_completo}*! Segue a nova cobrança da mensalidade.\n\nVocê pode pagar via PIX utilizando o QR Code abaixo:\n\n${qrCodeUrl}\n\nOu copie e cole o código:\n\n${qrCode}`;
+        await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, msg);
+        
+        // Update payment with new qr codes
+        await supabase.from('pagamentos').update({ 
+          qr_code: qrCode, 
+          qr_code_url: qrCodeUrl,
+          status: 'pendente' 
+        }).eq('id', payment.id);
+      }
+
+      res.json({ success: true, orderData });
+    } catch (err: any) {
+      console.error("[PIX Excecao Resend] Erro:", err.response?.data || err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
   // Vite middleware for development
   async function startServer() {
     const PORT = 3000;
