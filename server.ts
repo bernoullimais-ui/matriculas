@@ -8038,7 +8038,7 @@ app.use('/api/admin', requireAdminAuth);
                     .single();
                   
                   const vencimentoStr = paymentData.data_vencimento ? new Date(paymentData.data_vencimento).toLocaleDateString('pt-BR') : 'não informada';
-                  const msg = `Olá, *${guardian.nome_completo}*! Sua mensalidade de *${student?.nome_completo || 'seu filho(a)'}* com vencimento em *${vencimentoStr}* foi gerada.\n\nVocê pode pagar via PIX utilizando o QR Code abaixo:\n\n${qrCodeUrl}\n\nOu copie e cole o código:\n\n${qrCode}`;
+                  const msg = `Olá, *${guardian.nome_completo}*! Sua mensalidade de *${student?.nome_completo || 'seu filho(a)'}* com vencimento em *${vencimentoStr}* foi gerada.\n\nPara visualizar as informações da matrícula e realizar o pagamento via PIX, acesse o link abaixo:\n\nhttps://app.sportforkids.com.br/pix/${paymentData.id}`;
                   
                   await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, msg, matricula?.unidade)
                     .catch(e => console.error("[Webhook Pagar.me] Erro ao enviar QR Code PIX:", e));
@@ -12005,7 +12005,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       if (matError) throw matError;
 
       // Create initial payment record
-      await supabase.from('pagamentos').insert([{
+      const { data: pagamento } = await supabase.from('pagamentos').insert([{
         responsavel_id: guardianId,
         matricula_id: matricula.id,
         valor: finalAmount,
@@ -12013,7 +12013,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         metodo_pagamento: 'pix',
         pagarme: order.id,
         data_vencimento: new Date().toISOString()
-      }]);
+      }]).select().single();
 
       let pixQrCode = "";
       let pixQrCodeUrl = "";
@@ -12037,9 +12037,9 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         console.error("[PIX Excecao] Erro ao buscar charge:", err.message);
       }
 
-      if (pixQrCode) {
-        const msg = `Olá, *${guardian.nome_completo}*! Sua matrícula de *${student.nome_completo}* foi iniciada.\n\nVocê pode pagar a primeira mensalidade via PIX utilizando o link do QR Code abaixo:\n\n${pixQrCodeUrl}\n\nOu copie e cole o código PIX:\n\n${pixQrCode}`;
-        await sendWhatsAppMessage(guardian.telefone || '11999999999', guardian.nome_completo, msg, unidade).catch(e => console.error("Erro whats", e));
+      if (pagamento) {
+        const msg = `Olá, *${guardian.nome_completo}*! Sua matrícula de *${student.nome_completo}* foi iniciada.\n\nPara visualizar as informações da matrícula e realizar o pagamento da primeira mensalidade via PIX, acesse o link abaixo:\n\nhttps://app.sportforkids.com.br/pix/${pagamento.id}`;
+        await sendWhatsAppMessage(guardian.telefone || '11999999999', guardian.nome_completo, msg, unidade).catch(e => console.error("Erro whats webhook pix", e));
       }
 
       res.json({ success: true, matricula, pix_qr_code: pixQrCode, pix_qr_code_url: pixQrCodeUrl });
@@ -12126,6 +12126,30 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       res.status(500).json({ error: err.message });
     }
   });
+  app.get("/api/public/pix/:id", async (req, res) => {
+    try {
+      const paymentId = req.params.id;
+      const { data: payment } = await supabase
+        .from('pagamentos')
+        .select('*, matriculas(*, alunos(*))')
+        .eq('id', paymentId)
+        .single();
+        
+      if (!payment) return res.status(404).json({ error: "Pagamento não encontrado" });
+
+      res.json({
+        id: payment.id,
+        valor: payment.valor,
+        status: payment.status,
+        qr_code: payment.qr_code,
+        qr_code_url: payment.qr_code_url,
+        matricula: payment.matriculas
+      });
+    } catch (err: any) {
+      console.error("[Public PIX] Erro:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   app.post("/api/admin/resend-pix", async (req, res) => {
     try {
@@ -12135,6 +12159,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       if (!payment) throw new Error("Pagamento não encontrado.");
       
       const guardian = payment.responsaveis;
+      const mat = payment.matriculas;
       
       const orderCode = `retry_pix_${Date.now()}`;
       const orderPayload = {
@@ -12175,7 +12200,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       const qrCodeUrl = orderData.charges?.[0]?.last_transaction?.qr_code_url || orderData.charges?.[0]?.last_transaction?.pix_qr_code_url || orderData.qr_code_url;
 
       if (qrCode) {
-        const msg = `Olá, *${guardian.nome_completo}*! Segue a nova cobrança da mensalidade.\n\nVocê pode pagar via PIX utilizando o QR Code abaixo:\n\n${qrCodeUrl}\n\nOu copie e cole o código:\n\n${qrCode}`;
+        const msg = `Olá, *${guardian.nome_completo}*! Segue a nova cobrança da mensalidade.\n\nPara visualizar as informações da matrícula e realizar o pagamento via PIX, acesse o link abaixo:\n\nhttps://app.sportforkids.com.br/pix/${payment.id}`;
         await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, msg);
         
         // Update payment with new qr codes
