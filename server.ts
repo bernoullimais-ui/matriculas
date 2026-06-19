@@ -7810,21 +7810,22 @@ app.use('/api/admin', requireAdminAuth);
                   status: 'pago',
                   data_pagamento: new Date().toISOString()
                 }).eq('id', pagamento.id);
+              }
                 
-                if (pagamento.matricula_id) {
-                  const { data: matricula } = await supabase.from('matriculas').select('*, alunos(nome_completo), responsaveis(*)').eq('id', pagamento.matricula_id).maybeSingle();
-                  
-                  if (matricula && matricula.status === 'pendente') {
-                    await supabase.from('matriculas').update({ 
-                      status: 'ativo',
-                      data_matricula: new Date().toISOString()
-                    }).eq('id', matricula.id);
-                  }
+              if (pagamento.matricula_id) {
+                const { data: matricula } = await supabase.from('matriculas').select('*, alunos(nome_completo)').eq('id', pagamento.matricula_id).maybeSingle();
+                const { data: responsavel } = await supabase.from('responsaveis').select('*').eq('id', pagamento.responsavel_id).maybeSingle();
+                
+                if (matricula && matricula.status === 'pendente') {
+                  await supabase.from('matriculas').update({ 
+                    status: 'ativo',
+                    data_matricula: new Date().toISOString()
+                  }).eq('id', matricula.id);
 
-                  if (matricula && matricula.responsaveis) {
+                  if (responsavel) {
                     const studentName = matricula.alunos?.nome_completo || 'seu filho(a)';
-                    const msg = `Olá ${matricula.responsaveis.nome_completo}! O pagamento via PIX para a matrícula de ${studentName} foi confirmado com sucesso. Muito obrigado!`;
-                    await sendWhatsAppMessage(matricula.responsaveis.telefone || '11999999999', matricula.responsaveis.nome_completo, msg, matricula.unidade).catch(e => console.error("Erro whats webhook exceção pix", e));
+                    const msg = `Olá ${responsavel.nome_completo}! O pagamento via PIX para a matrícula de ${studentName} foi confirmado com sucesso. Muito obrigado!`;
+                    await sendWhatsAppMessage(responsavel.telefone || '11999999999', responsavel.nome_completo, msg, matricula.unidade).catch(e => console.error("Erro whats webhook exceção pix", e));
                   }
                 }
               }
