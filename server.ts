@@ -12176,6 +12176,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       const mockPaymentId = `pix_exc_${Date.now()}`;
 
+      const finalAmount = Math.max(1, Number(valor_mensal) - (valorDesconto || 0));
+
       const subscription = await createPagarmeSubscription({
         customer: {
           name: newGuardian.nome_completo,
@@ -12184,7 +12186,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
           phone: newGuardian.telefone || "11999999999"
         },
         paymentMethod: 'pix',
-        amount: Math.round(Number(valor_mensal) * 100),
+        amount: Math.round(finalAmount * 100),
         description: `Mensalidade Exceção PIX - ${newStudent.nome_completo} (${turma.nome})`,
         code: mockPaymentId,
         cycles: 12,
