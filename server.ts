@@ -12018,15 +12018,20 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       let pixQrCode = "";
       let pixQrCodeUrl = "";
       try {
-        let secretKey = getPagarmeSecretKey();
-        const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
-        const chargesRes = await axios.get(`https://api.pagar.me/core/v5/subscriptions/${subscription.id}/charges`, {
-          headers: { 'Authorization': `Basic ${authHeader}` }
-        });
-        const firstCharge = chargesRes.data?.data?.[0];
-        if (firstCharge?.last_transaction?.transaction_type === 'pix') {
-          pixQrCode = firstCharge.last_transaction.qr_code;
-          pixQrCodeUrl = firstCharge.last_transaction.qr_code_url;
+        if (order.charges && order.charges[0] && order.charges[0].last_transaction?.transaction_type === 'pix') {
+          pixQrCode = order.charges[0].last_transaction.qr_code;
+          pixQrCodeUrl = order.charges[0].last_transaction.qr_code_url;
+        } else {
+            let secretKey = getPagarmeSecretKey();
+            const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+            const orderRes = await axios.get(`https://api.pagar.me/core/v5/orders/${order.id}`, {
+              headers: { 'Authorization': `Basic ${authHeader}` }
+            });
+            const firstCharge = orderRes.data?.charges?.[0];
+            if (firstCharge?.last_transaction?.transaction_type === 'pix') {
+              pixQrCode = firstCharge.last_transaction.qr_code;
+              pixQrCodeUrl = firstCharge.last_transaction.qr_code_url;
+            }
         }
       } catch (err: any) {
         console.error("[PIX Excecao] Erro ao buscar charge:", err.message);
