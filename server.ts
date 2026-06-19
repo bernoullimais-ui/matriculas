@@ -8038,7 +8038,7 @@ app.use('/api/admin', requireAdminAuth);
                     .single();
                   
                   const vencimentoStr = paymentData.data_vencimento ? new Date(paymentData.data_vencimento).toLocaleDateString('pt-BR') : 'não informada';
-                  const msg = `Olá, *${guardian.nome_completo}*! Sua mensalidade de *${student?.nome_completo || 'seu filho(a)'}* com vencimento em *${vencimentoStr}* foi gerada.\n\nPara visualizar as informações da matrícula e realizar o pagamento via PIX, acesse o link abaixo:\n\nhttps://app.sportforkids.com.br/pix/${paymentData.id}`;
+                  const msg = `Olá, *${guardian.nome_completo}*! Sua mensalidade de *${student?.nome_completo || 'seu filho(a)'}* com vencimento em *${vencimentoStr}* foi gerada.\n\nPara visualizar as informações da matrícula e realizar o pagamento via PIX, acesse o link abaixo:\n\nhttps://app.sportforkids.com.br/pix/${targetPaymentId}`;
                   
                   await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, msg, matricula?.unidade)
                     .catch(e => console.error("[Webhook Pagar.me] Erro ao enviar QR Code PIX:", e));
