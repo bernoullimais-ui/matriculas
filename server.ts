@@ -8038,7 +8038,7 @@ app.use('/api/admin', requireAdminAuth);
                     .single();
                   
                   const vencimentoStr = paymentData.data_vencimento ? new Date(paymentData.data_vencimento).toLocaleDateString('pt-BR') : 'não informada';
-                  const msg = `Olá, *${guardian.nome_completo}*! Sua mensalidade de *${student?.nome_completo || 'seu filho(a)'}* com vencimento em *${vencimentoStr}* foi gerada.\n\nPara visualizar as informações da matrícula e realizar o pagamento via PIX, acesse o link abaixo:\n\nhttps://app.sportforkids.com.br/pix/${targetPaymentId}`;
+                  const msg = `Olá, *${guardian.nome_completo}*! Sua mensalidade de *${student?.nome_completo || 'seu filho(a)'}* com vencimento em *${vencimentoStr}* foi gerada.\n\nPara visualizar as informações da matrícula e realizar o pagamento via PIX, acesse o link abaixo:\n\nhttps://sportforkids.com.br/pix/${targetPaymentId}`;
                   
                   await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, msg, matricula?.unidade)
                     .catch(e => console.error("[Webhook Pagar.me] Erro ao enviar QR Code PIX:", e));
@@ -12038,7 +12038,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       }
 
       if (pagamento) {
-        const msg = `Olá, *${guardian.nome_completo}*! Sua matrícula de *${student.nome_completo}* foi iniciada.\n\nPara visualizar as informações da matrícula e realizar o pagamento da primeira mensalidade via PIX, acesse o link abaixo:\n\nhttps://app.sportforkids.com.br/pix/${pagamento.id}`;
+        const msg = `Olá, *${guardian.nome_completo}*! Sua matrícula de *${student.nome_completo}* foi iniciada.\n\nPara visualizar as informações da matrícula e realizar o pagamento da primeira mensalidade via PIX, acesse o link abaixo:\n\nhttps://sportforkids.com.br/pix/${pagamento.id}`;
         await sendWhatsAppMessage(guardian.telefone || '11999999999', guardian.nome_completo, msg, unidade).catch(e => console.error("Erro whats webhook pix", e));
       }
 
@@ -12200,7 +12200,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       const qrCodeUrl = orderData.charges?.[0]?.last_transaction?.qr_code_url || orderData.charges?.[0]?.last_transaction?.pix_qr_code_url || orderData.qr_code_url;
 
       if (qrCode) {
-        const msg = `Olá, *${guardian.nome_completo}*! Segue a nova cobrança da mensalidade.\n\nPara visualizar as informações da matrícula e realizar o pagamento via PIX, acesse o link abaixo:\n\nhttps://app.sportforkids.com.br/pix/${payment.id}`;
+        const msg = `Olá, *${guardian.nome_completo}*! Segue a nova cobrança da mensalidade.\n\nPara visualizar as informações da matrícula e realizar o pagamento via PIX, acesse o link abaixo:\n\nhttps://sportforkids.com.br/pix/${payment.id}`;
         await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, msg);
         
         // Update payment with new qr codes
