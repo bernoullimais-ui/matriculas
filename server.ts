@@ -12178,7 +12178,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       const finalAmount = Math.max(1, Number(valor_mensal) - (valorDesconto || 0));
 
-      const subscription = await createPagarmeSubscription({
+      const order = await createPagarmeOrder({
         customer: {
           name: newGuardian.nome_completo,
           email: newGuardian.email || "contato@sportforkids.com.br",
@@ -12189,8 +12189,6 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         amount: Math.round(finalAmount * 100),
         description: `Mensalidade Exceção PIX - ${newStudent.nome_completo} (${turma.nome})`,
         code: mockPaymentId,
-        cycles: 12,
-        start_at: new Date().toISOString(),
         franquia: unidade
       });
 
@@ -12201,7 +12199,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         turma_id: turma.id,
         status: 'pendente',
         plano: 'Mensal',
-        pagarme_subscription_id: subscription.id,
+        pagarme_subscription_id: 'internal_pix',
         motivo_excecao_pix: motivo_excecao,
         criado_por_admin_id: adminId,
         tipo_pagamento: 'pix_excecao',
@@ -12210,14 +12208,24 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       if (matError) throw matError;
 
+      // Create initial payment record
+      const { data: pagamento } = await supabase.from('pagamentos').insert([{
+        responsavel_id: newGuardian.id,
+        aluno_id: newStudent.id,
+        matricula_id: matricula.id,
+        valor: finalAmount,
+        status: 'pendente',
+        metodo_pagamento: 'pix',
+        pagarme: order.id,
+        data_vencimento: new Date().toISOString()
+      }]).select().single();
+
       let pixQrCode = "";
       let pixQrCodeUrl = "";
       try {
         let orderOrCharge: any = null;
-        if (subscription.charges && subscription.charges[0]) {
-           orderOrCharge = subscription.charges[0];
-        } else if (subscription.current_cycle && subscription.current_cycle.charge) {
-           orderOrCharge = subscription.current_cycle.charge;
+        if (order.charges && order.charges[0]) {
+           orderOrCharge = order.charges[0];
         }
 
         let secretKey = getPagarmeSecretKey();
@@ -12232,10 +12240,10 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
 
         if (!orderOrCharge) {
-            const subRes = await axios.get(`https://api.pagar.me/core/v5/subscriptions/${subscription.id}`, {
+            const orderRes = await axios.get(`https://api.pagar.me/core/v5/orders/${order.id}`, {
               headers: { 'Authorization': `Basic ${authHeader}` }
             });
-            orderOrCharge = subRes.data?.current_cycle?.charge || subRes.data?.charges?.[0];
+            orderOrCharge = orderRes.data?.charges?.[0];
         }
 
         if (typeof orderOrCharge === 'string') {
@@ -12245,26 +12253,25 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
             orderOrCharge = chargeRes.data;
         }
 
-        if (orderOrCharge && orderOrCharge.last_transaction) {
-          pixQrCode = orderOrCharge.last_transaction.qr_code || orderOrCharge.last_transaction.pix_qr_code || orderOrCharge.last_transaction.boleto_url || "";
-          pixQrCodeUrl = orderOrCharge.last_transaction.qr_code_url || orderOrCharge.last_transaction.pix_qr_code_url || orderOrCharge.last_transaction.boleto_url || "";
-        }
-      } catch(e) {
-        console.error("Erro fetch PIX subscription", e);
+        pixQrCode = orderOrCharge?.last_transaction?.qr_code || orderOrCharge?.last_transaction?.pix_qr_code || order?.qr_code || order?.pix_qr_code || orderOrCharge?.last_transaction?.boleto_url || "";
+        pixQrCodeUrl = orderOrCharge?.last_transaction?.qr_code_url || orderOrCharge?.last_transaction?.pix_qr_code_url || order?.qr_code_url || order?.pix_qr_code_url || orderOrCharge?.last_transaction?.boleto_url || "";
+      } catch (err: any) {
+        console.error("[PIX Excecao] Erro ao buscar charge:", err.message);
       }
 
-      await supabase.from('pagamentos').insert([{
-        responsavel_id: newGuardian.id,
-        aluno_id: newStudent.id,
-        matricula_id: matricula.id,
-        valor: Number(valor_mensal),
-        status: 'pendente',
-        metodo_pagamento: 'pix',
-        pagarme: subscription.id,
-        data_vencimento: new Date().toISOString(),
-        qr_code: pixQrCode,
-        qr_code_url: pixQrCodeUrl
-      }]);
+      if (pagamento) {
+        if (pixQrCode && pixQrCodeUrl) {
+          await supabase.from('pagamentos').update({
+            qr_code: pixQrCode,
+            qr_code_url: pixQrCodeUrl
+          }).eq('id', pagamento.id);
+        }
+
+        const msg = `Olá, *${newGuardian.nome_completo}*! Sua matrícula de *${newStudent.nome_completo}* foi iniciada.\n\nPara visualizar as informações da matrícula e realizar o pagamento da primeira mensalidade via PIX, acesse o link abaixo:\n\nhttps://sportforkids.com.br/pix/${pagamento.id}`;
+        await sendWhatsAppMessage(newGuardian.telefone || '11999999999', newGuardian.nome_completo, msg, unidade).catch(e => console.error("Erro whats webhook pix", e));
+      }
+
+
 
       res.json({ success: true, matricula, pixQrCodeUrl });
     } catch (err: any) {
