@@ -1013,10 +1013,10 @@ async function createPagarmeSubscription(data: {
   }
 
   // Sanitização e Validação de Dados para Pagar.me
-  const cleanCPF = data.customer.cpf.replace(/\D/g, '');
-  const cleanPhone = data.customer.phone.replace(/\D/g, '');
+  const cleanCPF = (data.customer.cpf || '00000000000').replace(/\D/g, '');
+  const cleanPhone = (data.customer.phone || '11999999999').replace(/\D/g, '');
   
-  let cleanName = data.customer.name.trim();
+  let cleanName = (data.customer.name || 'Cliente Sem Nome').trim();
   if (!cleanName.includes(' ')) {
     cleanName = `${cleanName} ${cleanName}`; 
   }
@@ -1155,13 +1155,17 @@ async function createPagarmeSubscription(data: {
     if (apiError) {
       console.error("--- ERRO API PAGAR.ME (ASSINATURA) ---");
       console.error("Mensagem:", apiError.message);
+      let errorDetails = "";
       if (apiError.errors) {
         console.error("Detalhes dos Erros:");
         Object.keys(apiError.errors).forEach(key => {
-          console.error(`  - ${key}: ${apiError.errors[key].join(', ')}`);
+          const detail = `${key}: ${apiError.errors[key].join(', ')}`;
+          console.error(`  - ${detail}`);
+          errorDetails += ` ${detail} |`;
         });
       }
       console.error("-------------------------");
+      throw new Error(`Erro Pagar.me: ${apiError.message} ${errorDetails}`);
     }
     
     if (error.response?.status === 401 || apiError?.message?.includes('Authorization has been denied')) {
