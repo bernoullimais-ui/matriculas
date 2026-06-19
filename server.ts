@@ -11794,7 +11794,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   // --- INÍCIO: FLUXO DE EXCEÇÃO PIX ---
   app.post("/api/admin/enroll-pix-existing", async (req, res) => {
     try {
-      const { adminId, guardianId, studentId, turmaId, unidade, valor_mensal, dia_vencimento, motivo_excecao, cupom_id } = req.body;
+      const { adminId, guardianId, studentId, turmaId, unidade, valor_mensal, dia_vencimento, motivo_excecao, cupom_id, valorDesconto } = req.body;
       
       const { data: guardian } = await supabase.from('responsaveis').select('*').eq('id', guardianId).single();
       const { data: student } = await supabase.from('alunos').select('*').eq('id', studentId).single();
@@ -11811,6 +11811,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         }
       }
 
+      const finalAmount = Math.max(1, Number(valor_mensal) - (valorDesconto || 0));
+
       const subscription = await createPagarmeSubscription({
         customer: {
           name: guardian.nome_completo,
@@ -11819,7 +11821,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
           phone: guardian.telefone || "11999999999"
         },
         paymentMethod: 'pix',
-        amount: Math.round(Number(valor_mensal) * 100),
+        amount: Math.round(finalAmount * 100),
         description: `Mensalidade Exceção PIX - ${student.nome_completo} (${turma.nome})`,
         code: mockPaymentId,
         cycles: 12,
@@ -11846,14 +11848,36 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       await supabase.from('pagamentos').insert([{
         responsavel_id: guardianId,
         matricula_id: matricula.id,
-        valor: Number(valor_mensal),
+        valor: finalAmount,
         status: 'pendente',
         metodo_pagamento: 'pix',
         pagarme: subscription.id,
         data_vencimento: new Date().toISOString()
       }]);
 
-      res.json({ success: true, matricula });
+      let pixQrCode = "";
+      let pixQrCodeUrl = "";
+      try {
+        let secretKey = getPagarmeSecretKey();
+        const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+        const chargesRes = await axios.get(`https://api.pagar.me/core/v5/subscriptions/${subscription.id}/charges`, {
+          headers: { 'Authorization': `Basic ${authHeader}` }
+        });
+        const firstCharge = chargesRes.data?.data?.[0];
+        if (firstCharge?.last_transaction?.transaction_type === 'pix') {
+          pixQrCode = firstCharge.last_transaction.qr_code;
+          pixQrCodeUrl = firstCharge.last_transaction.qr_code_url;
+        }
+      } catch (err: any) {
+        console.error("[PIX Excecao] Erro ao buscar charge:", err.message);
+      }
+
+      if (pixQrCode) {
+        const msg = `Olá, *${guardian.nome_completo}*! Sua matrícula de *${student.nome_completo}* foi iniciada.\n\nVocê pode pagar a primeira mensalidade via PIX utilizando o link do QR Code abaixo:\n\n${pixQrCodeUrl}\n\nOu copie e cole o código PIX:\n\n${pixQrCode}`;
+        await sendWhatsAppMessage(guardian.telefone || '11999999999', guardian.nome_completo, msg, unidade).catch(e => console.error("Erro whats", e));
+      }
+
+      res.json({ success: true, matricula, pix_qr_code: pixQrCode, pix_qr_code_url: pixQrCodeUrl });
     } catch (err: any) {
       console.error("[PIX Excecao] Erro:", err);
       res.status(500).json({ error: err.message });
@@ -11862,7 +11886,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
   app.post("/api/admin/enroll-pix-new", async (req, res) => {
     try {
-      const { adminId, guardian, student, turmaId, unidade, valor_mensal, dia_vencimento, motivo_excecao, cupom_id } = req.body;
+      const { adminId, guardian, student, turmaId, unidade, valor_mensal, dia_vencimento, motivo_excecao, cupom_id, valorDesconto } = req.body;
       
       const cleanCPF = sanitizeCPF(guardian.cpf);
       
