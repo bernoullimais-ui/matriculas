@@ -11977,8 +11977,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         headers: { 'Authorization': `Basic ${authHeader}`, 'Content-Type': 'application/json' }
       });
 
-      const qrCode = getNestedVal(orderData, 'qr_code') || getNestedVal(orderData, 'pix_qr_code');
-      const qrCodeUrl = getNestedVal(orderData, 'qr_code_url') || getNestedVal(orderData, 'pix_qr_code_url');
+      const qrCode = orderData.charges?.[0]?.last_transaction?.qr_code || orderData.charges?.[0]?.last_transaction?.pix_qr_code || orderData.qr_code;
+      const qrCodeUrl = orderData.charges?.[0]?.last_transaction?.qr_code_url || orderData.charges?.[0]?.last_transaction?.pix_qr_code_url || orderData.qr_code_url;
 
       if (qrCode) {
         const msg = `Olá, *${guardian.nome_completo}*! Segue a nova cobrança da mensalidade.\n\nVocê pode pagar via PIX utilizando o QR Code abaixo:\n\n${qrCodeUrl}\n\nOu copie e cole o código:\n\n${qrCode}`;
