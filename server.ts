@@ -1076,7 +1076,7 @@ async function createPagarmeSubscription(data: {
 
   const payload: any = {
     code: data.code,
-    payment_method: paymentMethod,
+    payment_method: paymentMethod === 'pix' ? 'boleto' : paymentMethod,
     interval: "month",
     interval_count: 1,
     billing_type: "prepaid",
@@ -1124,10 +1124,10 @@ async function createPagarmeSubscription(data: {
       cvv: data.card.cvv,
       billing_address: billingAddress
     };
-  } else if (paymentMethod === 'pix') {
-    // Adiciona configuração de expiração do PIX na assinatura
-    payload.pix = {
-      expires_in: 86400 // 24 horas para pagar cada ciclo
+  } else if (paymentMethod === 'pix' || paymentMethod === 'boleto') {
+    // Para assinaturas PIX, usamos boleto no Pagar.me (que gera um BolePix)
+    payload.boleto = {
+      instructions: "Mensalidade Sport for Kids (BolePix). Pode ser pago via PIX."
     };
   }
 
