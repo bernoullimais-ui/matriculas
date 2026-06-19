@@ -8017,16 +8017,24 @@ app.use('/api/admin', requireAdminAuth);
                   }
 
                   if (matricula) {
+                    const invoiceData = data;
+                    const chargeData = invoiceData.order?.charges?.[0] || invoiceData.charge || data.charges?.[0] || data.charge;
+                    const isPix = chargeData?.last_transaction?.transaction_type === 'pix' || data.payment_method === 'pix';
+                    const qrCodeUrl = isPix ? (chargeData?.last_transaction?.qr_code_url || chargeData?.last_transaction?.pix_qr_code_url || invoiceData.order?.qr_code_url) : null;
+                    const qrCodeStr = isPix ? (chargeData?.last_transaction?.qr_code || chargeData?.last_transaction?.pix_qr_code || invoiceData.order?.qr_code) : null;
+
                     const newPayment = {
                       matricula_id: matriculaId,
                       responsavel_id: (matricula as any).alunos?.responsavel_id,
                       aluno_id: matricula.aluno_id,
                       status: status,
-                      metodo_pagamento: 'cartão',
+                      metodo_pagamento: isPix ? 'pix' : 'cartão',
                       valor: eventAmount || (data.amount ? data.amount / 100 : 0),
                       data_vencimento: new Date().toISOString(),
                       pagarme: identifierId,
-                      data_pagamento: isPaid ? new Date().toISOString() : null
+                      data_pagamento: isPaid ? new Date().toISOString() : null,
+                      qr_code: qrCodeStr,
+                      qr_code_url: qrCodeUrl
                     };
                     
                     const { data: insertedPayment, error: insertError } = await supabase
