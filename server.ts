@@ -12071,6 +12071,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       // Create initial payment record
       const { data: pagamento } = await supabase.from('pagamentos').insert([{
         responsavel_id: guardianId,
+        aluno_id: studentId,
         matricula_id: matricula.id,
         valor: finalAmount,
         status: 'pendente',
@@ -12244,6 +12245,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       await supabase.from('pagamentos').insert([{
         responsavel_id: newGuardian.id,
+        aluno_id: newStudent.id,
         matricula_id: matricula.id,
         valor: Number(valor_mensal),
         status: 'pendente',
