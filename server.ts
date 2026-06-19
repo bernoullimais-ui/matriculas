@@ -947,7 +947,7 @@ async function createPagarmeSubscription(data: {
     cvv: string;
     cpf?: string;
   };
-  paymentMethod?: 'pix' | 'credit_card';
+  paymentMethod?: 'pix' | 'credit_card' | 'boleto';
   amount: number; // in cents
   description: string;
   code: string; // Reference ID for webhook
