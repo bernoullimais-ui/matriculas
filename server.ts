@@ -12018,26 +12018,36 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       let pixQrCode = "";
       let pixQrCodeUrl = "";
       try {
-        if (order.charges && order.charges[0] && order.charges[0].last_transaction?.transaction_type === 'pix') {
-          pixQrCode = order.charges[0].last_transaction.qr_code;
-          pixQrCodeUrl = order.charges[0].last_transaction.qr_code_url;
-        } else {
+        let orderOrCharge: any = null;
+        if (order.charges && order.charges[0]) {
+           orderOrCharge = order.charges[0];
+        }
+
+        if (!orderOrCharge) {
             let secretKey = getPagarmeSecretKey();
             const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
             const orderRes = await axios.get(`https://api.pagar.me/core/v5/orders/${order.id}`, {
               headers: { 'Authorization': `Basic ${authHeader}` }
             });
-            const firstCharge = orderRes.data?.charges?.[0];
-            if (firstCharge?.last_transaction?.transaction_type === 'pix') {
-              pixQrCode = firstCharge.last_transaction.qr_code;
-              pixQrCodeUrl = firstCharge.last_transaction.qr_code_url;
-            }
+            orderOrCharge = orderRes.data?.charges?.[0];
+        }
+
+        if (orderOrCharge && orderOrCharge.last_transaction) {
+          pixQrCode = orderOrCharge.last_transaction.qr_code || orderOrCharge.last_transaction.pix_qr_code || orderOrCharge.last_transaction.boleto_url || "";
+          pixQrCodeUrl = orderOrCharge.last_transaction.qr_code_url || orderOrCharge.last_transaction.pix_qr_code_url || orderOrCharge.last_transaction.boleto_url || "";
         }
       } catch (err: any) {
         console.error("[PIX Excecao] Erro ao buscar charge:", err.message);
       }
 
       if (pagamento) {
+        if (pixQrCode && pixQrCodeUrl) {
+          await supabase.from('pagamentos').update({
+            qr_code: pixQrCode,
+            qr_code_url: pixQrCodeUrl
+          }).eq('id', pagamento.id);
+        }
+
         const msg = `Olá, *${guardian.nome_completo}*! Sua matrícula de *${student.nome_completo}* foi iniciada.\n\nPara visualizar as informações da matrícula e realizar o pagamento da primeira mensalidade via PIX, acesse o link abaixo:\n\nhttps://sportforkids.com.br/pix/${pagamento.id}`;
         await sendWhatsAppMessage(guardian.telefone || '11999999999', guardian.nome_completo, msg, unidade).catch(e => console.error("Erro whats webhook pix", e));
       }
@@ -12110,6 +12120,33 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       if (matError) throw matError;
 
+      let pixQrCode = "";
+      let pixQrCodeUrl = "";
+      try {
+        let orderOrCharge: any = null;
+        if (subscription.charges && subscription.charges[0]) {
+           orderOrCharge = subscription.charges[0];
+        } else if (subscription.current_cycle && subscription.current_cycle.charge) {
+           orderOrCharge = subscription.current_cycle.charge;
+        }
+
+        if (!orderOrCharge) {
+            let secretKey = getPagarmeSecretKey();
+            const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+            const subRes = await axios.get(`https://api.pagar.me/core/v5/subscriptions/${subscription.id}`, {
+              headers: { 'Authorization': `Basic ${authHeader}` }
+            });
+            orderOrCharge = subRes.data?.current_cycle?.charge || subRes.data?.charges?.[0];
+        }
+
+        if (orderOrCharge && orderOrCharge.last_transaction) {
+          pixQrCode = orderOrCharge.last_transaction.qr_code || orderOrCharge.last_transaction.pix_qr_code || orderOrCharge.last_transaction.boleto_url || "";
+          pixQrCodeUrl = orderOrCharge.last_transaction.qr_code_url || orderOrCharge.last_transaction.pix_qr_code_url || orderOrCharge.last_transaction.boleto_url || "";
+        }
+      } catch(e) {
+        console.error("Erro fetch PIX subscription", e);
+      }
+
       await supabase.from('pagamentos').insert([{
         responsavel_id: newGuardian.id,
         matricula_id: matricula.id,
@@ -12117,10 +12154,12 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         status: 'pendente',
         metodo_pagamento: 'pix',
         pagarme: subscription.id,
-        data_vencimento: new Date().toISOString()
+        data_vencimento: new Date().toISOString(),
+        pix_qr_code: pixQrCode,
+        pix_qr_code_url: pixQrCodeUrl
       }]);
 
-      res.json({ success: true, matricula });
+      res.json({ success: true, matricula, pixQrCodeUrl });
     } catch (err: any) {
       console.error("[PIX Excecao Novo] Erro:", err);
       res.status(500).json({ error: err.message });
