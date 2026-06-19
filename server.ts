@@ -1127,7 +1127,8 @@ async function createPagarmeSubscription(data: {
   } else if (paymentMethod === 'pix' || paymentMethod === 'boleto') {
     // Para assinaturas PIX, usamos boleto no Pagar.me (que gera um BolePix)
     payload.boleto = {
-      instructions: "Mensalidade Sport for Kids (BolePix). Pode ser pago via PIX."
+      instructions: "Mensalidade Sport for Kids (BolePix). Pode ser pago via PIX.",
+      max_days_to_pay_past_due: 0
     };
   }
 
