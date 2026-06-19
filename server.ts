@@ -12155,8 +12155,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         metodo_pagamento: 'pix',
         pagarme: subscription.id,
         data_vencimento: new Date().toISOString(),
-        pix_qr_code: pixQrCode,
-        pix_qr_code_url: pixQrCodeUrl
+        qr_code: pixQrCode,
+        qr_code_url: pixQrCodeUrl
       }]);
 
       res.json({ success: true, matricula, pixQrCodeUrl });
