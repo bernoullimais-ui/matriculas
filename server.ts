@@ -2014,9 +2014,10 @@ app.use('/api/admin', requireAdminAuth);
         await supabase.rpc('increment_campaign_metric', { p_campaign_id: campaign.id, p_field: 'visitas_lp' });
       } catch (err) {
         // Fallback manual se RPC não existir
-        supabase.from('campaign_metrics').select('visitas_lp').eq('campaign_id', campaign.id).maybeSingle().then(({ data: m }) => {
-          if (m) supabase.from('campaign_metrics').update({ visitas_lp: (m.visitas_lp || 0) + 1 }).eq('campaign_id', campaign.id);
-        });
+        const { data: m } = await supabase.from('campaign_metrics').select('visitas_lp').eq('campaign_id', campaign.id).maybeSingle();
+        if (m) {
+          await supabase.from('campaign_metrics').update({ visitas_lp: (m.visitas_lp || 0) + 1 }).eq('campaign_id', campaign.id);
+        }
       }
       
       res.json({ ok: true });
