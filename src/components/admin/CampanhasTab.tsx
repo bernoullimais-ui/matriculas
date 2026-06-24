@@ -300,7 +300,7 @@ export default function CampanhasTab() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard label="Enviados" value={m?.emails_enviados ?? 0} icon={<Mail size={20} />} color="bg-indigo-50 text-indigo-600" />
           <MetricCard label="Entregues" value={m?.emails_entregues ?? 0} sub={m?.emails_enviados ? `${((( m?.emails_entregues ?? 0) / m.emails_enviados) * 100).toFixed(0)}% dos enviados` : undefined} icon={<CheckCircle2 size={20} />} color="bg-emerald-50 text-emerald-600" />
-          <MetricCard label="Abertos" value={`${openRate}%`} sub={`${m?.emails_abertos ?? 0} e-mails`} icon={<Eye size={20} />} color="bg-sky-50 text-sky-600" />
+          <MetricCard label="Abertos" value={`${openRate}%`} sub={`${m?.emails_abertos ?? 0} ${selectedCampaign.metodo_envio === 'whatsapp' ? 'mensagens' : 'e-mails'}`} icon={<Eye size={20} />} color="bg-sky-50 text-sky-600" />
           <MetricCard label="CTR" value={`${ctr}%`} sub={`${m?.cliques ?? 0} cliques`} icon={<MousePointerClick size={20} />} color="bg-violet-50 text-violet-600" />
           <MetricCard label="Visitas LP" value={m?.visitas_lp ?? 0} icon={<Globe size={20} />} color="bg-amber-50 text-amber-600" />
           <MetricCard label="Leads" value={m?.leads_gerados ?? 0} sub={m?.visitas_lp ? `${conv}% das visitas` : undefined} icon={<UserPlus size={20} />} color="bg-rose-50 text-rose-600" />
@@ -312,8 +312,8 @@ export default function CampanhasTab() {
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
           <h3 className="text-sm font-black text-slate-700 uppercase tracking-wider mb-5">Funil de Conversão</h3>
           {[
-            { label: 'E-mails Enviados', value: m?.emails_enviados ?? 0, color: 'bg-indigo-500' },
-            { label: 'E-mails Abertos', value: m?.emails_abertos ?? 0, color: 'bg-sky-500' },
+            { label: selectedCampaign.metodo_envio === 'whatsapp' ? 'Msg Enviadas' : 'E-mails Enviados', value: m?.emails_enviados ?? 0, color: 'bg-indigo-500' },
+            { label: selectedCampaign.metodo_envio === 'whatsapp' ? 'Msg Abertas' : 'E-mails Abertos', value: m?.emails_abertos ?? 0, color: 'bg-sky-500' },
             { label: 'Cliques', value: m?.cliques ?? 0, color: 'bg-violet-500' },
             { label: 'Visitas LP', value: m?.visitas_lp ?? 0, color: 'bg-amber-500' },
             { label: 'Leads Gerados', value: m?.leads_gerados ?? 0, color: 'bg-rose-500' },
@@ -335,7 +335,7 @@ export default function CampanhasTab() {
         </div>
 
         {/* Send Log */}
-        <SendLogTable campaignId={selectedCampaign.id} />
+        <SendLogTable campaignId={selectedCampaign.id} isWhatsapp={selectedCampaign.metodo_envio === 'whatsapp'} />
       </div>
     );
   }
@@ -542,7 +542,7 @@ export default function CampanhasTab() {
 
 // ─── Send Log Table ───────────────────────────────────────────────────────────
 
-function SendLogTable({ campaignId }: { campaignId: string }) {
+function SendLogTable({ campaignId, isWhatsapp }: { campaignId: string, isWhatsapp: boolean }) {
   const [sends, setSends] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -571,7 +571,7 @@ function SendLogTable({ campaignId }: { campaignId: string }) {
             <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wider">
               <tr>
                 <th className="px-6 py-3 text-left">Destinatário</th>
-                <th className="px-6 py-3 text-left">E-mail</th>
+                <th className="px-6 py-3 text-left">{isWhatsapp ? 'WhatsApp' : 'E-mail'}</th>
                 <th className="px-6 py-3 text-left">Status</th>
                 <th className="px-6 py-3 text-left">Enviado em</th>
               </tr>
