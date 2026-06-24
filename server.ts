@@ -2017,7 +2017,7 @@ app.use('/api/admin', requireAdminAuth);
         organizationId: identity.utalk_organization_id,
         message: textContent || ''
       };
-      if (mediaUrl) payload.mediaUrl = mediaUrl;
+      if (mediaUrl) payload.file = mediaUrl;
 
       const response = await fetch("https://app-utalk.umbler.com/api/v1/messages/simplified/", {
         method: 'POST',
@@ -12309,7 +12309,7 @@ app.post('/api/webhooks/wix', async (req, res) => {
       };
 
       if (mediaUrl) {
-        payload.mediaUrl = mediaUrl;
+        payload.file = mediaUrl;
       }
 
       const response = await fetch("https://app-utalk.umbler.com/api/v1/messages/simplified/", {
