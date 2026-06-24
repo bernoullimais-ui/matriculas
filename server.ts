@@ -1815,7 +1815,7 @@ app.use('/api/admin', requireAdminAuth);
         targets: c.campaign_targets || [],
         email: c.campaign_emails?.[0] || null,
         landing_page: c.campaign_landing_pages?.[0] || null,
-        metrics: c.campaign_metrics?.[0] || null,
+        metrics: Array.isArray(c.campaign_metrics) ? c.campaign_metrics[0] : c.campaign_metrics || null,
       }));
 
       res.json(campaigns);
@@ -1840,7 +1840,7 @@ app.use('/api/admin', requireAdminAuth);
         targets: data.campaign_targets || [],
         email: data.campaign_emails?.[0] || null,
         landing_page: data.campaign_landing_pages?.[0] || null,
-        metrics: data.campaign_metrics?.[0] || null,
+        metrics: Array.isArray(data.campaign_metrics) ? data.campaign_metrics[0] : data.campaign_metrics || null,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
