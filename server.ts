@@ -2135,7 +2135,7 @@ O usuário fornecerá uma descrição em linguagem natural de um público-alvo (
 Sua tarefa é retornar APENAS O CORPO de uma função Javascript que avalia se um aluno atende aos critérios.
 A função recebe um objeto 'context' com as seguintes propriedades:
 - aluno: { id, nome_completo, email, unidade, status_matricula, is_lead, ... }
-- matriculas: array de matrículas (todas as unidades) { id, aluno_id, plano, status, turma_id, created_at, ... }
+- matriculas: array de matrículas { id, aluno_id, plano, status, turma_id, unidade, created_at, ... }
 - experimentais: array de aulas experimentais { id, aluno_id, unidade, status, data_status_atualizado, ... }
 - turmas: array de todas as turmas { id, nome, unidades_selecionadas, ... }
 
@@ -2144,8 +2144,9 @@ Regras:
 2. Para datas relativas (ex: "últimos 5 meses"), use Date.now() e matemática com ms. Exemplo: Date.now() - 5 * 30 * 24 * 60 * 60 * 1000. Lembre-se que campos de data como 'created_at' são strings ISO.
 3. Seja extremamente defensivo e seguro. Exemplo: if (!context.matriculas) return false;
 4. Se o prompt falar sobre 'responsáveis com apenas um filho', conte os alunos agrupando pela mesma chave (ex: mas seu escopo iterará por 'aluno', então você só consegue checar dados daquele aluno. Filtre o mais próximo possível).
-5. IMPORTANTÍSSIMO: Os valores no banco de dados podem variar em maiúsculas/minúsculas. Para propriedades de texto como 'status', 'status_matricula' ou 'unidade', SEMPRE use comparações case-insensitive (toLowerCase) e inclua as variações, ex: \`['ativo', 'ativa'].includes(val.toLowerCase())\` ou \`val.toLowerCase().includes('ativo')\`. O mesmo vale para 'unidade'.
-6. Para filtrar pela "unidade" do aluno, verifique a propriedade \`aluno.unidade\` (ex: \`aluno.unidade.toLowerCase().includes('bernoulli')\`). Evite buscar as unidades_selecionadas da turma, a menos que seja explicitamente solicitado.
+5. IMPORTANTÍSSIMO: Os valores no banco de dados podem variar em maiúsculas/minúsculas. Para propriedades de texto como 'status', 'status_matricula', ou 'unidade', SEMPRE use comparações case-insensitive (toLowerCase) e inclua as variações, ex: \`['ativo', 'ativa'].includes(val.toLowerCase())\` ou \`val.toLowerCase().includes('ativo')\`. O mesmo vale para 'unidade'.
+6. Para filtrar alunos de uma unidade específica: Se a regra for sobre "matrícula ativa na unidade X", verifique \`matricula.unidade\` e \`matricula.status\`. Se for sobre o "perfil do aluno ser da unidade X", verifique \`aluno.unidade\`. Evite buscar 'unidades_selecionadas' da turma.
+7. Modalidades esportivas e aulas (ex: Judô, Capoeira, Ballet, Natação) são relacionadas ao 'nome' da TURMA. Encontre a turma usando \`context.turmas.find(t => t.id === matricula.turma_id)\` e verifique se \`turma.nome\` contém a modalidade desejada. O campo 'plano' da matrícula serve apenas para financeiro (Mensal, Anual, etc).
 `;
 
       const response = await ai.models.generateContent({
@@ -2156,11 +2157,42 @@ Regras:
       let code = response.text || '';
       code = code.replace(/```javascript/gi, '').replace(/```js/gi, '').replace(/```/g, '').trim();
 
-      // Buscar dados para avaliar no backend
-      const { data: alunos } = await supabase.from('alunos').select('*');
-      const { data: matriculas } = await supabase.from('matriculas').select('*');
-      const { data: experimentais } = await supabase.from('aulas_experimentais').select('*');
-      const { data: turmas } = await supabase.from('turmas').select('*');
+      // Função para buscar todos os registros (paginação manual devido ao limite de 1000 do Supabase)
+      const fetchAll = async (table: string) => {
+        let all: any[] = [];
+        let from = 0;
+        const limit = 1000;
+        while (true) {
+          const { data } = await supabase.from(table).select('*').range(from, from + limit - 1);
+          if (!data || data.length === 0) break;
+          all = all.concat(data);
+          if (data.length < limit) break;
+          from += limit;
+        }
+        return all;
+      };
+
+      // Buscar dados completos para avaliar no backend
+      const alunos = await fetchAll('alunos');
+      const matriculas = await fetchAll('matriculas');
+      const experimentais = await fetchAll('aulas_experimentais');
+      const turmasRaw = await fetchAll('turmas');
+      const turmaUnidades = await fetchAll('turma_unidades');
+      const unidades = await fetchAll('unidades');
+
+      const turmaUnidadesMap: Record<string, string[]> = {};
+      if (turmaUnidades && unidades) {
+        turmaUnidades.forEach(tu => {
+          const unidadeObj = unidades.find(u => String(u.id) === String(tu.unidade_id));
+          if (!turmaUnidadesMap[tu.turma_id]) turmaUnidadesMap[tu.turma_id] = [];
+          if (unidadeObj) turmaUnidadesMap[tu.turma_id].push(unidadeObj.nome);
+        });
+      }
+
+      const turmas = (turmasRaw || []).map(t => ({
+        ...t,
+        unidades_selecionadas: turmaUnidadesMap[t.id] || (t.unidade_nome ? [t.unidade_nome] : [])
+      }));
 
       const filterFn = new Function('context', code);
       const matched = (alunos || []).filter(aluno => {
