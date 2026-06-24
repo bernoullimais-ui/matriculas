@@ -2153,7 +2153,23 @@ Regras:
       });
       let code = response.text || '';
       code = code.replace(/```javascript/gi, '').replace(/```js/gi, '').replace(/```/g, '').trim();
-      res.json({ code });
+
+      // Buscar dados para avaliar no backend
+      const { data: alunos } = await supabase.from('alunos').select('*');
+      const { data: matriculas } = await supabase.from('matriculas').select('*');
+      const { data: experimentais } = await supabase.from('aulas_experimentais').select('*');
+      const { data: turmas } = await supabase.from('turmas').select('*');
+
+      const filterFn = new Function('context', code);
+      const matched = (alunos || []).filter(aluno => {
+        try {
+          return filterFn({ aluno, matriculas: matriculas || [], experimentais: experimentais || [], turmas: turmas || [] });
+        } catch(e) {
+          return false;
+        }
+      });
+
+      res.json({ code, matched });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

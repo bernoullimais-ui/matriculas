@@ -749,16 +749,9 @@ function CampaignWizard({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erro na IA');
       
-      // Avaliação restrita na memória do navegador usando os arrays já carregados
-      const filterFn = new Function('context', data.code);
-      const matched = alunos.filter(aluno => {
-        try {
-          return filterFn({ aluno, matriculas, experimentais, turmas: options.turmas });
-        } catch(e) { return false; }
-      });
-      setPreviewAiAlunos(matched);
-      if (matched.length > 0) {
-        toast.success(`IA encontrou ${matched.length} alunos!`);
+      setPreviewAiAlunos(data.matched || []);
+      if (data.matched && data.matched.length > 0) {
+        toast.success(`IA encontrou ${data.matched.length} alunos!`);
       } else {
         toast.error('Nenhum aluno encontrado para esse critério.');
       }
