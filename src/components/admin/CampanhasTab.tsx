@@ -742,7 +742,12 @@ function CampaignWizard({
                 <div className="flex flex-wrap gap-2">
                   {targets.map((t, i) => (
                     <span key={i} className="inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-100 text-indigo-800 rounded-xl text-xs font-bold">
-                      {t.tipo_alvo === 'unidade' ? `📍 ${t.valor_alvo}` : t.tipo_alvo === 'turma' ? `🎓 Turma: ${t.valor_alvo}` : t.tipo_alvo === 'inativos' ? '🔴 Inativos' : '🟡 Leads'}
+                      {t.tipo_alvo === 'unidade' ? `📍 ${t.valor_alvo}` : t.tipo_alvo === 'turma' ? (() => {
+                        const turma = options.turmas.find(x => x.id === t.valor_alvo);
+                        if (!turma) return `🎓 Turma: ${t.valor_alvo}`;
+                        const unStr = turma.unidades_selecionadas?.length ? ` (${turma.unidades_selecionadas.join(', ')})` : '';
+                        return `🎓 Turma: ${turma.nome}${unStr}`;
+                      })() : t.tipo_alvo === 'inativos' ? '🔴 Inativos' : '🟡 Leads'}
                       <button onClick={() => removeTarget(i)} className="hover:text-red-600 transition-colors"><X size={12} /></button>
                     </span>
                   ))}
