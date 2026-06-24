@@ -149,7 +149,7 @@ export default function CampanhasTab() {
   const [filterStatus, setFilterStatus] = useState<string>('todos');
   const [search, setSearch] = useState('');
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
-  const [options, setOptions] = useState<{ unidades: string[]; turmas: { id: string; nome: string; unidade: string }[] }>({ unidades: [], turmas: [] });
+  const [options, setOptions] = useState<{ unidades: string[]; turmas: { id: string; nome: string; unidades_selecionadas?: string[] }[] }>({ unidades: [], turmas: [] });
 
   const fetchCampaigns = useCallback(async () => {
     setLoading(true);
@@ -704,7 +704,7 @@ function CampaignWizard({
                     disabled={!filterUnidadeTurma}
                   >
                     <option value="">{filterUnidadeTurma ? 'Selecione uma turma...' : 'Selecione a unidade acima primeiro'}</option>
-                    {options.turmas.filter(t => t.unidade === filterUnidadeTurma).map(t => (
+                    {options.turmas.filter(t => t.unidades_selecionadas?.includes(filterUnidadeTurma)).map(t => (
                       <option key={t.id} value={t.id}>{t.nome}</option>
                     ))}
                   </select>
