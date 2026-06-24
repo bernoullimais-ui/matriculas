@@ -10,6 +10,7 @@ import axios from "axios";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as fs from "fs";
+import { GoogleGenAI } from "@google/genai";
 
 // Handle __dirname and __filename for both ESM and CJS environments
 const currentDirname = process.cwd();
@@ -1646,6 +1647,13 @@ app.use('/api/admin', requireAdminAuth);
         query = query.in('status_matricula', ['cancelado', 'Cancelado', 'Inativo', 'inativo']);
       } else if (target.tipo_alvo === 'leads') {
         query = query.eq('is_lead', true);
+      } else if (target.tipo_alvo === 'custom_ai') {
+        try {
+          const parsed = JSON.parse(target.valor_alvo || '{}');
+          const ids = parsed.ids || [];
+          if (ids.length === 0) continue;
+          query = query.in('id', ids);
+        } catch(e) { continue; }
       } else {
         continue;
       }
@@ -2109,6 +2117,43 @@ app.use('/api/admin', requireAdminAuth);
       if (!targets || targets.length === 0) return res.json({ count: 0 });
       const audiencia = await buildCampaignAudiencia(targets);
       res.json({ count: audiencia.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/admin/campaigns/smart-audience-filter — AI generation
+  app.post('/api/admin/campaigns/smart-audience-filter', requireAdminAuth, async (req, res) => {
+    try {
+      const { prompt } = req.body;
+      if (!process.env.GEMINI_API_KEY) {
+        return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
+      }
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const systemInstruction = `Você é um assistente de engenharia de software especializado em Javascript.
+O usuário fornecerá uma descrição em linguagem natural de um público-alvo (alunos) que ele deseja filtrar.
+Sua tarefa é retornar APENAS O CORPO de uma função Javascript que avalia se um aluno atende aos critérios.
+A função recebe um objeto 'context' com as seguintes propriedades:
+- aluno: { id, nome_completo, email, unidade, status_matricula, is_lead, ... }
+- matriculas: array de matrículas (todas as unidades) { id, aluno_id, plano, status, turma_id, created_at, ... }
+- experimentais: array de aulas experimentais { id, aluno_id, unidade, status, data_status_atualizado, ... }
+- turmas: array de todas as turmas { id, nome, unidades_selecionadas, ... }
+
+Regras:
+1. Retorne APENAS o código javascript puro do corpo da função, sem a assinatura "function(context) {", e terminando com "return true" ou "return false". Não use blocos de marcação markdown como \`\`\`javascript, não coloque textos explicativos.
+2. Para datas relativas (ex: "últimos 5 meses"), use Date.now() e matemática com ms. Exemplo: Date.now() - 5 * 30 * 24 * 60 * 60 * 1000. Lembre-se que campos de data como 'created_at' são strings ISO.
+3. Seja extremamente defensivo e seguro. Exemplo: if (!context.matriculas) return false;
+4. Se o prompt falar sobre 'responsáveis com apenas um filho', conte os alunos agrupando pela mesma chave (ex: mas seu escopo iterará por 'aluno', então você só consegue checar dados daquele aluno. Filtre o mais próximo possível).
+`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: { systemInstruction, temperature: 0.1 }
+      });
+      let code = response.text || '';
+      code = code.replace(/```javascript/gi, '').replace(/```js/gi, '').replace(/```/g, '').trim();
+      res.json({ code });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

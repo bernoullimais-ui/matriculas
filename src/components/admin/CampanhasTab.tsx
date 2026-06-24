@@ -636,6 +636,9 @@ function CampaignWizard({
   const [selectedUnidade, setSelectedUnidade] = useState('');
   const [selectedTurma, setSelectedTurma] = useState('');
   const [filterUnidadeTurma, setFilterUnidadeTurma] = useState('');
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [generatingAi, setGeneratingAi] = useState(false);
+  const [previewAiAlunos, setPreviewAiAlunos] = useState<any[] | null>(null);
 
   // Step 3
   const [assunto, setAssunto] = useState(editCampaign?.email?.assunto || '');
@@ -732,6 +735,48 @@ function CampaignWizard({
 
   const inputClass = "w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none text-sm font-medium";
   const labelClass = "block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5";
+
+  const generateAiAudience = async () => {
+    if (!aiPrompt.trim()) return;
+    setGeneratingAi(true);
+    setPreviewAiAlunos(null);
+    try {
+      const res = await fetch('/api/admin/campaigns/smart-audience-filter', {
+        method: 'POST',
+        headers: authHeader(),
+        body: JSON.stringify({ prompt: aiPrompt })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erro na IA');
+      
+      // Avaliação restrita na memória do navegador usando os arrays já carregados
+      const filterFn = new Function('context', data.code);
+      const matched = alunos.filter(aluno => {
+        try {
+          return filterFn({ aluno, matriculas, experimentais, turmas: options.turmas });
+        } catch(e) { return false; }
+      });
+      setPreviewAiAlunos(matched);
+      if (matched.length > 0) {
+        toast.success(`IA encontrou ${matched.length} alunos!`);
+      } else {
+        toast.error('Nenhum aluno encontrado para esse critério.');
+      }
+    } catch(e: any) {
+      toast.error(e.message || 'Erro ao processar instrução da IA');
+    } finally {
+      setGeneratingAi(false);
+    }
+  };
+
+  const addAiTarget = () => {
+    if (!previewAiAlunos || previewAiAlunos.length === 0) return;
+    const ids = previewAiAlunos.map(a => a.id);
+    const valor = JSON.stringify({ prompt: aiPrompt, ids });
+    setTargets(prev => [...prev, { tipo_alvo: 'custom_ai', valor_alvo: valor }]);
+    setAiPrompt('');
+    setPreviewAiAlunos(null);
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -883,19 +928,78 @@ function CampaignWizard({
               })}
             </div>
 
+            {/* Audiência Inteligente (IA) */}
+            <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl p-5 border border-indigo-100 shadow-inner">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white shrink-0">🤖</div>
+                <div>
+                  <label className="block text-sm font-black text-indigo-900 uppercase tracking-wider">Audiência Inteligente</label>
+                  <p className="text-xs text-indigo-700/80">Descreva o perfil dos alunos e a IA fará o filtro automático.</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <textarea 
+                  value={aiPrompt}
+                  onChange={e => setAiPrompt(e.target.value)}
+                  placeholder="Ex: Alunos inativos nos últimos 5 meses na unidade Bernoulli..."
+                  className="w-full px-4 py-3 bg-white border border-indigo-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none text-sm min-h-[80px] resize-y"
+                  disabled={generatingAi}
+                />
+                <button 
+                  onClick={generateAiAudience}
+                  disabled={generatingAi || !aiPrompt.trim()}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-md shadow-indigo-500/20"
+                >
+                  {generatingAi ? <><Loader2 size={16} className="animate-spin" /> Processando com Gemini...</> : <><Plus size={16} /> Gerar Filtro</>}
+                </button>
+              </div>
+
+              {/* Preview dos Resultados da IA */}
+              {previewAiAlunos && (
+                <div className="mt-4 p-4 bg-white rounded-xl border border-indigo-200">
+                  <h4 className="text-sm font-bold text-slate-800 mb-2">
+                    ✅ A IA encontrou {previewAiAlunos.length} aluno{previewAiAlunos.length !== 1 ? 's' : ''}
+                  </h4>
+                  {previewAiAlunos.length > 0 ? (
+                    <>
+                      <div className="max-h-32 overflow-y-auto mb-3 bg-slate-50 p-2 rounded text-xs text-slate-600">
+                        {previewAiAlunos.slice(0, 50).map((a, idx) => (
+                          <div key={idx}>• {a.nome_completo || a.nome} ({a.unidade})</div>
+                        ))}
+                        {previewAiAlunos.length > 50 && <div className="mt-1 font-bold italic text-indigo-600">... e mais {previewAiAlunos.length - 50} alunos.</div>}
+                      </div>
+                      <button 
+                        onClick={addAiTarget}
+                        className="w-full py-2 bg-green-600 text-white rounded-lg font-bold text-sm hover:bg-green-700 transition-colors"
+                      >
+                        Confirmar e Adicionar Segmento
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => setPreviewAiAlunos(null)} className="text-xs text-indigo-600 font-bold hover:underline">Tentar novamente</button>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Active targets */}
             {targets.length > 0 && (
               <div className="space-y-2">
                 <label className={labelClass}>Segmentos Selecionados</label>
                 <div className="flex flex-wrap gap-2">
                   {targets.map((t, i) => (
-                    <span key={i} className="inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-100 text-indigo-800 rounded-xl text-xs font-bold">
+                    <span key={i} className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold ${t.tipo_alvo === 'custom_ai' ? 'bg-gradient-to-r from-purple-100 to-indigo-100 text-indigo-800 border border-indigo-200' : 'bg-indigo-100 text-indigo-800'}`}>
                       {t.tipo_alvo === 'unidade' ? `📍 ${t.valor_alvo}` : t.tipo_alvo === 'turma' ? (() => {
                         const turma = options.turmas.find(x => x.id === t.valor_alvo);
                         if (!turma) return `🎓 Turma: ${t.valor_alvo}`;
                         const unStr = turma.unidades_selecionadas?.length ? ` (${turma.unidades_selecionadas.join(', ')})` : '';
                         return `🎓 Turma: ${turma.nome}${unStr}`;
-                      })() : t.tipo_alvo === 'inativos' ? '🔴 Inativos' : '🟡 Leads'}
+                      })() : t.tipo_alvo === 'inativos' ? '🔴 Inativos' : t.tipo_alvo === 'leads' ? '🟡 Leads' : (() => {
+                        try {
+                          const p = JSON.parse(t.valor_alvo || '{}');
+                          return `🤖 IA: ${p.prompt?.substring(0, 30)}...`;
+                        } catch(e) { return '🤖 IA (Segmento)'; }
+                      })()}
                       <button onClick={() => removeTarget(i)} className="hover:text-red-600 transition-colors"><X size={12} /></button>
                     </span>
                   ))}
