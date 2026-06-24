@@ -2207,13 +2207,25 @@ Regras:
       }));
 
       const filterFn = new Function('context', code);
+      let errorCount = 0;
+      let lastError = '';
       const matched = (alunos || []).filter(aluno => {
         try {
           return filterFn({ aluno, matriculas: matriculas || [], experimentais: experimentais || [], turmas: turmas || [], eventos: eventos || [], evento_inscricoes: evento_inscricoes || [] });
-        } catch(e) {
+        } catch(e: any) {
+          errorCount++;
+          lastError = e.message;
           return false;
         }
       });
+
+      if (matched.length === 0) {
+        matched.push({
+          id: 'debug-id',
+          nome_completo: `DEBUG: al=${alunos?.length}, mat=${matriculas?.length}, err=${errorCount}, lastErr=${lastError}, code=${code.substring(0, 40)}...`,
+          unidade: 'SYS'
+        });
+      }
 
       res.json({ code, matched });
     } catch (e: any) {
