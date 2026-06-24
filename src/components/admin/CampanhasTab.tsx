@@ -6,7 +6,9 @@ import {
   DollarSign, Play, Pause, Edit3, Trash2, ExternalLink, Copy,
   AlertCircle, Clock, Zap, Target, Image as ImageIcon, FileText, Code
 } from 'lucide-react';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import toast from 'react-hot-toast';
+import { supabase } from '../../lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -529,9 +531,21 @@ function CampaignWizard({
   const [whatsappCta, setWhatsappCta] = useState('');
   const [lpCor, setLpCor] = useState(editCampaign?.landing_page?.cor_primaria || '#4f46e5');
 
+  const [lojaProdutos, setLojaProdutos] = useState<any[]>([]);
+  const [eventosDisponiveis, setEventosDisponiveis] = useState<any[]>([]);
+
   // Step 5
   const [dispararAgora, setDispararAgora] = useState(true);
   const [agendadoPara, setAgendadoPara] = useState('');
+
+  useEffect(() => {
+    supabase.from('loja_produtos').select('id, nome, slug').then(({ data }) => {
+      if (data) setLojaProdutos(data);
+    });
+    supabase.from('eventos').select('id, titulo, slug').then(({ data }) => {
+      if (data) setEventosDisponiveis(data);
+    });
+  }, []);
 
   useEffect(() => {
     if (nome && !editCampaign) setSlug(slugify(nome));
@@ -852,7 +866,7 @@ function CampaignWizard({
             </div>
             
             {(ctaType === 'personalizavel' || ctaType === 'whatsapp') && (
-              <div>
+              <div className="col-span-2">
                 <label className={labelClass}>{ctaType === 'whatsapp' ? 'Número do WhatsApp (com DDD)' : 'URL Personalizada do Botão'}</label>
                 {ctaType === 'whatsapp' ? (
                   <input 
@@ -872,6 +886,36 @@ function CampaignWizard({
                     className={inputClass} 
                   />
                 )}
+              </div>
+            )}
+            {ctaType === 'loja' && (
+              <div className="col-span-2">
+                <label className={labelClass}>Selecionar Produto</label>
+                <select 
+                  value={lpCtaUrl.startsWith('/loja/produto') ? lpCtaUrl : '/loja'}
+                  onChange={(e) => setLpCtaUrl(e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="/loja">Todos os Produtos</option>
+                  {lojaProdutos.map(p => (
+                    <option key={p.id} value={`/loja/produto/${p.slug}`}>Produto: {p.nome}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {ctaType === 'eventos' && (
+              <div className="col-span-2">
+                <label className={labelClass}>Selecionar Evento</label>
+                <select 
+                  value={lpCtaUrl.startsWith('/eventos/') && lpCtaUrl.length > 9 ? lpCtaUrl : '/eventos'}
+                  onChange={(e) => setLpCtaUrl(e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="/eventos">Todos os Eventos</option>
+                  {eventosDisponiveis.map(e => (
+                    <option key={e.id} value={`/eventos/${e.slug}`}>Evento: {e.titulo}</option>
+                  ))}
+                </select>
               </div>
             )}
             <div>
