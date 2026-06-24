@@ -1985,7 +1985,7 @@ app.use('/api/admin', requireAdminAuth);
       const { id } = req.params;
       const { dest, template, mediaUrl, lpUrl } = req.body;
 
-      if (!dest || !dest.whatsapp || !template) {
+      if (!dest || !dest.whatsapp || (!template && !mediaUrl)) {
         return res.status(400).json({ error: 'Faltam dados obrigatórios' });
       }
 
@@ -2015,7 +2015,7 @@ app.use('/api/admin', requireAdminAuth);
         toPhone: cleanTo,
         fromPhone: cleanFrom,
         organizationId: identity.utalk_organization_id,
-        message: textContent
+        message: textContent || ''
       };
       if (mediaUrl) payload.mediaUrl = mediaUrl;
 

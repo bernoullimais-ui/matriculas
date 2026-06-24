@@ -919,28 +919,33 @@ function CampaignWizard({
                 </div>
               </>
             )}
-            <div>
-              <label className={labelClass}>Formato</label>
-              <div className="flex gap-3">
-                {[
-                  { v: 'texto', label: 'Texto Puro', icon: <FileText size={16} /> },
-                  ...(metodoEnvio !== 'whatsapp' ? [{ v: 'html', label: 'HTML', icon: <Code size={16} /> }] : []),
-                  { v: 'imagem', label: 'Flyer (Imagem)', icon: <ImageIcon size={16} /> },
-                ].map(f => (
-                  <button key={f.v} onClick={() => setFormato(f.v as any)}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-2 text-sm font-bold transition-all ${formato === f.v ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-indigo-300'}`}>
-                    {f.icon} {f.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {formato === 'imagem' ? (
+            {metodoEnvio !== 'whatsapp' && (
               <div>
-                <label className={labelClass}>URL do Flyer/Imagem</label>
+                <label className={labelClass}>Formato</label>
+                <div className="flex gap-3">
+                  {[
+                    { v: 'texto', label: 'Texto Puro', icon: <FileText size={16} /> },
+                    { v: 'html', label: 'HTML', icon: <Code size={16} /> },
+                    { v: 'imagem', label: 'Flyer (Imagem)', icon: <ImageIcon size={16} /> },
+                  ].map(f => (
+                    <button key={f.v} onClick={() => setFormato(f.v as any)}
+                      className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-2 text-sm font-bold transition-all ${formato === f.v ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-indigo-300'}`}>
+                      {f.icon} {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(metodoEnvio === 'whatsapp' || formato === 'imagem') && (
+              <div>
+                <label className={labelClass}>{metodoEnvio === 'whatsapp' ? 'URL do Flyer/Imagem (Opcional)' : 'URL do Flyer/Imagem'}</label>
                 <input value={imagemUrl} onChange={e => setImagemUrl(e.target.value)} placeholder="https://..." className={inputClass} />
                 {imagemUrl && <img src={imagemUrl} className="mt-3 max-h-40 rounded-xl object-cover border border-slate-200" alt="preview" />}
               </div>
-            ) : (
+            )}
+            
+            {(metodoEnvio === 'whatsapp' || formato !== 'imagem') && (
               <div>
                 <label className={labelClass}>{formato === 'html' ? 'Conteúdo HTML' : (metodoEnvio === 'whatsapp' ? 'Mensagem do WhatsApp' : 'Conteúdo do E-mail')}</label>
                 <textarea
