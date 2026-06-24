@@ -2148,6 +2148,7 @@ Regras:
 6. Para filtrar alunos de uma unidade específica: Se a regra for sobre "matrícula ativa na unidade X", verifique \`matricula.unidade\` e \`matricula.status\`. Se for sobre o "perfil do aluno ser da unidade X", verifique \`aluno.unidade\`. Evite buscar 'unidades_selecionadas' da turma.
 7. Modalidades esportivas e aulas (ex: Judô, Capoeira, Ballet, Natação) são relacionadas ao 'nome' da TURMA. Encontre a turma usando \`context.turmas.find(t => t.id === matricula.turma_id)\` e verifique se \`turma.nome\` contém a modalidade desejada. O campo 'plano' da matrícula serve apenas para financeiro (Mensal, Anual, etc).
 8. CRÍTICO E OBRIGATÓRIO: Lembre-se que \`context.matriculas\` e \`context.experimentais\` contêm TUDO. Você DEVE cruzar os dados verificando sempre \`matricula.aluno_id === context.aluno.id\` ANTES de verificar qualquer outra regra. Caso contrário, você aprovará todos os alunos indevidamente.
+9. SEMÂNTICA DE NEGATIVAS: Se o prompt pedir "Alunos sem matrícula ativa na unidade X", o usuário implicitamente quer "Alunos PERTENCENTES à unidade X (aluno.unidade === X), mas que NÃO possuem matrícula ativa nela". Sempre ancore a unidade no 'aluno.unidade' para cenários de negação ou exclusão, para evitar retornar falsos positivos de alunos de outras unidades.
 `;
 
       const response = await ai.models.generateContent({
