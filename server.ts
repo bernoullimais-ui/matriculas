@@ -2182,9 +2182,7 @@ app.use('/api/admin', requireAdminAuth);
       const { data: campaign } = await supabase.from('campaigns').select('id').eq('slug', slug).maybeSingle();
 
       // Insere no Supabase como lead
-      const leadId = `lead-campanha-${slug}-${Date.now()}`;
       const { error: insertErr } = await supabase.from('alunos').insert([{
-        id: leadId,
         nome_completo: nome_aluno || nome_responsavel,
         unidade: 'SEM UNIDADE',
         responsavel_1: nome_responsavel,
@@ -2192,7 +2190,6 @@ app.use('/api/admin', requireAdminAuth);
         whatsapp_1: whatsapp || null,
         status_matricula: 'lead',
         is_lead: true,
-        contato: whatsapp || '',
         created_at: new Date().toISOString(),
       }]);
 
