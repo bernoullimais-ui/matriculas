@@ -347,7 +347,14 @@ export default function CampanhasTab() {
         options={options}
         editCampaign={selectedCampaign}
         onClose={() => { setSubView('list'); setSelectedCampaign(null); }}
-        onSaved={() => { fetchCampaigns(); setSubView('list'); setSelectedCampaign(null); }}
+        onSaved={(newId, triggerSend) => { 
+          fetchCampaigns(); 
+          setSubView('list'); 
+          setSelectedCampaign(null); 
+          if (newId && triggerSend) {
+            setTimeout(() => handleSend(newId), 500); // Small delay to let the UI update and list fetch
+          }
+        }}
       />
     );
   }
@@ -600,7 +607,7 @@ function CampaignWizard({
   options: { unidades: string[]; turmas: { id: string; nome: string; unidade: string }[] };
   editCampaign: Campaign | null;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (campaignId?: string, triggerSend?: boolean) => void;
 }) {
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
@@ -707,8 +714,9 @@ function CampaignWizard({
       const res = await fetch(url, { method, headers: authHeader(), body: JSON.stringify(payload) });
 
       if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro ao salvar'); }
+      const savedCampaign = await res.json();
       toast.success(editCampaign ? 'Campanha atualizada!' : 'Campanha criada!');
-      onSaved();
+      onSaved(savedCampaign.id || editCampaign?.id, status === 'ativa' && dispararAgora);
     } catch (e: any) {
       toast.error(e.message || 'Erro ao salvar campanha');
     } finally { setSaving(false); }
