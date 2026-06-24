@@ -1977,7 +1977,12 @@ app.use('/api/admin', requireAdminAuth);
       if (!data) return res.status(404).json({ error: 'Campanha não encontrada' });
 
       const lp = (data as any).campaign_landing_pages?.[0];
-      if (!lp || !lp.ativa) return res.status(404).json({ error: 'Landing page não disponível' });
+      if (!lp) return res.status(404).json({ error: 'Landing page não configurada' });
+      
+      // Se não estiver ativa e não for rascunho, bloqueia (404)
+      if (!lp.ativa && data.status !== 'rascunho') {
+        return res.status(404).json({ error: 'Landing page inativa' });
+      }
 
       res.json({
         campaign: { nome: data.nome, slug: data.slug, status: data.status },
