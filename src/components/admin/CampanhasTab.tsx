@@ -60,6 +60,7 @@ interface CampaignLandingPage {
   cta_texto?: string;
   cta_url?: string;
   cor_primaria?: string;
+  cupom_id?: string;
   ativa?: boolean;
 }
 
@@ -150,7 +151,7 @@ export default function CampanhasTab() {
   const [filterStatus, setFilterStatus] = useState<string>('todos');
   const [search, setSearch] = useState('');
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
-  const [options, setOptions] = useState<{ unidades: string[]; turmas: { id: string; nome: string; unidades_selecionadas?: string[] }[] }>({ unidades: [], turmas: [] });
+  const [options, setOptions] = useState<{ unidades: string[]; turmas: { id: string; nome: string; unidades_selecionadas?: string[] }[]; cupons: { id: string; nome: string }[] }>({ unidades: [], turmas: [], cupons: [] });
 
   const fetchCampaigns = useCallback(async () => {
     setLoading(true);
@@ -164,9 +165,15 @@ export default function CampanhasTab() {
   const fetchOptions = useCallback(async () => {
     try {
       const res = await fetch('/api/options', { headers: authHeader() });
+      const resCupons = await fetch('/api/admin/cupons', { headers: authHeader() });
       if (res.ok) {
         const data = await res.json();
-        setOptions({ unidades: (data.unidades || []).map((u: any) => u.nome || u), turmas: data.turmas || [] });
+        const cuponsData = resCupons.ok ? await resCupons.json() : [];
+        setOptions({ 
+          unidades: (data.unidades || []).map((u: any) => u.nome || u), 
+          turmas: data.turmas || [],
+          cupons: cuponsData.filter((c: any) => c.ativo)
+        });
       }
     } catch (e) { /* silent */ }
   }, []);
@@ -604,7 +611,7 @@ function SendLogTable({ campaignId, isWhatsapp }: { campaignId: string, isWhatsa
 function CampaignWizard({
   options, editCampaign, onClose, onSaved
 }: {
-  options: { unidades: string[]; turmas: { id: string; nome: string; unidade: string }[] };
+  options: { unidades: string[]; turmas: { id: string; nome: string; unidade?: string }[]; cupons?: { id: string; nome: string }[] };
   editCampaign: Campaign | null;
   onClose: () => void;
   onSaved: (campaignId?: string, triggerSend?: boolean) => void;
@@ -652,6 +659,7 @@ function CampaignWizard({
   const [ctaType, setCtaType] = useState('personalizavel');
   const [whatsappCta, setWhatsappCta] = useState('');
   const [lpCor, setLpCor] = useState(editCampaign?.landing_page?.cor_primaria || '#4f46e5');
+  const [cupomId, setCupomId] = useState(editCampaign?.landing_page?.cupom_id || '');
 
   const [lojaProdutos, setLojaProdutos] = useState<any[]>([]);
   const [eventosDisponiveis, setEventosDisponiveis] = useState<any[]>([]);
@@ -706,7 +714,7 @@ function CampaignWizard({
         agendado_para: !dispararAgora && agendadoPara ? agendadoPara : null,
         targets,
         email: (tipo !== 'landing_page') ? { assunto, formato, conteudo, imagem_url: imagemUrl, remetente_email: remetenteEmail, remetente_nome: remetenteNome } : null,
-        landing_page: (tipo !== 'email') ? { titulo: lpTitulo, descricao: lpDescricao, banner_url: lpBanner, video_url: lpVideo, preco_original: lpPrecoOrig ? parseFloat(lpPrecoOrig) : null, preco_promocional: lpPrecoPromo ? parseFloat(lpPrecoPromo) : null, condicao_texto: lpCondicao, cta_texto: lpCtaTexto, cta_url: lpCtaUrl, cor_primaria: lpCor, ativa: lpAtiva } : null,
+        landing_page: (tipo !== 'email') ? { titulo: lpTitulo, descricao: lpDescricao, banner_url: lpBanner, video_url: lpVideo, preco_original: lpPrecoOrig ? parseFloat(lpPrecoOrig) : null, preco_promocional: lpPrecoPromo ? parseFloat(lpPrecoPromo) : null, condicao_texto: lpCondicao, cta_texto: lpCtaTexto, cta_url: lpCtaUrl, cor_primaria: lpCor, cupom_id: cupomId || null, ativa: lpAtiva } : null,
       };
 
       const url = editCampaign ? `/api/admin/campaigns/${editCampaign.id}` : '/api/admin/campaigns';
@@ -1019,6 +1027,15 @@ function CampaignWizard({
             <div>
               <label className={labelClass}>Condição Especial</label>
               <input value={lpCondicao} onChange={e => setLpCondicao(e.target.value)} placeholder="Ex: 3 primeiras mensalidades com 30% OFF" className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Cupom Promocional (Opcional)</label>
+              <select value={cupomId} onChange={e => setCupomId(e.target.value)} className={inputClass}>
+                <option value="">-- Nenhum cupom --</option>
+                {options.cupons?.map(c => (
+                  <option key={c.id} value={c.id}>{c.nome}</option>
+                ))}
+              </select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>

@@ -185,6 +185,12 @@ export default function CampanhaPublica() {
                     {lp.condicao_texto && (
                       <p className="text-sm text-slate-500 mt-1 font-medium">{lp.condicao_texto}</p>
                     )}
+                    {lp.cupom && (
+                      <p className="text-sm text-indigo-500 mt-1 font-bold">
+                        usando o cupom <span className="uppercase">{lp.cupom.nome}</span>
+                        {lp.cupom.data_expiracao ? ` até ${new Date(lp.cupom.data_expiracao).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}` : ''}
+                      </p>
+                    )}
                   </div>
                 </div>
               )}

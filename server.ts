@@ -2122,7 +2122,7 @@ app.use('/api/admin', requireAdminAuth);
       const { slug } = req.params;
       const { data, error } = await supabase
         .from('campaigns')
-        .select('id, nome, slug, status, campaign_landing_pages(*)')
+        .select('id, nome, slug, status, campaign_landing_pages(*, cupom:cupons(*))')
         .eq('slug', slug)
         .neq('status', 'arquivada')
         .maybeSingle();
