@@ -2147,6 +2147,7 @@ Regras:
 5. IMPORTANTÍSSIMO: Os valores no banco de dados podem variar em maiúsculas/minúsculas. Para propriedades de texto como 'status', 'status_matricula', ou 'unidade', SEMPRE use comparações case-insensitive (toLowerCase) e inclua as variações, ex: \`['ativo', 'ativa'].includes(val.toLowerCase())\` ou \`val.toLowerCase().includes('ativo')\`. O mesmo vale para 'unidade'.
 6. Para filtrar alunos de uma unidade específica: Se a regra for sobre "matrícula ativa na unidade X", verifique \`matricula.unidade\` e \`matricula.status\`. Se for sobre o "perfil do aluno ser da unidade X", verifique \`aluno.unidade\`. Evite buscar 'unidades_selecionadas' da turma.
 7. Modalidades esportivas e aulas (ex: Judô, Capoeira, Ballet, Natação) são relacionadas ao 'nome' da TURMA. Encontre a turma usando \`context.turmas.find(t => t.id === matricula.turma_id)\` e verifique se \`turma.nome\` contém a modalidade desejada. O campo 'plano' da matrícula serve apenas para financeiro (Mensal, Anual, etc).
+8. CRÍTICO E OBRIGATÓRIO: Lembre-se que \`context.matriculas\` e \`context.experimentais\` contêm TUDO. Você DEVE cruzar os dados verificando sempre \`matricula.aluno_id === context.aluno.id\` ANTES de verificar qualquer outra regra. Caso contrário, você aprovará todos os alunos indevidamente.
 `;
 
       const response = await ai.models.generateContent({
