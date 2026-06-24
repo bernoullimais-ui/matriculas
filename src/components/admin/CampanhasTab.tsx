@@ -525,6 +525,8 @@ function CampaignWizard({
   const [lpCondicao, setLpCondicao] = useState(editCampaign?.landing_page?.condicao_texto || '');
   const [lpCtaTexto, setLpCtaTexto] = useState(editCampaign?.landing_page?.cta_texto || 'Quero me Matricular');
   const [lpCtaUrl, setLpCtaUrl] = useState(editCampaign?.landing_page?.cta_url || '');
+  const [ctaType, setCtaType] = useState('personalizavel');
+  const [whatsappCta, setWhatsappCta] = useState('');
   const [lpCor, setLpCor] = useState(editCampaign?.landing_page?.cor_primaria || '#4f46e5');
 
   // Step 5
@@ -827,10 +829,51 @@ function CampaignWizard({
                 <input value={lpCtaTexto} onChange={e => setLpCtaTexto(e.target.value)} placeholder="Quero me Matricular" className={inputClass} />
               </div>
               <div>
-                <label className={labelClass}>URL do Botão (CTA)</label>
-                <input value={lpCtaUrl} onChange={e => setLpCtaUrl(e.target.value)} placeholder="https://wa.me/5511..." className={inputClass} />
+                <label className={labelClass}>Ação do Botão (CTA)</label>
+                <select 
+                  value={ctaType}
+                  onChange={(e) => {
+                    setCtaType(e.target.value);
+                    if (e.target.value === 'matricula') setLpCtaUrl('/portal');
+                    if (e.target.value === 'loja') setLpCtaUrl('/loja');
+                    if (e.target.value === 'eventos') setLpCtaUrl('/eventos');
+                    if (e.target.value === 'personalizavel') setLpCtaUrl('');
+                    if (e.target.value === 'whatsapp') setLpCtaUrl(`https://wa.me/55${whatsappCta.replace(/\\D/g, '')}`);
+                  }}
+                  className={inputClass}
+                >
+                  <option value="personalizavel">Link Personalizado</option>
+                  <option value="whatsapp">Link WhatsApp</option>
+                  <option value="matricula">Modal de Matrícula</option>
+                  <option value="loja">Produtos da Loja</option>
+                  <option value="eventos">Eventos</option>
+                </select>
               </div>
             </div>
+            
+            {(ctaType === 'personalizavel' || ctaType === 'whatsapp') && (
+              <div>
+                <label className={labelClass}>{ctaType === 'whatsapp' ? 'Número do WhatsApp (com DDD)' : 'URL Personalizada do Botão'}</label>
+                {ctaType === 'whatsapp' ? (
+                  <input 
+                    value={whatsappCta} 
+                    onChange={e => {
+                      setWhatsappCta(e.target.value);
+                      setLpCtaUrl(`https://wa.me/55${e.target.value.replace(/\\D/g, '')}`);
+                    }} 
+                    placeholder="Ex: 11999999999" 
+                    className={inputClass} 
+                  />
+                ) : (
+                  <input 
+                    value={lpCtaUrl} 
+                    onChange={e => setLpCtaUrl(e.target.value)} 
+                    placeholder="https://..." 
+                    className={inputClass} 
+                  />
+                )}
+              </div>
+            )}
             <div>
               <label className={labelClass}>Cor Primária</label>
               <div className="flex items-center gap-3">
