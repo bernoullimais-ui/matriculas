@@ -801,7 +801,16 @@ function CampaignWizard({
                   placeholder={formato === 'html' ? '<h1>Olá {NOME_ALUNO}!</h1>\n<p>Temos uma oferta especial para você...</p>' : 'Olá {NOME_ALUNO},\n\nTemos uma oferta especial para você...\n\nAcesse: {LINK_LP}'}
                   className={`${inputClass} resize-none font-mono text-xs`}
                 />
-                <p className="text-xs text-slate-400 mt-1.5">Tags disponíveis: <code className="bg-slate-100 px-1 rounded">{'{NOME_ALUNO}'}</code> <code className="bg-slate-100 px-1 rounded">{'{UNIDADE}'}</code> <code className="bg-slate-100 px-1 rounded">{'{LINK_LP}'}</code></p>
+                <p className="text-xs text-slate-400 mt-1.5 flex flex-wrap gap-1 items-center">
+                  Tags disponíveis: 
+                  <code className="bg-slate-100 px-1 rounded">{'{NOME_ALUNO}'}</code>
+                  <code className="bg-slate-100 px-1 rounded">{'{UNIDADE}'}</code>
+                  <code className="bg-slate-100 px-1 rounded">{'{TURMA}'}</code>
+                  <code className="bg-slate-100 px-1 rounded">{'{RESPONSAVEL}'}</code>
+                  <code className="bg-slate-100 px-1 rounded">{'{PLANO}'}</code>
+                  <code className="bg-slate-100 px-1 rounded">{'{STATUS_MATRICULA}'}</code>
+                  <code className="bg-slate-100 px-1 rounded">{'{LINK_LP}'}</code>
+                </p>
               </div>
             )}
           </div>

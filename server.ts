@@ -1624,11 +1624,11 @@ app.use('/api/admin', requireAdminAuth);
   const scheduledCampaignJobs = new Map<string, any>();
 
   /** Monta a lista de destinatários com base nos segmentos da campanha */
-  async function buildCampaignAudiencia(targets: any[]): Promise<{ email: string; nome: string; alunoId?: string }[]> {
-    const emailMap = new Map<string, { email: string; nome: string; alunoId?: string }>();
+  async function buildCampaignAudiencia(targets: any[]): Promise<{ email: string; nome: string; alunoId?: string; unidade: string; status_matricula: string; plano: string; responsavel: string; turma: string }[]> {
+    const emailMap = new Map<string, any>();
 
     for (const target of targets) {
-      let query = supabase.from('alunos').select('id, nome_completo, email, responsavel_id');
+      let query = supabase.from('alunos').select('id, nome_completo, email, responsavel_id, unidade, status_matricula, plano, responsavel_1');
 
       if (target.tipo_alvo === 'unidade') {
         query = query.eq('unidade', target.valor_alvo).in('status_matricula', ['ativo', 'Ativo', 'Ativa', 'ativa']);
@@ -1653,6 +1653,20 @@ app.use('/api/admin', requireAdminAuth);
       const { data: alunos } = await query;
       if (!alunos || alunos.length === 0) continue;
 
+      const alunoIdsList = alunos.map((a: any) => a.id);
+      const { data: matriculas } = await supabase
+        .from('matriculas')
+        .select('aluno_id, plano, turma')
+        .in('aluno_id', alunoIdsList)
+        .order('created_at', { ascending: false });
+
+      const matriculaMap = new Map();
+      if (matriculas) {
+        for (const m of matriculas) {
+          if (!matriculaMap.has(m.aluno_id)) matriculaMap.set(m.aluno_id, m);
+        }
+      }
+
       // Busca os e-mails dos responsáveis manualmente para evitar erro PGRST200 (falta de FK constraint)
       const responsavelIds = [...new Set(alunos.map((a: any) => a.responsavel_id).filter(Boolean))];
       const responsaveisMap = new Map<string, string>();
@@ -1666,8 +1680,18 @@ app.use('/api/admin', requireAdminAuth);
       for (const a of alunos) {
         const emailDest = a.email || responsaveisMap.get(a.responsavel_id);
         if (!emailDest || !emailDest.includes('@')) continue;
+        const mat = matriculaMap.get(a.id) || {};
         if (!emailMap.has(emailDest)) {
-          emailMap.set(emailDest, { email: emailDest, nome: a.nome_completo || 'Aluno', alunoId: a.id });
+          emailMap.set(emailDest, { 
+            email: emailDest, 
+            nome: a.nome_completo || 'Aluno', 
+            alunoId: a.id,
+            unidade: a.unidade || '',
+            status_matricula: a.status_matricula || '',
+            plano: mat.plano || a.plano || '',
+            responsavel: a.responsavel_1 || '',
+            turma: mat.turma || ''
+          });
         }
       }
     }
@@ -1719,7 +1743,11 @@ app.use('/api/admin', requireAdminAuth);
           text
             .replace(/\{NOME_ALUNO\}/g, dest.nome)
             .replace(/\{LINK_LP\}/g, lpUrl)
-            .replace(/\{UNIDADE\}/g, '');
+            .replace(/\{UNIDADE\}/g, dest.unidade)
+            .replace(/\{TURMA\}/g, dest.turma)
+            .replace(/\{RESPONSAVEL\}/g, dest.responsavel)
+            .replace(/\{PLANO\}/g, dest.plano)
+            .replace(/\{STATUS_MATRICULA\}/g, dest.status_matricula);
 
         if (emailConfig.formato === 'texto') {
           textContent = replaceTags(emailConfig.conteudo || '');
