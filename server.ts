@@ -2135,7 +2135,7 @@ O usuário fornecerá uma descrição em linguagem natural de um público-alvo (
 Sua tarefa é retornar APENAS O CORPO de uma função Javascript que avalia se um aluno atende aos critérios.
 A função recebe um objeto 'context' com as seguintes propriedades:
 - aluno: { id, nome_completo, email, unidade, status_matricula, is_lead, ... }
-- matriculas: array de matrículas { id, aluno_id, plano, status, turma_id, unidade, created_at, ... }
+- matriculas: array de matrículas { id, aluno_id, plano, status, turma_id, unidade, created_at, data_cancelamento, ... }
 - experimentais: array de aulas experimentais { id, aluno_id, unidade, status, data_status_atualizado, ... }
 - turmas: array de todas as turmas { id, nome, unidades_selecionadas, ... }
 - eventos: array de eventos { id, titulo, slug, data_inicio, ... }
@@ -2152,6 +2152,7 @@ Regras:
 8. CRÍTICO E OBRIGATÓRIO: Lembre-se que \`context.matriculas\` e \`context.experimentais\` contêm TUDO. Você DEVE cruzar os dados verificando sempre \`matricula.aluno_id === context.aluno.id\` ANTES de verificar qualquer outra regra. Caso contrário, você aprovará todos os alunos indevidamente.
 9. SEMÂNTICA DE NEGATIVAS: Se o prompt pedir "Alunos sem matrícula ativa na unidade X", o usuário implicitamente quer "Alunos PERTENCENTES à unidade X (aluno.unidade === X), mas que NÃO possuem matrícula ativa nela". Sempre ancore a unidade no 'aluno.unidade' para cenários de negação ou exclusão, para evitar retornar falsos positivos de alunos de outras unidades.
 10. INSCRIÇÕES EM EVENTOS: Se o prompt mencionar "evento", "inscritos no evento X", use \`context.eventos\` e \`context.evento_inscricoes\`. Cruze usando \`inscricao.aluno_id === context.aluno.id\` e \`inscricao.evento_id === evento.id\`. Filtre pelo \`evento.titulo\` (case-insensitive) e considere status 'confirmada' se pedir inscritos.
+11. CANCELAMENTOS: Se o prompt falar sobre "cancelamentos de matrícula num período", você DEVE verificar se \`matricula.status\` inclui 'cancelado' ou 'cancelada' E você OBRIGATORIAMENTE DEVE usar \`matricula.data_cancelamento\` para avaliar quando ocorreu. Não use \`created_at\` para data de cancelamento!
 `;
 
       const response = await ai.models.generateContent({
