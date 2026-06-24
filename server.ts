@@ -1628,7 +1628,7 @@ app.use('/api/admin', requireAdminAuth);
     const emailMap = new Map<string, any>();
 
     for (const target of targets) {
-      let query = supabase.from('alunos').select('id, nome_completo, email, responsavel_id, unidade, status_matricula, plano, responsavel_1, contato, whatsapp_1');
+      let query = supabase.from('alunos').select('id, nome_completo, email, responsavel_id, unidade, status_matricula, plano, responsavel_1, whatsapp_1, whatsapp_2');
 
       if (target.tipo_alvo === 'unidade') {
         query = query.eq('unidade', target.valor_alvo).in('status_matricula', ['ativo', 'Ativo', 'Ativa', 'ativa']);
@@ -1680,7 +1680,7 @@ app.use('/api/admin', requireAdminAuth);
       for (const a of alunos) {
         const resp = responsaveisMap.get(a.responsavel_id) || {} as any;
         const emailDest = a.email || resp.email;
-        const whatsappDest = a.whatsapp_1 || a.contato || resp.whatsapp || resp.celular;
+        const whatsappDest = a.whatsapp_1 || a.whatsapp_2 || resp.whatsapp || resp.celular;
         
         // We require either email or whatsapp, because it could be an email campaign or a whatsapp campaign
         if (!emailDest && !whatsappDest) continue;
