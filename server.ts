@@ -2011,7 +2011,8 @@ app.use('/api/admin', requireAdminAuth);
       if (!campaign) return res.json({ ok: true });
       
       try {
-        await supabase.rpc('increment_campaign_metric', { p_campaign_id: campaign.id, p_field: 'visitas_lp' });
+        const { error: rpcErr } = await supabase.rpc('increment_campaign_metric', { p_campaign_id: campaign.id, p_field: 'visitas_lp' });
+        if (rpcErr) throw rpcErr;
       } catch (err) {
         // Fallback manual se RPC não existir
         const { data: m } = await supabase.from('campaign_metrics').select('visitas_lp').eq('campaign_id', campaign.id).maybeSingle();
