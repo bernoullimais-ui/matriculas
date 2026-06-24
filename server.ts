@@ -1628,7 +1628,7 @@ app.use('/api/admin', requireAdminAuth);
     const emailMap = new Map<string, { email: string; nome: string; alunoId?: string }>();
 
     for (const target of targets) {
-      let query = supabase.from('alunos').select('id, nome_completo, email, responsaveis!responsavel_id(email)');
+      let query = supabase.from('alunos').select('id, nome_completo, email, responsavel_id');
 
       if (target.tipo_alvo === 'unidade') {
         query = query.eq('unidade', target.valor_alvo).in('status_matricula', ['ativo', 'Ativo', 'Ativa', 'ativa']);
@@ -1651,10 +1651,20 @@ app.use('/api/admin', requireAdminAuth);
       }
 
       const { data: alunos } = await query;
-      if (!alunos) continue;
+      if (!alunos || alunos.length === 0) continue;
+
+      // Busca os e-mails dos responsáveis manualmente para evitar erro PGRST200 (falta de FK constraint)
+      const responsavelIds = [...new Set(alunos.map((a: any) => a.responsavel_id).filter(Boolean))];
+      const responsaveisMap = new Map<string, string>();
+      if (responsavelIds.length > 0) {
+        const { data: respData } = await supabase.from('responsaveis').select('id, email').in('id', responsavelIds);
+        if (respData) {
+          respData.forEach((r: any) => responsaveisMap.set(r.id, r.email));
+        }
+      }
 
       for (const a of alunos) {
-        const emailDest = a.email || (a as any).responsaveis?.email;
+        const emailDest = a.email || responsaveisMap.get(a.responsavel_id);
         if (!emailDest || !emailDest.includes('@')) continue;
         if (!emailMap.has(emailDest)) {
           emailMap.set(emailDest, { email: emailDest, nome: a.nome_completo || 'Aluno', alunoId: a.id });
