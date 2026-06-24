@@ -507,6 +507,7 @@ function CampaignWizard({
   );
   const [selectedUnidade, setSelectedUnidade] = useState('');
   const [selectedTurma, setSelectedTurma] = useState('');
+  const [filterUnidadeTurma, setFilterUnidadeTurma] = useState('');
 
   // Step 3
   const [assunto, setAssunto] = useState(editCampaign?.email?.assunto || '');
@@ -685,15 +686,34 @@ function CampaignWizard({
             {/* Turma */}
             <div className="bg-slate-50 rounded-xl p-4 space-y-3">
               <label className={labelClass}>Por Turma</label>
-              <div className="flex gap-2">
-                <select value={selectedTurma} onChange={e => setSelectedTurma(e.target.value)} className={`${inputClass} flex-1`}>
-                  <option value="">Selecione uma turma...</option>
-                  {options.turmas.map(t => <option key={t.id} value={t.id}>{t.nome} ({t.unidade})</option>)}
+              <div className="flex flex-col gap-2">
+                <select 
+                  value={filterUnidadeTurma} 
+                  onChange={e => { setFilterUnidadeTurma(e.target.value); setSelectedTurma(''); }} 
+                  className={inputClass}
+                >
+                  <option value="">Selecione uma unidade para filtrar as turmas...</option>
+                  {options.unidades.map(u => <option key={u} value={u}>{u}</option>)}
                 </select>
-                <button onClick={() => { if (selectedTurma) addTarget('turma', selectedTurma); setSelectedTurma(''); }}
-                  className="px-4 py-3 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition-colors shrink-0">
-                  <Plus size={16} />
-                </button>
+                
+                <div className="flex gap-2">
+                  <select 
+                    value={selectedTurma} 
+                    onChange={e => setSelectedTurma(e.target.value)} 
+                    className={`${inputClass} flex-1`}
+                    disabled={!filterUnidadeTurma}
+                  >
+                    <option value="">{filterUnidadeTurma ? 'Selecione uma turma...' : 'Selecione a unidade acima primeiro'}</option>
+                    {options.turmas.filter(t => t.unidade === filterUnidadeTurma).map(t => (
+                      <option key={t.id} value={t.id}>{t.nome}</option>
+                    ))}
+                  </select>
+                  <button onClick={() => { if (selectedTurma) addTarget('turma', selectedTurma); setSelectedTurma(''); }}
+                    disabled={!selectedTurma}
+                    className="px-4 py-3 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition-colors shrink-0 disabled:opacity-50">
+                    <Plus size={16} />
+                  </button>
+                </div>
               </div>
             </div>
 
