@@ -1624,11 +1624,11 @@ app.use('/api/admin', requireAdminAuth);
   const scheduledCampaignJobs = new Map<string, any>();
 
   /** Monta a lista de destinatários com base nos segmentos da campanha */
-  async function buildCampaignAudiencia(targets: any[]): Promise<{ email: string; nome: string; alunoId?: string; unidade: string; status_matricula: string; plano: string; responsavel: string; turma: string }[]> {
+  async function buildCampaignAudiencia(targets: any[]): Promise<{ email: string; whatsapp: string; nome: string; alunoId?: string; unidade: string; status_matricula: string; plano: string; responsavel: string; turma: string }[]> {
     const emailMap = new Map<string, any>();
 
     for (const target of targets) {
-      let query = supabase.from('alunos').select('id, nome_completo, email, responsavel_id, unidade, status_matricula, plano, responsavel_1');
+      let query = supabase.from('alunos').select('id, nome_completo, email, responsavel_id, unidade, status_matricula, plano, responsavel_1, contato, whatsapp_1');
 
       if (target.tipo_alvo === 'unidade') {
         query = query.eq('unidade', target.valor_alvo).in('status_matricula', ['ativo', 'Ativo', 'Ativa', 'ativa']);
@@ -1671,19 +1671,29 @@ app.use('/api/admin', requireAdminAuth);
       const responsavelIds = [...new Set(alunos.map((a: any) => a.responsavel_id).filter(Boolean))];
       const responsaveisMap = new Map<string, string>();
       if (responsavelIds.length > 0) {
-        const { data: respData } = await supabase.from('responsaveis').select('id, email').in('id', responsavelIds);
+        const { data: respData } = await supabase.from('responsaveis').select('id, email, whatsapp, celular').in('id', responsavelIds);
         if (respData) {
-          respData.forEach((r: any) => responsaveisMap.set(r.id, r.email));
+          respData.forEach((r: any) => responsaveisMap.set(r.id, r));
         }
       }
 
       for (const a of alunos) {
-        const emailDest = a.email || responsaveisMap.get(a.responsavel_id);
-        if (!emailDest || !emailDest.includes('@')) continue;
+        const resp = responsaveisMap.get(a.responsavel_id) || {} as any;
+        const emailDest = a.email || resp.email;
+        const whatsappDest = a.whatsapp_1 || a.contato || resp.whatsapp || resp.celular;
+        
+        // We require either email or whatsapp, because it could be an email campaign or a whatsapp campaign
+        if (!emailDest && !whatsappDest) continue;
+
         const mat = matriculaMap.get(a.id) || {};
-        if (!emailMap.has(emailDest)) {
-          emailMap.set(emailDest, { 
-            email: emailDest, 
+        
+        // We use a combined key to avoid duplicates if someone has the same email/whatsapp
+        const uniqueKey = `${emailDest || ''}_${whatsappDest || ''}`;
+        
+        if (!emailMap.has(uniqueKey)) {
+          emailMap.set(uniqueKey, { 
+            email: emailDest || '', 
+            whatsapp: whatsappDest || '',
             nome: a.nome_completo || 'Aluno', 
             alunoId: a.id,
             unidade: a.unidade || '',
@@ -1964,6 +1974,112 @@ app.use('/api/admin', requireAdminAuth);
       const { id } = req.params;
       const result = await dispatchCampaignEmails(id);
       res.json({ success: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/admin/campaigns/:id/send-whatsapp-single — disparo individual frontend orchestration
+  app.post('/api/admin/campaigns/:id/send-whatsapp-single', requireAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { dest, template, mediaUrl, lpUrl } = req.body;
+
+      if (!dest || !dest.whatsapp || !template) {
+        return res.status(400).json({ error: 'Faltam dados obrigatórios' });
+      }
+
+      // Replace Tags
+      const textContent = template
+        .replace(/\{NOME_ALUNO\}/g, dest.nome || '')
+        .replace(/\{LINK_LP\}/g, lpUrl || '')
+        .replace(/\{UNIDADE\}/g, dest.unidade || '')
+        .replace(/\{TURMA\}/g, dest.turma || '')
+        .replace(/\{RESPONSAVEL\}/g, dest.responsavel || '')
+        .replace(/\{PLANO\}/g, dest.plano || '')
+        .replace(/\{STATUS_MATRICULA\}/g, dest.status_matricula || '');
+
+      // Send via UTalk
+      const { data: identidades, error: idErr } = await supabase.from('identidades').select('*');
+      if (idErr) throw idErr;
+      
+      const identity = identidades.find((i: any) => i.nome?.toLowerCase().includes('sport for kids')) || identidades[0];
+      if (!identity || !identity.utalk_token) throw new Error('UTalk não configurado');
+
+      let cleanTo = String(dest.whatsapp).replace(/\D/g, '');
+      if (cleanTo.length >= 10 && !cleanTo.startsWith('55')) cleanTo = '55' + cleanTo;
+      
+      const cleanFrom = (identity.utalk_from_phone || '').replace(/\D/g, '');
+
+      const payload: any = {
+        toPhone: cleanTo,
+        fromPhone: cleanFrom,
+        organizationId: identity.utalk_organization_id,
+        message: textContent
+      };
+      if (mediaUrl) payload.mediaUrl = mediaUrl;
+
+      const response = await fetch("https://app-utalk.umbler.com/api/v1/messages/simplified/", {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${identity.utalk_token}`,
+          'token': identity.utalk_token,
+          'x-token': identity.utalk_token
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error("Erro na API Utalk: " + errText);
+      }
+
+      // Log success and update metrics (increment enviadas)
+      const { data: m } = await supabase.from('campaign_metrics').select('enviados').eq('campaign_id', id).maybeSingle();
+      if (m) {
+        await supabase.from('campaign_metrics').update({ enviados: (m.enviados || 0) + 1, disparado_em: new Date().toISOString() }).eq('campaign_id', id);
+      }
+
+      await supabase.from('campaign_sends').insert([{
+        campaign_id: id,
+        destinatario: dest.whatsapp,
+        status: 'enviado',
+        mensagem_erro: null
+      }]);
+
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error('[Campanhas] Erro no envio unitário de whatsapp:', e.message);
+      
+      // Registrar erro se for falha do UTalk
+      await supabase.from('campaign_sends').insert([{
+        campaign_id: req.params.id,
+        destinatario: req.body?.dest?.whatsapp || 'Desconhecido',
+        status: 'erro',
+        mensagem_erro: e.message
+      }]);
+
+      const { data: m } = await supabase.from('campaign_metrics').select('erros').eq('campaign_id', req.params.id).maybeSingle();
+      if (m) {
+        await supabase.from('campaign_metrics').update({ erros: (m.erros || 0) + 1, disparado_em: new Date().toISOString() }).eq('campaign_id', req.params.id);
+      }
+
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/admin/campaigns/:id/audience — pega a audiência sem disparar
+  app.get('/api/admin/campaigns/:id/audience', requireAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { data: campaign, error } = await supabase.from('campaigns').select('*, campaign_targets(*)').eq('id', id).maybeSingle();
+      if (!campaign || error) throw new Error('Campanha não encontrada');
+
+      const targets = campaign.campaign_targets || [];
+      const audiencia = await buildCampaignAudiencia(targets);
+      
+      res.json(audiencia);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

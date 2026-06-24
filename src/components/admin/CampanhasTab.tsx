@@ -23,6 +23,7 @@ interface Campaign {
   data_fim?: string;
   agendado_para?: string;
   disparado_em?: string;
+  metodo_envio?: 'email' | 'whatsapp';
   created_at: string;
   updated_at: string;
   targets?: CampaignTarget[];
@@ -180,15 +181,88 @@ export default function CampanhasTab() {
     } catch { toast.error('Erro ao arquivar'); }
   };
 
+  const [dispatchState, setDispatchState] = useState<{ active: boolean; current: number; total: number; targetName: string; delayRemaining: number | null }>({ active: false, current: 0, total: 0, targetName: '', delayRemaining: null });
+
+  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
   const handleSend = async (id: string) => {
+    const camp = campaigns.find(c => c.id === id);
+    if (!camp) return;
+
     if (!confirm('Disparar esta campanha agora para todos os destinatários?')) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/admin/campaigns/${id}/send`, { method: 'POST', headers: authHeader() });
-      if (res.ok) { toast.success('Campanha disparada com sucesso!'); fetchCampaigns(); }
-      else { const d = await res.json(); toast.error(d.error || 'Erro ao disparar'); }
-    } catch { toast.error('Erro ao disparar campanha'); }
-    finally { setLoading(false); }
+
+    if (camp.metodo_envio === 'whatsapp') {
+      // WhatsApp Frontend Orchestration
+      setLoading(true);
+      try {
+        const resAud = await fetch(`/api/admin/campaigns/${id}/audience`, { headers: authHeader() });
+        if (!resAud.ok) throw new Error('Falha ao carregar audiência');
+        let audience = await resAud.json();
+        
+        // Filter out those without whatsapp
+        audience = audience.filter((a: any) => !!a.whatsapp);
+        if (audience.length === 0) {
+          toast.error('Nenhum destinatário com WhatsApp válido encontrado.');
+          setLoading(false);
+          return;
+        }
+
+        setDispatchState({ active: true, current: 0, total: audience.length, targetName: '', delayRemaining: null });
+        setLoading(false);
+
+        let sent = 0;
+        const template = camp.email?.conteudo || '';
+        const mediaUrl = camp.email?.imagem_url || '';
+        const lpUrl = camp.landing_page?.ativa ? `https://sportforkids.com.br/campanha/${camp.slug}` : '';
+
+        for (let i = 0; i < audience.length; i++) {
+          const dest = audience[i];
+          setDispatchState(prev => ({ ...prev, current: i + 1, targetName: dest.nome }));
+          
+          try {
+            await fetch(`/api/admin/campaigns/${id}/send-whatsapp-single`, {
+              method: 'POST',
+              headers: authHeader(),
+              body: JSON.stringify({ dest, template, mediaUrl, lpUrl })
+            });
+            sent++;
+          } catch (e) {
+            console.error('Erro ao enviar para', dest.nome);
+          }
+
+          if (i < audience.length - 1) {
+            // Random delay between 8 and 12 seconds
+            const delay = Math.floor(Math.random() * (12000 - 8000 + 1)) + 8000;
+            
+            // Countdown for UI
+            for (let d = delay; d > 0; d -= 1000) {
+              setDispatchState(prev => ({ ...prev, delayRemaining: Math.ceil(d / 1000) }));
+              await sleep(1000);
+            }
+            setDispatchState(prev => ({ ...prev, delayRemaining: null }));
+          }
+        }
+        
+        toast.success(`Disparo concluído! ${sent}/${audience.length} mensagens enviadas.`);
+        setDispatchState({ active: false, current: 0, total: 0, targetName: '', delayRemaining: null });
+        fetchCampaigns();
+
+      } catch (e: any) {
+        toast.error(e.message || 'Erro no processo de disparo.');
+        setDispatchState({ active: false, current: 0, total: 0, targetName: '', delayRemaining: null });
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      // Brevo E-mail (Backend orchestration)
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/admin/campaigns/${id}/send`, { method: 'POST', headers: authHeader() });
+        if (res.ok) { toast.success('Campanha disparada com sucesso!'); fetchCampaigns(); }
+        else { const d = await res.json(); toast.error(d.error || 'Erro ao disparar'); }
+      } catch { toast.error('Erro ao disparar campanha'); }
+      finally { setLoading(false); }
+    }
   };
 
   const filtered = campaigns.filter(c => {
@@ -416,6 +490,45 @@ export default function CampanhasTab() {
           })}
         </div>
       )}
+
+      {/* ── WhatsApp Dispatch Modal ── */}
+      {dispatchState.active && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                {dispatchState.current === dispatchState.total ? <CheckCircle2 size={24} /> : <Loader2 className="animate-spin" size={24} />}
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-800">Disparo via WhatsApp</h3>
+                <p className="text-sm text-slate-500 font-medium">Não feche esta aba até o fim do processo.</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 rounded-xl p-4 space-y-3">
+              <div className="flex justify-between text-sm font-bold text-slate-700">
+                <span>Progresso</span>
+                <span>{dispatchState.current} de {dispatchState.total}</span>
+              </div>
+              <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+                <div className="h-full bg-indigo-600 transition-all duration-300" style={{ width: `${Math.max(5, (dispatchState.current / dispatchState.total) * 100)}%` }} />
+              </div>
+              {dispatchState.targetName && (
+                <p className="text-xs text-slate-500 font-medium">Enviando para: <span className="font-bold text-slate-700">{dispatchState.targetName}</span></p>
+              )}
+              {dispatchState.delayRemaining !== null && (
+                <p className="text-xs text-indigo-600 font-bold flex items-center gap-1.5 mt-2 bg-indigo-50 p-2 rounded-lg">
+                  <Clock size={12} /> Aguardando {dispatchState.delayRemaining}s para o próximo disparo...
+                </p>
+              )}
+            </div>
+
+            <div className="pt-2 text-center text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+              A janela fechará automaticamente ao final
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -498,6 +611,7 @@ function CampaignWizard({
   const [nome, setNome] = useState(editCampaign?.nome || '');
   const [slug, setSlug] = useState(editCampaign?.slug || '');
   const [tipo, setTipo] = useState<Campaign['tipo']>(editCampaign?.tipo || 'ambos');
+  const [metodoEnvio, setMetodoEnvio] = useState<Campaign['metodo_envio']>(editCampaign?.metodo_envio || 'email');
   const [dataInicio, setDataInicio] = useState(editCampaign?.data_inicio || '');
   const [dataFim, setDataFim] = useState(editCampaign?.data_fim || '');
 
@@ -579,7 +693,7 @@ function CampaignWizard({
     setSaving(true);
     try {
       const payload: any = {
-        nome, slug, tipo, status,
+        nome, slug, tipo, status, metodo_envio: metodoEnvio,
         data_inicio: dataInicio || null,
         data_fim: dataFim || null,
         agendado_para: !dispararAgora && agendadoPara ? agendadoPara : null,
@@ -641,6 +755,24 @@ function CampaignWizard({
                 ))}
               </div>
             </div>
+
+            {(tipo === 'email' || tipo === 'ambos') && (
+              <div>
+                <label className={labelClass}>Método de Envio</label>
+                <div className="flex gap-3">
+                  {(['email', 'whatsapp'] as Campaign['metodo_envio'][]).map(m => (
+                    <button key={m} onClick={() => {
+                        setMetodoEnvio(m);
+                        if (m === 'whatsapp' && formato === 'html') setFormato('texto');
+                      }}
+                      className={`flex-1 py-3 px-4 rounded-xl border-2 text-sm font-bold transition-all capitalize ${metodoEnvio === m ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-indigo-300'}`}>
+                      {m === 'email' ? '📧 E-mail (Brevo)' : '💬 WhatsApp (Utalk)'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className={labelClass}>Data de Início</label>
@@ -760,27 +892,31 @@ function CampaignWizard({
         {/* ── Step 3: E-mail ── */}
         {step === 3 && (
           <div className="space-y-5 max-w-2xl">
-            <h3 className="text-base font-black text-slate-800">Conteúdo do E-mail</h3>
-            <div>
-              <label className={labelClass}>Assunto</label>
-              <input value={assunto} onChange={e => setAssunto(e.target.value)} placeholder="Ex: 🎉 Matricule-se agora com condição especial!" className={inputClass} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className={labelClass}>Nome do Remetente</label>
-                <input value={remetenteNome} onChange={e => setRemetenteNome(e.target.value)} placeholder="Sport For Kids" className={inputClass} />
-              </div>
-              <div>
-                <label className={labelClass}>E-mail do Remetente</label>
-                <input type="email" value={remetenteEmail} onChange={e => setRemetenteEmail(e.target.value)} placeholder="contato@sportforkids.com.br" className={inputClass} />
-              </div>
-            </div>
+            <h3 className="text-base font-black text-slate-800">{metodoEnvio === 'whatsapp' ? 'Conteúdo da Mensagem' : 'Conteúdo do E-mail'}</h3>
+            {metodoEnvio !== 'whatsapp' && (
+              <>
+                <div>
+                  <label className={labelClass}>Assunto</label>
+                  <input value={assunto} onChange={e => setAssunto(e.target.value)} placeholder="Ex: 🎉 Matricule-se agora com condição especial!" className={inputClass} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>Nome do Remetente</label>
+                    <input value={remetenteNome} onChange={e => setRemetenteNome(e.target.value)} placeholder="Sport For Kids" className={inputClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>E-mail do Remetente</label>
+                    <input type="email" value={remetenteEmail} onChange={e => setRemetenteEmail(e.target.value)} placeholder="contato@sportforkids.com.br" className={inputClass} />
+                  </div>
+                </div>
+              </>
+            )}
             <div>
               <label className={labelClass}>Formato</label>
               <div className="flex gap-3">
                 {[
                   { v: 'texto', label: 'Texto Puro', icon: <FileText size={16} /> },
-                  { v: 'html', label: 'HTML', icon: <Code size={16} /> },
+                  ...(metodoEnvio !== 'whatsapp' ? [{ v: 'html', label: 'HTML', icon: <Code size={16} /> }] : []),
                   { v: 'imagem', label: 'Flyer (Imagem)', icon: <ImageIcon size={16} /> },
                 ].map(f => (
                   <button key={f.v} onClick={() => setFormato(f.v as any)}
@@ -798,7 +934,7 @@ function CampaignWizard({
               </div>
             ) : (
               <div>
-                <label className={labelClass}>{formato === 'html' ? 'Conteúdo HTML' : 'Conteúdo do E-mail'}</label>
+                <label className={labelClass}>{formato === 'html' ? 'Conteúdo HTML' : (metodoEnvio === 'whatsapp' ? 'Mensagem do WhatsApp' : 'Conteúdo do E-mail')}</label>
                 <textarea
                   value={conteudo}
                   onChange={e => setConteudo(e.target.value)}
@@ -988,22 +1124,24 @@ function CampaignWizard({
               {tipo !== 'email' && <div className="flex justify-between"><span className="text-slate-500 font-medium">Landing Page</span><span className={`font-bold ${lpAtiva ? 'text-emerald-700' : 'text-slate-400'}`}>{lpAtiva ? '✓ Ativa' : 'Inativa'}</span></div>}
             </div>
 
-            <div>
-              <label className={labelClass}>Quando disparar?</label>
-              <div className="flex gap-3">
-                <button onClick={() => setDispararAgora(true)}
-                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-2 text-sm font-bold transition-all ${dispararAgora ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-indigo-300'}`}>
-                  <Zap size={16} /> Agora
-                </button>
-                <button onClick={() => setDispararAgora(false)}
-                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-2 text-sm font-bold transition-all ${!dispararAgora ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-indigo-300'}`}>
-                  <Clock size={16} /> Agendar
-                </button>
+            {metodoEnvio !== 'whatsapp' && (
+              <div>
+                <label className={labelClass}>Quando disparar?</label>
+                <div className="flex gap-3">
+                  <button onClick={() => setDispararAgora(true)}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-2 text-sm font-bold transition-all ${dispararAgora ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-indigo-300'}`}>
+                    <Zap size={16} /> Agora
+                  </button>
+                  <button onClick={() => setDispararAgora(false)}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-2 text-sm font-bold transition-all ${!dispararAgora ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-indigo-300'}`}>
+                    <Clock size={16} /> Agendar
+                  </button>
+                </div>
+                {!dispararAgora && (
+                  <input type="datetime-local" value={agendadoPara} onChange={e => setAgendadoPara(e.target.value)} className={`${inputClass} mt-3`} />
+                )}
               </div>
-              {!dispararAgora && (
-                <input type="datetime-local" value={agendadoPara} onChange={e => setAgendadoPara(e.target.value)} className={`${inputClass} mt-3`} />
-              )}
-            </div>
+            )}
           </div>
         )}
 
