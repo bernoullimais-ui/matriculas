@@ -12373,6 +12373,33 @@ app.get('/eventos/:slug', async (req, res, next) => {
   next();
 });
 
+app.get('/campanha/:slug', async (req, res, next) => {
+  if (req.path.includes('.')) return next();
+  try {
+    const { slug } = req.params;
+    const { data: campaign } = await supabase
+      .from('campaigns')
+      .select('nome, campaign_landing_pages(titulo, descricao, banner_url, ativa)')
+      .eq('slug', slug)
+      .single();
+    
+    let html = await getBaseIndexHtml();
+    if (campaign && html) {
+      const lp = (campaign as any).campaign_landing_pages?.[0];
+      if (lp) {
+        const title = lp.titulo ? `${lp.titulo} — Sport for Kids` : `${campaign.nome} — Sport for Kids`;
+        const description = lp.descricao ? lp.descricao.replace(/"/g, '&quot;').substring(0, 160) : "Confira esta campanha especial da Sport for Kids.";
+        const image = lp.banner_url || 'https://www.sportforkids.com.br/sfk-og-logo.png';
+        html = replaceOgTags(html, title, description, image);
+      }
+      return res.send(html);
+    }
+  } catch (err) {
+    console.error('Erro SSR Campanha:', err);
+  }
+  next();
+});
+
 app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   if (req.path.includes('.')) return next();
   try {

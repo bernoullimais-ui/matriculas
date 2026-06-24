@@ -32,6 +32,10 @@
       "dest": "/server.ts"
     },
     {
+      "src": "/campanha/(.*)",
+      "dest": "/server.ts"
+    },
+    {
       "src": "/(.*)",
       "dest": "/index.html"
     }
