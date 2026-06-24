@@ -1265,15 +1265,76 @@ app.post('/api/admin/login', async (req, res) => {
       }
     }
 
+    let userUuidDB = null;
+    if (dbUser) {
+      const { data: userRow } = await supabase.from('usuarios').select('id').eq('auth_id', userUuid).maybeSingle();
+      if (userRow) userUuidDB = userRow.id;
+    }
+
+    const { data: roleAuth } = await supabase.from('autorizacoes').select('*').eq('tipo_alvo', 'nivel').eq('alvo_id', userNivel);
+    const { data: userAuth } = userUuidDB ? await supabase.from('autorizacoes').select('*').eq('tipo_alvo', 'usuario').eq('alvo_id', userUuidDB) : { data: [] };
+
+    const mergedAuth: any = {};
+    if (roleAuth) {
+      roleAuth.forEach((r: any) => {
+        mergedAuth[`${r.sistema}_${r.modulo}`] = r;
+      });
+    }
+    if (userAuth) {
+      userAuth.forEach((u: any) => {
+        mergedAuth[`${u.sistema}_${u.modulo}`] = u;
+      });
+    }
+
+    const autorizacoes = Object.values(mergedAuth);
+
     return res.json({ 
       token: data.session.access_token, 
       refreshToken: data.session.refresh_token,
       role: resolvedRole,
       userName,
-      userNivel
+      userNivel,
+      autorizacoes
     });
   } catch (err) {
     return res.status(500).json({ error: 'Erro interno no login.' });
+  }
+});
+
+app.get('/api/admin/autorizacoes', requireAdminAuth, async (req, res) => {
+  try {
+    const { data: autorizacoes } = await supabase.from('autorizacoes').select('*');
+    const { data: usuarios } = await supabase.from('usuarios').select('id, nome, email, nivel');
+    res.json({ autorizacoes, usuarios });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro interno.' });
+  }
+});
+
+app.post('/api/admin/autorizacoes', requireAdminAuth, async (req, res) => {
+  try {
+    const { autorizacoes } = req.body;
+    if (!autorizacoes || !Array.isArray(autorizacoes)) return res.status(400).json({ error: 'Payload inválido' });
+    
+    // Clear all existing to do a full sync
+    await supabase.from('autorizacoes').delete().neq('id', '00000000-0000-0000-0000-000000000000'); // dummy condition to delete all without warning
+    
+    if (autorizacoes.length > 0) {
+      const { error } = await supabase.from('autorizacoes').insert(autorizacoes.map((a: any) => ({
+        tipo_alvo: a.tipo_alvo,
+        alvo_id: a.alvo_id,
+        sistema: a.sistema,
+        modulo: a.modulo,
+        pode_visualizar: a.pode_visualizar,
+        pode_editar: a.pode_editar,
+        pode_excluir: a.pode_excluir
+      })));
+      if (error) throw error;
+    }
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Erro interno.' });
   }
 });
 
@@ -1554,6 +1615,445 @@ app.use('/api/admin', requireAdminAuth);
       res.status(500).json({ error: error.message });
     }
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CAMPANHAS — Gestão de Campanhas de Marketing
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Mapa de jobs agendados (slug → cron task)
+  const scheduledCampaignJobs = new Map<string, any>();
+
+  /** Monta a lista de destinatários com base nos segmentos da campanha */
+  async function buildCampaignAudiencia(targets: any[]): Promise<{ email: string; nome: string; alunoId?: string }[]> {
+    const emailMap = new Map<string, { email: string; nome: string; alunoId?: string }>();
+
+    for (const target of targets) {
+      let query = supabase.from('alunos').select('id, nome_completo, email, responsaveis!responsavel_id(email)');
+
+      if (target.tipo_alvo === 'unidade') {
+        query = query.eq('unidade', target.valor_alvo).in('status_matricula', ['ativo', 'Ativo', 'Ativa', 'ativa']);
+      } else if (target.tipo_alvo === 'turma') {
+        // Busca alunos com matrícula ativa na turma específica
+        const { data: mats } = await supabase
+          .from('matriculas')
+          .select('aluno_id')
+          .eq('turma_id', target.valor_alvo)
+          .in('status', ['Ativo', 'ativo', 'Ativa', 'ativa']);
+        const alunoIds = (mats || []).map((m: any) => m.aluno_id).filter(Boolean);
+        if (alunoIds.length === 0) continue;
+        query = query.in('id', alunoIds);
+      } else if (target.tipo_alvo === 'inativos') {
+        query = query.in('status_matricula', ['cancelado', 'Cancelado', 'Inativo', 'inativo']);
+      } else if (target.tipo_alvo === 'leads') {
+        query = query.eq('is_lead', true);
+      } else {
+        continue;
+      }
+
+      const { data: alunos } = await query;
+      if (!alunos) continue;
+
+      for (const a of alunos) {
+        const emailDest = a.email || (a as any).responsaveis?.email;
+        if (!emailDest || !emailDest.includes('@')) continue;
+        if (!emailMap.has(emailDest)) {
+          emailMap.set(emailDest, { email: emailDest, nome: a.nome_completo || 'Aluno', alunoId: a.id });
+        }
+      }
+    }
+
+    return Array.from(emailMap.values());
+  }
+
+  /** Dispara os e-mails de uma campanha via Brevo */
+  async function dispatchCampaignEmails(campaignId: string): Promise<{ sent: number; errors: number }> {
+    // Busca campanha completa
+    const { data: campaign, error: cErr } = await supabase
+      .from('campaigns')
+      .select('*, campaign_targets(*), campaign_emails(*), campaign_landing_pages(*)')
+      .eq('id', campaignId)
+      .maybeSingle();
+
+    if (cErr || !campaign) throw new Error('Campanha não encontrada');
+    if (campaign.tipo === 'landing_page') return { sent: 0, errors: 0 }; // LP só, sem e-mail
+
+    const emailConfig = campaign.campaign_emails?.[0];
+    if (!emailConfig) throw new Error('Configuração de e-mail não encontrada');
+
+    const targets = campaign.campaign_targets || [];
+    const audiencia = await buildCampaignAudiencia(targets);
+    if (audiencia.length === 0) return { sent: 0, errors: 0 };
+
+    const brevoApiKey = process.env.VITE_BREVO_API_KEY || process.env.BREVO_API_KEY || '';
+    const lpUrl = campaign.campaign_landing_pages?.[0]?.ativa
+      ? `${appUrl}/campanha/${campaign.slug}`
+      : '';
+
+    let sent = 0;
+    let errors = 0;
+    const sendLogs: any[] = [];
+
+    const senderEmail = emailConfig.remetente_email || process.env.BREVO_SENDER_EMAIL || 'adm@sportforkids.com.br';
+    const senderName = emailConfig.remetente_nome || 'Sport For Kids';
+
+    // Envio em lotes de 50 para não sobrecarregar a API
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < audiencia.length; i += BATCH_SIZE) {
+      const batch = audiencia.slice(i, i + BATCH_SIZE);
+
+      for (const dest of batch) {
+        let htmlContent = '';
+        let textContent = '';
+
+        const replaceTags = (text: string) =>
+          text
+            .replace(/\{NOME_ALUNO\}/g, dest.nome)
+            .replace(/\{LINK_LP\}/g, lpUrl)
+            .replace(/\{UNIDADE\}/g, '');
+
+        if (emailConfig.formato === 'texto') {
+          textContent = replaceTags(emailConfig.conteudo || '');
+        } else if (emailConfig.formato === 'html') {
+          htmlContent = replaceTags(emailConfig.conteudo || '');
+        } else if (emailConfig.formato === 'imagem') {
+          htmlContent = `<img src="${emailConfig.imagem_url}" alt="Campanha" style="max-width:100%;display:block;margin:auto;" />`;
+        }
+
+        let brevoMsgId: string | undefined;
+        let status = 'enviado';
+
+        try {
+          if (brevoApiKey) {
+            const body: any = {
+              sender: { name: senderName, email: senderEmail },
+              subject: replaceTags(emailConfig.assunto),
+              to: [{ email: dest.email, name: dest.nome }],
+            };
+            if (htmlContent) body.htmlContent = htmlContent;
+            if (textContent) body.textContent = textContent;
+
+            const brevoRes = await fetch('https://api.brevo.com/v3/smtp/email', {
+              method: 'POST',
+              headers: { 'accept': 'application/json', 'api-key': brevoApiKey, 'content-type': 'application/json' },
+              body: JSON.stringify(body)
+            });
+
+            if (brevoRes.ok) {
+              const brevoData = await brevoRes.json();
+              brevoMsgId = brevoData.messageId;
+              sent++;
+            } else {
+              status = 'erro';
+              errors++;
+            }
+          } else {
+            // Modo simulação (sem chave)
+            console.log(`[Campanhas] SIMULAÇÃO: envio para ${dest.email} (${dest.nome})`);
+            sent++;
+          }
+        } catch (e) {
+          status = 'erro';
+          errors++;
+        }
+
+        sendLogs.push({
+          campaign_id: campaignId,
+          aluno_id: dest.alunoId || null,
+          email_dest: dest.email,
+          nome_dest: dest.nome,
+          status,
+          brevo_msg_id: brevoMsgId || null,
+        });
+      }
+
+      // Pausa entre lotes
+      if (i + BATCH_SIZE < audiencia.length) await new Promise(r => setTimeout(r, 500));
+    }
+
+    // Salva logs de envio
+    if (sendLogs.length > 0) {
+      await supabase.from('campaign_sends').insert(sendLogs);
+    }
+
+    // Atualiza métricas
+    await supabase.from('campaign_metrics').upsert({
+      campaign_id: campaignId,
+      emails_enviados: sent + errors,
+      emails_entregues: sent,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'campaign_id' });
+
+    // Marca campanha como disparada
+    await supabase.from('campaigns').update({ disparado_em: new Date().toISOString(), status: 'ativa' }).eq('id', campaignId);
+
+    return { sent, errors };
+  }
+
+  // GET /api/admin/campaigns — lista campanhas com métricas
+  app.get('/api/admin/campaigns', requireAdminAuth, async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from('campaigns')
+        .select('*, campaign_targets(*), campaign_emails(*), campaign_landing_pages(*), campaign_metrics(*)')
+        .neq('status', 'arquivada_deleted')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+
+      // Normaliza para o formato esperado pelo frontend
+      const campaigns = (data || []).map((c: any) => ({
+        ...c,
+        targets: c.campaign_targets || [],
+        email: c.campaign_emails?.[0] || null,
+        landing_page: c.campaign_landing_pages?.[0] || null,
+        metrics: c.campaign_metrics?.[0] || null,
+      }));
+
+      res.json(campaigns);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/admin/campaigns/:id — detalhe de campanha
+  app.get('/api/admin/campaigns/:id', requireAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { data, error } = await supabase
+        .from('campaigns')
+        .select('*, campaign_targets(*), campaign_emails(*), campaign_landing_pages(*), campaign_metrics(*)')
+        .eq('id', id)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return res.status(404).json({ error: 'Campanha não encontrada' });
+      res.json({
+        ...data,
+        targets: data.campaign_targets || [],
+        email: data.campaign_emails?.[0] || null,
+        landing_page: data.campaign_landing_pages?.[0] || null,
+        metrics: data.campaign_metrics?.[0] || null,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/admin/campaigns — cria campanha
+  app.post('/api/admin/campaigns', requireAdminAuth, async (req, res) => {
+    try {
+      const { targets, email, landing_page, ...campaignData } = req.body;
+
+      const { data: newCampaign, error } = await supabase
+        .from('campaigns')
+        .insert([campaignData])
+        .select()
+        .single();
+      if (error) throw error;
+
+      const cid = newCampaign.id;
+
+      // Targets
+      if (targets && targets.length > 0) {
+        await supabase.from('campaign_targets').insert(targets.map((t: any) => ({ ...t, campaign_id: cid })));
+      }
+      // Email
+      if (email) {
+        await supabase.from('campaign_emails').insert([{ ...email, campaign_id: cid }]);
+      }
+      // Landing page
+      if (landing_page) {
+        await supabase.from('campaign_landing_pages').insert([{ ...landing_page, campaign_id: cid }]);
+      }
+      // Inicializa métricas zeradas
+      await supabase.from('campaign_metrics').insert([{ campaign_id: cid }]);
+
+      // Agenda se tiver data
+      if (campaignData.agendado_para && campaignData.status === 'ativa') {
+        const date = new Date(campaignData.agendado_para);
+        const cronExpr = `${date.getMinutes()} ${date.getHours()} ${date.getDate()} ${date.getMonth() + 1} *`;
+        const task = cron.schedule(cronExpr, async () => {
+          try {
+            await dispatchCampaignEmails(cid);
+            console.log(`[Campanhas] Job agendado disparado para campanha ${cid}`);
+          } catch (e) { console.error('[Campanhas] Erro no disparo agendado:', e); }
+          task.stop();
+          scheduledCampaignJobs.delete(cid);
+        });
+        scheduledCampaignJobs.set(cid, task);
+      }
+
+      res.json(newCampaign);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // PUT /api/admin/campaigns/:id — atualiza campanha
+  app.put('/api/admin/campaigns/:id', requireAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { targets, email, landing_page, ...campaignData } = req.body;
+
+      const { error } = await supabase.from('campaigns').update(campaignData).eq('id', id);
+      if (error) throw error;
+
+      // Atualiza targets
+      if (targets !== undefined) {
+        await supabase.from('campaign_targets').delete().eq('campaign_id', id);
+        if (targets.length > 0) {
+          await supabase.from('campaign_targets').insert(targets.map((t: any) => ({ ...t, campaign_id: id })));
+        }
+      }
+      // Atualiza email
+      if (email !== undefined) {
+        await supabase.from('campaign_emails').delete().eq('campaign_id', id);
+        if (email) await supabase.from('campaign_emails').insert([{ ...email, campaign_id: id }]);
+      }
+      // Atualiza landing page
+      if (landing_page !== undefined) {
+        await supabase.from('campaign_landing_pages').delete().eq('campaign_id', id);
+        if (landing_page) await supabase.from('campaign_landing_pages').insert([{ ...landing_page, campaign_id: id }]);
+      }
+
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/admin/campaigns/:id/send — disparo imediato
+  app.post('/api/admin/campaigns/:id/send', requireAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const result = await dispatchCampaignEmails(id);
+      res.json({ success: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/admin/campaigns/:id/sends — log de envios
+  app.get('/api/admin/campaigns/:id/sends', requireAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { data, error } = await supabase
+        .from('campaign_sends')
+        .select('*')
+        .eq('campaign_id', id)
+        .order('enviado_em', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      res.json(data || []);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/admin/campaigns/audience-count — preview do tamanho do público
+  app.post('/api/admin/campaigns/audience-count', requireAdminAuth, async (req, res) => {
+    try {
+      const { targets } = req.body;
+      if (!targets || targets.length === 0) return res.json({ count: 0 });
+      const audiencia = await buildCampaignAudiencia(targets);
+      res.json({ count: audiencia.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Rotas PÚBLICAS (sem autenticação) para Landing Pages ─────────────────
+
+  // GET /api/public/campanha/:slug — dados da landing page pública
+  app.get('/api/public/campanha/:slug', async (req, res) => {
+    try {
+      const { slug } = req.params;
+      const { data, error } = await supabase
+        .from('campaigns')
+        .select('id, nome, slug, status, campaign_landing_pages(*)')
+        .eq('slug', slug)
+        .neq('status', 'arquivada')
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) return res.status(404).json({ error: 'Campanha não encontrada' });
+
+      const lp = (data as any).campaign_landing_pages?.[0];
+      if (!lp || !lp.ativa) return res.status(404).json({ error: 'Landing page não disponível' });
+
+      res.json({
+        campaign: { nome: data.nome, slug: data.slug, status: data.status },
+        landing_page: lp
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/public/campanha/:slug/visit — registra visita
+  app.post('/api/public/campanha/:slug/visit', async (req, res) => {
+    try {
+      const { slug } = req.params;
+      const { data: campaign } = await supabase.from('campaigns').select('id').eq('slug', slug).maybeSingle();
+      if (!campaign) return res.json({ ok: true });
+      
+      try {
+        await supabase.rpc('increment_campaign_metric', { p_campaign_id: campaign.id, p_field: 'visitas_lp' });
+      } catch (err) {
+        // Fallback manual se RPC não existir
+        supabase.from('campaign_metrics').select('visitas_lp').eq('campaign_id', campaign.id).maybeSingle().then(({ data: m }) => {
+          if (m) supabase.from('campaign_metrics').update({ visitas_lp: (m.visitas_lp || 0) + 1 }).eq('campaign_id', campaign.id);
+        });
+      }
+      
+      res.json({ ok: true });
+    } catch { res.json({ ok: true }); } // never block page load
+  });
+
+  // POST /api/public/campanha/:slug/lead — captura lead da landing page
+  app.post('/api/public/campanha/:slug/lead', async (req, res) => {
+    try {
+      const { slug } = req.params;
+      const { nome_responsavel, email, whatsapp, nome_aluno, idade_aluno } = req.body;
+
+      if (!nome_responsavel || !email) {
+        return res.status(400).json({ error: 'Nome e e-mail são obrigatórios' });
+      }
+
+      const { data: campaign } = await supabase.from('campaigns').select('id').eq('slug', slug).maybeSingle();
+
+      // Insere no Supabase como lead
+      const leadId = `lead-campanha-${slug}-${Date.now()}`;
+      const { error: insertErr } = await supabase.from('alunos').insert([{
+        id: leadId,
+        nome_completo: nome_aluno || nome_responsavel,
+        unidade: 'SEM UNIDADE',
+        responsavel1: nome_responsavel,
+        email: email,
+        whatsapp1: whatsapp || null,
+        status_matricula: 'lead',
+        is_lead: true,
+        contato: whatsapp || '',
+        created_at: new Date().toISOString(),
+      }]);
+
+      if (insertErr) {
+        console.error('[Campanhas/Lead] Erro ao inserir lead:', insertErr);
+      }
+
+      // Incrementa leads_gerados nas métricas
+      if (campaign) {
+        const { data: m } = await supabase.from('campaign_metrics').select('leads_gerados').eq('campaign_id', campaign.id).maybeSingle();
+        if (m) await supabase.from('campaign_metrics').update({ leads_gerados: (m.leads_gerados || 0) + 1 }).eq('campaign_id', campaign.id);
+      }
+
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // FIM — CAMPANHAS
+  // ─────────────────────────────────────────────────────────────────────────
 
   // --- Leads Endpoints ---
   app.get("/api/admin/leads", async (req, res) => {

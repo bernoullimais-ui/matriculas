@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useAdminStore } from '../../../stores/adminStore';
 import { Edit, Plus, X, Upload, Save, Search, Check, Copy, Trash2, GripVertical, Layers, Star, MessageSquare } from 'lucide-react';
 import toast from 'react-hot-toast';
+import AuthorizationsTab from './AuthorizationsTab';
 
 export default function SettingsTab() {
   const { termsTemplate, setTermsTemplate, pixKey, setPixKey, logoUrl, setLogoUrl, options, setOptions } = useAdminStore();
-  const [settingsSubTab, setSettingsSubTab] = useState<'geral' | 'opcoes' | 'website' | 'frete'>('geral');
+  const [settingsSubTab, setSettingsSubTab] = useState<'geral' | 'opcoes' | 'website' | 'frete' | 'autorizacoes'>('geral');
   const userRole = sessionStorage.getItem('admin_role') as string;
   const [pagarmeSoftDescriptor, setPagarmeSoftDescriptor] = useState('');
   const [pagarmeSoftDescriptorBernoulli, setPagarmeSoftDescriptorBernoulli] = useState('');
@@ -274,7 +275,19 @@ export default function SettingsTab() {
                     >
                       Frete & Loja
                     </button>
+                    {userRole === 'master' && (
+                      <button
+                        onClick={() => setSettingsSubTab('autorizacoes')}
+                        className={`px-6 py-3 text-sm font-bold transition-all border-b-2 ${settingsSubTab === 'autorizacoes' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                      >
+                        Autorizações (RBAC)
+                      </button>
+                    )}
                   </div>
+
+                  {settingsSubTab === 'autorizacoes' && userRole === 'master' && (
+                    <AuthorizationsTab />
+                  )}
 
                   {settingsSubTab === 'geral' && (
                     <div className="space-y-6 max-w-2xl">

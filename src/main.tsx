@@ -16,6 +16,7 @@ import AjudaPage from './pages/Ajuda/index.tsx';
 import PortalLogin from './pages/PortalResponsavel/Login.tsx';
 import PortalDashboard from './pages/PortalResponsavel/Dashboard.tsx';
 import FloatingWhatsAppButton from './components/FloatingWhatsAppButton.tsx';
+import CampanhaPublica from './pages/CampanhaPublica.tsx';
 import './index.css';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
@@ -89,6 +90,7 @@ function RootApp() {
         <Route path="/ajuda" element={<AjudaPage />} />
         <Route path="/area-do-cliente" element={<PortalLogin />} />
         <Route path="/area-do-cliente/painel" element={<PortalDashboard />} />
+        <Route path="/campanha/:slug" element={<CampanhaPublica />} />
       </Routes>
       <FloatingWhatsAppButton />
     </BrowserRouter>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-  LayoutDashboard, Users, ShoppingBag, Calendar, DollarSign, Building2, Settings, LogOut, ChevronDown, ChevronRight, Menu, X, UserCog, ClipboardList, Clock, MessageSquare, Package, Tags, Ticket, Receipt, FileText, Calculator, BarChart3, Bell
+  LayoutDashboard, Users, ShoppingBag, Calendar, DollarSign, Building2, Settings, LogOut, ChevronDown, ChevronRight, Menu, X, UserCog, ClipboardList, Clock, MessageSquare, Package, Tags, Ticket, Receipt, FileText, Calculator, BarChart3, Bell, Megaphone
 } from 'lucide-react';
 
 import { useAdminStore } from '../../stores/adminStore';
@@ -24,6 +24,7 @@ import FolhaPagamentoTab from '../../components/admin/rh/FolhaPagamentoTab';
 import { RegrasB2BTab } from '../../components/admin/b2b/RegrasB2BTab';
 import { ConciliacaoB2BTab } from '../../components/admin/b2b/ConciliacaoB2BTab';
 import SettingsTab from '../../components/admin/settings/SettingsTab';
+import CampanhasTab from '../../components/admin/CampanhasTab';
 import toast from 'react-hot-toast';
 
 export default function UnifiedAdmin() {
@@ -156,6 +157,10 @@ export default function UnifiedAdmin() {
           sessionStorage.setItem('admin_refresh_token', data.refreshToken);
         }
         sessionStorage.setItem('admin_role', data.role);
+        sessionStorage.setItem('admin_nivel', data.userNivel || 'Gestor Administrativo');
+        if (data.autorizacoes) {
+          sessionStorage.setItem('admin_autorizacoes', JSON.stringify(data.autorizacoes));
+        }
         setIsLogged(true);
         loadData();
       } else {
@@ -218,6 +223,19 @@ export default function UnifiedAdmin() {
   }
 
   const userRole = sessionStorage.getItem('admin_role') || 'administrativo';
+  
+  let autorizacoes: any[] = [];
+  try {
+    const raw = sessionStorage.getItem('admin_autorizacoes');
+    if (raw) autorizacoes = JSON.parse(raw);
+  } catch (e) {}
+
+  const hasAccess = (modulo: string) => {
+    const rule = autorizacoes.find(a => a.sistema === 'painel_admin' && a.modulo === modulo);
+    if (rule) return rule.pode_visualizar;
+    // Fallback: master can see everything, others can't
+    return userRole === 'master';
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex overflow-hidden text-slate-800">
@@ -236,70 +254,78 @@ export default function UnifiedAdmin() {
         </div>
 
         <nav className="flex-1 px-4 pb-6 space-y-1">
-          <button onClick={() => setTab('dashboard')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors \${tab === 'dashboard' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
-            <LayoutDashboard size={18} /> <span className="font-semibold text-sm">Dashboard</span>
-          </button>
+          {hasAccess('dashboard') && (
+            <button onClick={() => setTab('dashboard')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors \${tab === 'dashboard' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
+              <LayoutDashboard size={18} /> <span className="font-semibold text-sm">Dashboard</span>
+            </button>
+          )}
           
-          {userRole === 'master' && (
+          {hasAccess('analytics') && (
             <button onClick={() => setTab('analytics')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors \${tab === 'analytics' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
               <BarChart3 size={18} /> <span className="font-semibold text-sm">Analytics</span>
             </button>
           )}
 
-          {userRole === 'master' && (
+          {hasAccess('financeiro') && (
             <button onClick={() => setTab('finance')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors \${tab === 'finance' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
               <DollarSign size={18} /> <span className="font-semibold text-sm">Financeiro</span>
             </button>
           )}
 
           {/* CRM */}
-          <div className="pt-4 pb-1">
-            <button onClick={() => toggleMenu('crm')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
-              <div className="flex items-center gap-2"><Users size={14} /> Gestão de Alunos</div>
-              {menuOpen.crm ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-            {menuOpen.crm && (
-              <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
-                <button onClick={() => setTab('enrollments')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'enrollments' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Matrículas</button>
-                <button onClick={() => setTab('tasks')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'tasks' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Aprovações</button>
-                <button onClick={() => setTab('waitlist')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'waitlist' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Fila de Espera</button>
-                <button onClick={() => setTab('leads')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'leads' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Fale Conosco</button>
-              </div>
-            )}
-          </div>
+          {hasAccess('matriculas') && (
+            <div className="pt-4 pb-1">
+              <button onClick={() => toggleMenu('crm')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
+                <div className="flex items-center gap-2"><Users size={14} /> Gestão de Alunos</div>
+                {menuOpen.crm ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+              {menuOpen.crm && (
+                <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
+                  <button onClick={() => setTab('enrollments')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'enrollments' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Matrículas</button>
+                  <button onClick={() => setTab('tasks')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'tasks' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Aprovações</button>
+                  <button onClick={() => setTab('waitlist')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'waitlist' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Fila de Espera</button>
+                  <button onClick={() => setTab('leads')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'leads' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Fale Conosco</button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Loja */}
-          <div className="pt-2 pb-1">
-            <button onClick={() => toggleMenu('loja')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
-              <div className="flex items-center gap-2"><ShoppingBag size={14} /> Loja</div>
-              {menuOpen.loja ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-            {menuOpen.loja && (
-              <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
-                <button onClick={() => setTab('pedidos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'pedidos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Pedidos</button>
-                <button onClick={() => setTab('produtos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'produtos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Produtos</button>
-                <button onClick={() => setTab('categorias')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'categorias' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Categorias</button>
-              </div>
-            )}
-          </div>
+          {hasAccess('ecommerce') && (
+            <div className="pt-2 pb-1">
+              <button onClick={() => toggleMenu('loja')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
+                <div className="flex items-center gap-2"><ShoppingBag size={14} /> Loja</div>
+                {menuOpen.loja ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+              {menuOpen.loja && (
+                <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
+                  <button onClick={() => setTab('pedidos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'pedidos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Pedidos</button>
+                  <button onClick={() => setTab('produtos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'produtos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Produtos</button>
+                  <button onClick={() => setTab('categorias')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'categorias' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Categorias</button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Cursos e Eventos */}
-          <div className="pt-2 pb-1">
-            <button onClick={() => toggleMenu('cursos')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
-              <div className="flex items-center gap-2"><Calendar size={14} /> Cursos / Eventos</div>
-              {menuOpen.cursos ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-            {menuOpen.cursos && (
-              <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
-                <button onClick={() => setTab('eventos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'eventos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Eventos</button>
-                <button onClick={() => setTab('inscricoes')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'inscricoes' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Inscrições</button>
-                <button onClick={() => setTab('cupons')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'cupons' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Cupons</button>
-              </div>
-            )}
-          </div>
+          {hasAccess('turmas') && (
+            <div className="pt-2 pb-1">
+              <button onClick={() => toggleMenu('cursos')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
+                <div className="flex items-center gap-2"><Calendar size={14} /> Cursos / Eventos</div>
+                {menuOpen.cursos ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+              {menuOpen.cursos && (
+                <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
+                  <button onClick={() => setTab('eventos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'eventos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Eventos</button>
+                  <button onClick={() => setTab('inscricoes')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'inscricoes' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Inscrições</button>
+                  <button onClick={() => setTab('cupons')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'cupons' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Cupons</button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* B2B */}
-          {userRole === 'master' && (
+          {hasAccess('b2b') && (
             <div className="pt-2 pb-1">
               <button onClick={() => toggleMenu('b2b')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
                 <div className="flex items-center gap-2"><Building2 size={14} /> Escolas Parceiras</div>
@@ -315,7 +341,7 @@ export default function UnifiedAdmin() {
           )}
 
           {/* RH */}
-          {userRole === 'master' && (
+          {hasAccess('usuarios') && (
             <div className="pt-2 pb-1">
               <button onClick={() => toggleMenu('rh')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
                 <div className="flex items-center gap-2"><UserCog size={14} /> Recursos Humanos</div>
@@ -330,10 +356,19 @@ export default function UnifiedAdmin() {
             </div>
           )}
 
-          {userRole === 'master' && (
+          {hasAccess('configuracoes') && (
             <div className="pt-4 mt-4 border-t border-slate-800">
               <button onClick={() => setTab('settings')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors \${tab === 'settings' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
                 <Settings size={18} /> <span className="font-semibold text-sm">Configurações</span>
+              </button>
+            </div>
+          )}
+
+          {/* Campanhas — apenas master */}
+          {userRole === 'master' && (
+            <div className="pt-2">
+              <button onClick={() => setTab('campanhas')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors \${tab === 'campanhas' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
+                <Megaphone size={18} /> <span className="font-semibold text-sm">Campanhas</span>
               </button>
             </div>
           )}
@@ -429,6 +464,7 @@ export default function UnifiedAdmin() {
             {tab === 'b2b_regras' && <RegrasB2BTab />}
             {tab === 'b2b_conciliacao' && <ConciliacaoB2BTab />}
             {tab === 'settings' && userRole === 'master' && <SettingsTab />}
+            {tab === 'campanhas' && userRole === 'master' && <CampanhasTab />}
           </div>
         </div>
       </main>
