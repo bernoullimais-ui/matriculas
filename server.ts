@@ -2170,7 +2170,8 @@ Regras:
         let from = 0;
         const limit = 1000;
         while (true) {
-          const { data } = await supabase.from(table).select('*').range(from, from + limit - 1);
+          const { data, error } = await supabase.from(table).select('*').range(from, from + limit - 1);
+          if (error) throw error;
           if (!data || data.length === 0) break;
           all = all.concat(data);
           if (data.length < limit) break;
@@ -2179,15 +2180,17 @@ Regras:
         return all;
       };
 
-      // Buscar dados completos para avaliar no backend
-      const alunos = await fetchAll('alunos');
-      const matriculas = await fetchAll('matriculas');
-      const experimentais = await fetchAll('aulas_experimentais');
-      const turmasRaw = await fetchAll('turmas');
-      const turmaUnidades = await fetchAll('turma_unidades');
-      const unidades = await fetchAll('unidades');
-      const eventos = await fetchAll('eventos');
-      const evento_inscricoes = await fetchAll('evento_inscricoes');
+      // Buscar dados completos para avaliar no backend em paralelo (para evitar timeout na Vercel e falhas silenciosas)
+      const [alunos, matriculas, experimentais, turmasRaw, turmaUnidades, unidades, eventos, evento_inscricoes] = await Promise.all([
+        fetchAll('alunos'),
+        fetchAll('matriculas'),
+        fetchAll('aulas_experimentais'),
+        fetchAll('turmas'),
+        fetchAll('turma_unidades'),
+        fetchAll('unidades'),
+        fetchAll('eventos'),
+        fetchAll('evento_inscricoes')
+      ]);
 
       const turmaUnidadesMap: Record<string, string[]> = {};
       if (turmaUnidades && unidades) {
