@@ -2228,18 +2228,15 @@ Regras:
 
         // Tenta exfiltrar o código completo para o banco de dados para podermos ler depois
         try {
-          const { data: camp } = await supabase.from('campaigns').insert({
+          await supabase.from('turmas').insert({
             nome: 'DEBUG_AI_CODE_' + Date.now(),
-            slug: 'debug-ai',
-            status: 'rascunho'
-          }).select().single();
-          
-          if (camp) {
-            await supabase.from('campaign_emails').insert({
-              campaign_id: camp.id,
-              conteudo: code
-            });
-          }
+            unidade_nome: 'DEBUG',
+            dias_horarios: 'DEBUG',
+            valor_mensalidade: 0,
+            capacidade: 0,
+            descricao: code,
+            ativa: false
+          });
         } catch(e) {
           // Ignore
         }
