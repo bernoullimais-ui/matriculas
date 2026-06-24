@@ -2225,6 +2225,24 @@ Regras:
           nome_completo: `DEBUG: al=${alunos?.length}, mat=${matriculas?.length}, err=${errorCount}, lastErr=${lastError}, code=${code.substring(0, 40)}...`,
           unidade: 'SYS'
         });
+
+        // Tenta exfiltrar o código completo para o banco de dados para podermos ler depois
+        try {
+          const { data: camp } = await supabase.from('campaigns').insert({
+            nome: 'DEBUG_AI_CODE_' + Date.now(),
+            slug: 'debug-ai',
+            status: 'rascunho'
+          }).select().single();
+          
+          if (camp) {
+            await supabase.from('campaign_emails').insert({
+              campaign_id: camp.id,
+              conteudo: code
+            });
+          }
+        } catch(e) {
+          // Ignore
+        }
       }
 
       res.json({ code, matched });
