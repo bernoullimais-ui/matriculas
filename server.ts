@@ -2103,13 +2103,27 @@ app.use('/api/admin', requireAdminAuth);
   // --- Leads Endpoints ---
   app.get("/api/admin/leads", async (req, res) => {
     try {
-      const { data, error } = await supabase
-        .from('leads')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const [ { data: webLeads, error: e1 }, { data: campLeads, error: e2 } ] = await Promise.all([
+        supabase.from('leads').select('*').order('created_at', { ascending: false }),
+        supabase.from('alunos').select('id, nome_completo, email, whatsapp_1, responsavel_1, created_at, status_matricula').eq('is_lead', true).order('created_at', { ascending: false })
+      ]);
       
-      if (error) throw error;
-      res.json(data);
+      if (e1) throw e1;
+      if (e2) throw e2;
+
+      const mappedCampLeads = (campLeads || []).map((al: any) => ({
+        id: al.id,
+        nome: `${al.nome_completo || 'Aluno'} (Resp: ${al.responsavel_1 || 'N/A'})`,
+        email: al.email || '',
+        whatsapp: al.whatsapp_1 || '',
+        status: al.status_matricula === 'lead' ? 'novo' : 'matriculado',
+        origem: 'Landing Page (Campanha)',
+        created_at: al.created_at
+      }));
+
+      const allLeads = [...(webLeads || []), ...mappedCampLeads].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      res.json(allLeads);
     } catch (error: any) {
       console.error("Error fetching leads from Supabase:", error.message);
       res.status(500).json({ error: error.message });
