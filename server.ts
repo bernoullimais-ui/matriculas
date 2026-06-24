@@ -2144,6 +2144,8 @@ Regras:
 2. Para datas relativas (ex: "últimos 5 meses"), use Date.now() e matemática com ms. Exemplo: Date.now() - 5 * 30 * 24 * 60 * 60 * 1000. Lembre-se que campos de data como 'created_at' são strings ISO.
 3. Seja extremamente defensivo e seguro. Exemplo: if (!context.matriculas) return false;
 4. Se o prompt falar sobre 'responsáveis com apenas um filho', conte os alunos agrupando pela mesma chave (ex: mas seu escopo iterará por 'aluno', então você só consegue checar dados daquele aluno. Filtre o mais próximo possível).
+5. IMPORTANTÍSSIMO: Os valores no banco de dados podem variar em maiúsculas/minúsculas. Para propriedades de texto como 'status', 'status_matricula' ou 'unidade', SEMPRE use comparações case-insensitive (toLowerCase) e inclua as variações, ex: \`['ativo', 'ativa'].includes(val.toLowerCase())\` ou \`val.toLowerCase().includes('ativo')\`. O mesmo vale para 'unidade'.
+6. Para filtrar pela "unidade" do aluno, verifique a propriedade \`aluno.unidade\` (ex: \`aluno.unidade.toLowerCase().includes('bernoulli')\`). Evite buscar as unidades_selecionadas da turma, a menos que seja explicitamente solicitado.
 `;
 
       const response = await ai.models.generateContent({
