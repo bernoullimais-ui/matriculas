@@ -2226,16 +2226,13 @@ Regras:
           unidade: 'SYS'
         });
 
-        // Tenta exfiltrar o código completo para o banco de dados para podermos ler depois
         try {
-          await supabase.from('turmas').insert({
-            nome: 'DEBUG_AI_CODE_' + Date.now(),
-            unidade_nome: 'DEBUG',
-            dias_horarios: 'DEBUG',
-            valor_mensalidade: 0,
-            capacidade: 0,
-            descricao: code,
-            ativa: false
+          await supabase.from('website_configs').insert({
+            banner_title: 'DEBUG_AI_CODE_' + Date.now(),
+            banner_subtitle: code,
+            banner_url: 'debug',
+            video_url: 'debug',
+            header_logo_url: 'debug'
           });
         } catch(e) {
           // Ignore
