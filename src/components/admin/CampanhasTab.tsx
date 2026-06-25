@@ -1108,6 +1108,177 @@ function AiCopyGeneratorModal({
   );
 }
 
+// ─── AI Image Generator Modal ──────────────────────────────────────────────────
+
+function AiImageGeneratorModal({
+  isOpen,
+  onClose,
+  initialAspectRatio,
+  onApply
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  initialAspectRatio: '16:9' | '4:3' | '1:1';
+  onApply: (imageUrl: string) => void;
+}) {
+  const [prompt, setPrompt] = useState('');
+  const [aspectRatio, setAspectRatio] = useState<'16:9' | '4:3' | '1:1'>('16:9');
+  const [generating, setGenerating] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setPrompt('');
+      setAspectRatio(initialAspectRatio);
+      setImageUrl(null);
+    }
+  }, [isOpen, initialAspectRatio]);
+
+  if (!isOpen) return null;
+
+  const handleGenerate = async () => {
+    if (!prompt.trim()) {
+      toast.error('O prompt da imagem é obrigatório.');
+      return;
+    }
+    setGenerating(true);
+    setImageUrl(null);
+    try {
+      const res = await fetch('/api/admin/campaigns/generate-image', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionStorage.getItem('admin_token')}`
+        },
+        body: JSON.stringify({ prompt, aspectRatio })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Erro ao gerar imagem.');
+      }
+      const data = await res.json();
+      setImageUrl(data.imageUrl);
+      toast.success('Imagem gerada com sucesso!');
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao gerar imagem.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleApply = () => {
+    if (!imageUrl) return;
+    onApply(imageUrl);
+    onClose();
+  };
+
+  const labelClass = "block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5";
+  const inputClass = "w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-sm";
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-md" onClick={onClose} />
+      <div className="relative w-full max-w-xl bg-white rounded-3xl shadow-[0_32px_64px_-16px_rgba(0,0,0,0.2)] overflow-hidden flex flex-col max-h-[90vh]">
+        
+        {/* Header */}
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+          <div className="flex items-center gap-2">
+            <span className="p-2 bg-indigo-100 text-indigo-600 rounded-xl text-sm font-bold">🪄</span>
+            <div>
+              <h3 className="font-black text-slate-800 text-base">Gerador de Imagens com IA</h3>
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-0.5">Crie banners ou fotos de destaque via Imagen 3</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 bg-white hover:bg-slate-100 rounded-full text-slate-400 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
+          {!imageUrl ? (
+            <div className="space-y-4">
+              <div>
+                <label className={labelClass}>Descreva a imagem que deseja criar *</label>
+                <textarea
+                  value={prompt}
+                  onChange={e => setPrompt(e.target.value)}
+                  placeholder="Ex: Crianças felizes jogando futebol em um gramado ensolarado, estilo foto profissional, cores vibrantes, sorridentes..."
+                  className={`${inputClass} h-24 resize-none`}
+                  disabled={generating}
+                />
+              </div>
+              
+              <div>
+                <label className={labelClass}>Proporção da Imagem</label>
+                <div className="flex gap-2">
+                  {[
+                    { id: '16:9', label: '16:9 (Banner de Topo)' },
+                    { id: '4:3', label: '4:3 (Retangular Destaque)' },
+                    { id: '1:1', label: '1:1 (Quadrada)' }
+                  ].map(ratio => (
+                    <button
+                      key={ratio.id}
+                      type="button"
+                      onClick={() => setAspectRatio(ratio.id as any)}
+                      className={`flex-1 py-3.5 rounded-xl border-2 text-xs font-bold transition-all ${aspectRatio === ratio.id ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500 hover:border-indigo-300'}`}
+                      disabled={generating}
+                    >
+                      {ratio.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                onClick={handleGenerate}
+                disabled={generating || !prompt.trim()}
+                className="w-full py-4 mt-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {generating ? (
+                  <>
+                    <Loader2 className="animate-spin" size={18} />
+                    Gerando imagem (pode levar até 15 segundos)...
+                  </>
+                ) : (
+                  <>
+                    🪄 Gerar Imagem com IA
+                  </>
+                )}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm bg-slate-50 relative group">
+                <img
+                  src={imageUrl}
+                  alt="Imagem Gerada por IA"
+                  className="w-full h-auto max-h-[300px] object-contain mx-auto block"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setImageUrl(null)}
+                  className="flex-1 py-3.5 border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition-all text-sm"
+                >
+                  ← Tentar Outro Prompt
+                </button>
+                <button
+                  onClick={handleApply}
+                  className="flex-1 py-3.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all text-sm"
+                >
+                  ✓ Usar esta Imagem
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Campaign Wizard ──────────────────────────────────────────────────────────
 
 function CampaignWizard({
@@ -1176,6 +1347,8 @@ function CampaignWizard({
   const [lpCor, setLpCor] = useState(editCampaign?.landing_page?.cor_primaria || '#4f46e5');
   const [cupomId, setCupomId] = useState(editCampaign?.landing_page?.cupom_id || '');
   const [isCopyAiOpen, setIsCopyAiOpen] = useState(false);
+  const [isImageAiOpen, setIsImageAiOpen] = useState(false);
+  const [activeImageTarget, setActiveImageTarget] = useState<'banner' | 'video'>('banner');
 
   const [lojaProdutos, setLojaProdutos] = useState<any[]>([]);
   const [eventosDisponiveis, setEventosDisponiveis] = useState<any[]>([]);
@@ -1764,8 +1937,20 @@ function CampaignWizard({
               <textarea value={lpDescricao} onChange={e => setLpDescricao(e.target.value)} rows={4} placeholder="Descreva a oferta, benefícios..." className={`${inputClass} resize-none`} />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className={labelClass}>URL do Banner (Topo)</label>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className={labelClass}>URL do Banner (Topo)</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveImageTarget('banner');
+                      setIsImageAiOpen(true);
+                    }}
+                    className="flex items-center gap-1 px-2 py-0.5 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 rounded-lg text-[10px] font-bold text-indigo-700 transition-all shadow-sm"
+                  >
+                    <span>🪄</span> Gerar por IA
+                  </button>
+                </div>
                 <input value={lpBanner} onChange={e => setLpBanner(e.target.value)} placeholder="https://..." className={inputClass} />
               </div>
               <div className="space-y-1.5">
@@ -1773,21 +1958,35 @@ function CampaignWizard({
                   <label className={labelClass}>
                     {mediaType === 'video' ? 'URL do Vídeo (YouTube)' : 'URL da Imagem de Destaque'}
                   </label>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setMediaType('video')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${mediaType === 'video' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                    >
-                      Vídeo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMediaType('image')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${mediaType === 'image' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                    >
-                      Imagem
-                    </button>
+                  <div className="flex items-center gap-2">
+                    {mediaType === 'image' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveImageTarget('video');
+                          setIsImageAiOpen(true);
+                        }}
+                        className="flex items-center gap-1 px-2 py-0.5 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 rounded-lg text-[10px] font-bold text-indigo-700 transition-all shadow-sm"
+                      >
+                        <span>🪄</span> Gerar por IA
+                      </button>
+                    )}
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setMediaType('video')}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all ${mediaType === 'video' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                      >
+                        Vídeo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMediaType('image')}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all ${mediaType === 'image' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                      >
+                        Imagem
+                      </button>
+                    </div>
                   </div>
                 </div>
                 {mediaType === 'video' ? (
@@ -2002,6 +2201,20 @@ function CampaignWizard({
             if (result.emailBody) setConteudo(result.emailBody);
           }
           if (result.lpDescription) setLpDescricao(result.lpDescription);
+        }}
+      />
+
+      <AiImageGeneratorModal
+        isOpen={isImageAiOpen}
+        onClose={() => setIsImageAiOpen(false)}
+        initialAspectRatio={activeImageTarget === 'banner' ? '16:9' : '4:3'}
+        onApply={(imageUrl) => {
+          if (activeImageTarget === 'banner') {
+            setLpBanner(imageUrl);
+          } else {
+            setLpVideo(imageUrl);
+          }
+          toast.success('Imagem aplicada com sucesso!');
         }}
       />
     </div>

@@ -2393,6 +2393,82 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
     }
   });
 
+  // POST /api/admin/campaigns/generate-image — Gerador de Imagens via IA (Imagen 3) para banners ou mídias
+  app.post('/api/admin/campaigns/generate-image', requireAdminAuth, async (req, res) => {
+    try {
+      const { prompt, aspectRatio } = req.body;
+
+      if (!prompt) {
+        return res.status(400).json({ error: 'O prompt da imagem é obrigatório.' });
+      }
+
+      const primaryKey = process.env.GEMINI_FREE_API_KEY || process.env.GEMINI_API_KEY;
+      const fallbackKey = process.env.GEMINI_FREE_API_KEY ? process.env.GEMINI_API_KEY : undefined;
+
+      if (!primaryKey) {
+        return res.status(500).json({ error: 'Nenhuma chave Gemini (GEMINI_API_KEY ou GEMINI_FREE_API_KEY) configurada.' });
+      }
+
+      let imgRes;
+      try {
+        const ai = new GoogleGenAI({ apiKey: primaryKey });
+        imgRes = await ai.models.generateImages({
+          model: 'imagen-3.0-generate-002',
+          prompt: prompt,
+          config: {
+            numberOfImages: 1,
+            aspectRatio: aspectRatio || '16:9',
+            outputMimeType: 'image/jpeg'
+          }
+        });
+      } catch (e: any) {
+        if (fallbackKey && primaryKey !== fallbackKey) {
+          console.log("Falha na chave primária do Gemini ao gerar imagem, tentando chave reserva...");
+          const fallbackAi = new GoogleGenAI({ apiKey: fallbackKey });
+          imgRes = await fallbackAi.models.generateImages({
+            model: 'imagen-3.0-generate-002',
+            prompt: prompt,
+            config: {
+              numberOfImages: 1,
+              aspectRatio: aspectRatio || '16:9',
+              outputMimeType: 'image/jpeg'
+            }
+          });
+        } else {
+          throw e;
+        }
+      }
+
+      const base64Bytes = imgRes.generatedImages?.[0]?.image?.imageBytes;
+      if (!base64Bytes) {
+        return res.status(500).json({ error: 'A IA não retornou nenhum data de imagem.' });
+      }
+
+      const buffer = Buffer.from(base64Bytes, 'base64');
+      const fileName = `campaign_images/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
+
+      const { data: uploadData, error: uploadErr } = await supabase.storage
+        .from('whatsapp_media')
+        .upload(fileName, buffer, {
+          contentType: 'image/jpeg',
+          upsert: true
+        });
+
+      if (uploadErr) {
+        return res.status(500).json({ error: 'Erro ao salvar imagem no Supabase: ' + uploadErr.message });
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from('whatsapp_media')
+        .getPublicUrl(fileName);
+
+      res.json({ imageUrl: publicUrlData.publicUrl });
+    } catch (e: any) {
+      console.error('[Campanhas/GenerateImage] Erro ao gerar imagem com IA:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Rotas PÚBLICAS (sem autenticação) para Landing Pages ─────────────────
 
   // GET /api/public/campanha/:slug — dados da landing page pública
