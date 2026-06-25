@@ -2153,7 +2153,7 @@ Regras:
 9. SEMÂNTICA DE NEGATIVAS: Se o prompt pedir "Alunos sem matrícula ativa na unidade X", o usuário implicitamente quer "Alunos PERTENCENTES à unidade X (aluno.unidade === X), mas que NÃO possuem matrícula ativa nela". Sempre ancore a unidade no 'aluno.unidade' para cenários de negação ou exclusão, para evitar retornar falsos positivos de alunos de outras unidades.
 10. INSCRIÇÕES EM EVENTOS: Se o prompt mencionar "evento", "inscritos no evento X", use \`context.eventos\` e \`context.evento_inscricoes\`. Cruze usando \`inscricao.aluno_id === context.aluno.id\` e \`inscricao.evento_id === evento.id\`. Filtre pelo \`evento.titulo\` (case-insensitive) e verifique se o status está em \`['confirmado', 'confirmada']\` se pedir inscritos.
 11. CANCELAMENTOS: Se o prompt falar sobre "cancelamentos de matrícula num período", você DEVE verificar se \`matricula.status\` inclui 'cancelado' ou 'cancelada' E você OBRIGATORIAMENTE DEVE usar \`matricula.data_cancelamento\` para avaliar quando ocorreu. Não use \`created_at\` para data de cancelamento!
-12. PASSADO VS PRESENTE: O banco armazena apenas o status ATUAL ('ativo', 'cancelado'). Se o prompt pedir alunos que "tiveram" matrícula num ano (ex: "apenas em 2024"), não exija que o status atual seja 'ativo'. Verifique se \`data_matricula\` ou \`created_at\` ocorreu no ano em questão. Além disso, se a regra disser "APENAS no ano X" e já estivermos em um ano posterior, a matrícula NÃO PODE estar ativa hoje; logo, ela DEVE possuir \`data_cancelamento\` não nula e cujo ano seja menor ou igual ao ano X.
+12. PASSADO VS PRESENTE: O banco armazena apenas o status ATUAL ('ativo', 'cancelado'). Para saber quando uma matrícula começou, SEMPRE use \`matricula.data_matricula\` (NÃO use created_at, pois pode ser a data de importação do sistema). Se o prompt pedir alunos que "tiveram" matrícula num ano passado (ex: "apenas em 2025"), a matrícula NÃO PODE estar ativa hoje; logo, ela DEVE possuir \`data_cancelamento\` não nula e cujo ano seja menor ou igual ao ano em questão.
 `;
 
       const response = await ai.models.generateContent({
@@ -2218,26 +2218,6 @@ Regras:
           return false;
         }
       });
-
-      if (matched.length === 0) {
-        matched.push({
-          id: 'debug-id',
-          nome_completo: `DEBUG: al=${alunos?.length}, mat=${matriculas?.length}, err=${errorCount}, lastErr=${lastError}, code=${code.substring(0, 40)}...`,
-          unidade: 'SYS'
-        });
-
-        try {
-          await supabase.from('website_configs').insert({
-            banner_title: 'DEBUG_AI_CODE_' + Date.now(),
-            banner_subtitle: code,
-            banner_url: 'debug',
-            video_url: 'debug',
-            header_logo_url: 'debug'
-          });
-        } catch(e) {
-          // Ignore
-        }
-      }
 
       res.json({ code, matched });
     } catch (e: any) {
