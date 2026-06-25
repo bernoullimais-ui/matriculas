@@ -503,6 +503,30 @@ export function FinanceTab() {
     };
   }, [financialData, finStartDate, finEndDate, finSelectedUnit, finSelectedProf, finSearchStudent, finPrimaryTab, finSecondaryTab, options]);
 
+  const filteredLojaGlobally = useMemo(() => {
+    return pedidos.filter(p => {
+      const d = new Date(p.created_at);
+      if (!(d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59'))) return false;
+      if (finSearchStudent) {
+        const q = finSearchStudent.toLowerCase();
+        return p.nome_cliente?.toLowerCase().includes(q) || p.whatsapp_cliente?.includes(q);
+      }
+      return true;
+    });
+  }, [pedidos, finStartDate, finEndDate, finSearchStudent]);
+
+  const filteredEventosGlobally = useMemo(() => {
+    return inscricoes.filter(i => {
+      const d = new Date(i.created_at);
+      if (!(d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59'))) return false;
+      if (finSearchStudent) {
+        const q = finSearchStudent.toLowerCase();
+        return i.nome_responsavel?.toLowerCase().includes(q) || i.telefone_responsavel?.includes(q) || i.nome_aluno?.toLowerCase().includes(q);
+      }
+      return true;
+    });
+  }, [inscricoes, finStartDate, finEndDate, finSearchStudent]);
+
   const handleExportCSV = () => {
     if (!computedFinance) return;
     
@@ -523,14 +547,10 @@ export function FinanceTab() {
         csvContent += "Data;Origem;Responsável/Cliente;Aluno;Turma;Unidade;Plano;Método;Valor Líquido (R$)\n";
         const cList: any[] = [];
         computedFinance.nominalList.forEach(p => cList.push({ ...p, origem: 'Mensalidade' }));
-        pedidos.filter((p: any) => {
-          const d = new Date(p.created_at);
-          return d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59') && p.status === 'pago';
-        }).forEach((p: any) => cList.push({ date: p.created_at, responsavel: p.nome_cliente, origem: 'Loja', metodo: '—', liquido: p.total, status: 'pago' }));
-        inscricoes.filter((i: any) => {
-          const d = new Date(i.created_at);
-          return d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59') && i.status === 'confirmado';
-        }).forEach((i: any) => cList.push({ date: i.created_at, responsavel: i.nome_responsavel, origem: 'Evento', metodo: '—', liquido: i.valor_pago, status: 'pago' }));
+        filteredLojaGlobally.filter((p: any) => p.status === 'pago')
+          .forEach((p: any) => cList.push({ date: p.created_at, responsavel: p.nome_cliente, aluno: '—', turma: '—', unidade: '—', plano: '—', origem: 'Loja', metodo: '—', liquido: p.total, status: 'pago' }));
+        filteredEventosGlobally.filter((i: any) => i.taxa_paga || i.status?.toLowerCase() === 'confirmada' || i.status === 'pago')
+          .forEach((i: any) => cList.push({ date: i.created_at, responsavel: i.nome_responsavel, aluno: i.nome_aluno || '—', turma: '—', unidade: '—', plano: '—', origem: 'Evento', metodo: i.respostas_personalizadas?.metodo_pagamento || '—', liquido: i.valor_pago, status: 'pago' }));
         
         cList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).forEach(n => {
           const dateFormatted = n.date ? formatDateDisplay(n.date) : '';
@@ -1156,14 +1176,10 @@ export function FinanceTab() {
                           {finSecondaryTab === 'consolidado' && (() => {
                             const cList: any[] = [];
                             computedFinance.nominalList.forEach(p => cList.push({ ...p, origem: 'Mensalidade' }));
-                            pedidos.filter((p: any) => {
-                              const d = new Date(p.created_at);
-                              return d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59') && p.status === 'pago';
-                            }).forEach((p: any) => cList.push({ date: p.created_at, responsavel: p.nome_cliente, origem: 'Loja', metodo: '—', liquido: p.total, status: 'pago' }));
-                            inscricoes.filter((i: any) => {
-                              const d = new Date(i.created_at);
-                              return d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59') && (i.taxa_paga || i.status?.toLowerCase() === 'confirmada' || i.status === 'pago');
-                            }).forEach((i: any) => cList.push({ date: i.created_at, responsavel: i.nome_responsavel, origem: 'Evento', metodo: i.respostas_personalizadas?.metodo_pagamento || '—', liquido: i.valor_pago, status: 'pago' }));
+                            filteredLojaGlobally.filter((p: any) => p.status === 'pago')
+                              .forEach((p: any) => cList.push({ date: p.created_at, responsavel: p.nome_cliente, origem: 'Loja', metodo: '—', liquido: p.total, status: 'pago' }));
+                            filteredEventosGlobally.filter((i: any) => i.taxa_paga || i.status?.toLowerCase() === 'confirmada' || i.status === 'pago')
+                              .forEach((i: any) => cList.push({ date: i.created_at, responsavel: i.nome_responsavel, aluno: i.nome_aluno || '—', origem: 'Evento', metodo: i.respostas_personalizadas?.metodo_pagamento || '—', liquido: i.valor_pago, status: 'pago' }));
                             
                             cList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
@@ -1232,10 +1248,7 @@ export function FinanceTab() {
 
                           {/* 3. Recebimentos Loja */}
                           {finSecondaryTab === 'loja' && (() => {
-                            const filteredLoja = pedidos.filter(p => {
-                              const d = new Date(p.created_at);
-                              return d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59');
-                            });
+                            const filteredLoja = filteredLojaGlobally;
                             const lojaPago = filteredLoja.filter(p => p.status === 'pago').reduce((acc, p) => acc + Number(p.total || 0), 0);
                             const lojaPedidosPagos = filteredLoja.filter(p => p.status === 'pago').length;
 
@@ -1278,10 +1291,7 @@ export function FinanceTab() {
 
                           {/* 4. Recebimentos Eventos */}
                           {finSecondaryTab === 'eventos' && (() => {
-                            const filteredEventos = inscricoes.filter(i => {
-                              const d = new Date(i.created_at);
-                              return d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59');
-                            });
+                            const filteredEventos = filteredEventosGlobally;
                             const isEventoPago = (i: any) => i.taxa_paga || i.status?.toLowerCase() === 'confirmada' || i.status === 'pago';
                             const eventosPago = filteredEventos.filter(isEventoPago).reduce((acc, i) => acc + Number(i.valor_pago || 0), 0);
                             const eventosPagosCount = filteredEventos.filter(isEventoPago).length;
