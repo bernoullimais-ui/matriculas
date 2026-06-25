@@ -2393,7 +2393,7 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
     }
   });
 
-  // POST /api/admin/campaigns/generate-image — Gerador de Imagens via IA (Imagen 3) para banners ou mídias
+  // POST /api/admin/campaigns/generate-image — Gerador de Imagens via IA (Imagen 4) para banners ou mídias
   app.post('/api/admin/campaigns/generate-image', requireAdminAuth, async (req, res) => {
     try {
       const { prompt, aspectRatio } = req.body;
@@ -2413,7 +2413,7 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
       try {
         const ai = new GoogleGenAI({ apiKey: primaryKey });
         imgRes = await ai.models.generateImages({
-          model: 'imagen-3.0-generate-002',
+          model: 'imagen-4.0-generate-001',
           prompt: prompt,
           config: {
             numberOfImages: 1,
@@ -2426,7 +2426,7 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
           console.log("Falha na chave primária do Gemini ao gerar imagem, tentando chave reserva...");
           const fallbackAi = new GoogleGenAI({ apiKey: fallbackKey });
           imgRes = await fallbackAi.models.generateImages({
-            model: 'imagen-3.0-generate-002',
+            model: 'imagen-4.0-generate-001',
             prompt: prompt,
             config: {
               numberOfImages: 1,
