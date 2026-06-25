@@ -2172,10 +2172,12 @@ app.use('/api/admin', requireAdminAuth);
 
       // Se não enviou o código diretamente, pedimos à IA
       if (!code) {
-        if (!process.env.GEMINI_API_KEY) {
-          return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
+        const primaryKey = process.env.GEMINI_FREE_API_KEY || process.env.GEMINI_API_KEY;
+        const fallbackKey = process.env.GEMINI_FREE_API_KEY ? process.env.GEMINI_API_KEY : undefined;
+
+        if (!primaryKey) {
+          return res.status(500).json({ error: 'Nenhuma chave Gemini (GEMINI_API_KEY ou GEMINI_FREE_API_KEY) configurada.' });
         }
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         const systemInstruction = `Você é um assistente de engenharia de software especializado em Javascript.
 O usuário fornecerá uma descrição em linguagem natural de um público-alvo (alunos) que ele deseja filtrar.
 Sua tarefa é retornar APENAS O CORPO de uma função Javascript que avalia se um aluno atende aos critérios.
@@ -2203,11 +2205,27 @@ Regras:
 13. AULAS EXPERIMENTAIS: Se o prompt pedir alunos que fizeram "aula experimental", cruze usando 'exp.aluno_id === context.aluno.id'. Verifique a modalidade no campo 'exp.curso' (case-insensitive) e a data no campo 'exp.aula' (que é string ISO YYYY-MM-DD). Exemplo para abril/26: "exp.aula.startsWith('2026-04')".
 `;
 
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: prompt,
-          config: { systemInstruction, temperature: 0.1 }
-        });
+        let response;
+        try {
+          const ai = new GoogleGenAI({ apiKey: primaryKey });
+          response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: { systemInstruction, temperature: 0.1 }
+          });
+        } catch (e: any) {
+          if (fallbackKey && primaryKey !== fallbackKey) {
+            console.log("Falha na chave primária do Gemini, tentando chave reserva...");
+            const fallbackAi = new GoogleGenAI({ apiKey: fallbackKey });
+            response = await fallbackAi.models.generateContent({
+              model: 'gemini-2.5-flash',
+              contents: prompt,
+              config: { systemInstruction, temperature: 0.1 }
+            });
+          } else {
+            throw e;
+          }
+        }
         code = response.text || '';
         code = code.replace(/```javascript/gi, '').replace(/```js/gi, '').replace(/```/g, '').trim();
       }
