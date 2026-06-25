@@ -2125,6 +2125,11 @@ app.use('/api/admin', requireAdminAuth);
   // GET /api/admin/campaigns/saved-filters — Lista filtros salvos
   app.get('/api/admin/campaigns/saved-filters', requireAdminAuth, async (req, res) => {
     try {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Surrogate-Control', 'no-store');
+      
       const { data, error } = await supabase.from('saved_ai_filters').select('*').order('created_at', { ascending: false });
       if (error) throw error;
       res.json(data || []);

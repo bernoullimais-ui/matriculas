@@ -704,15 +704,16 @@ function CampaignWizard({
 
   const fetchSavedFilters = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/campaigns/saved-filters', { headers: authHeader() });
+      const url = '/api/admin/campaigns/saved-filters?t=' + Date.now();
+      const res = await fetch(url, { headers: authHeader() });
       if (res.ok) {
         setSavedFilters(await res.json());
       } else {
         const text = await res.text();
-        console.error("Erro fetchSavedFilters:", text);
+        toast.error("Erro ao carregar filtros: " + text.substring(0, 50));
       }
-    } catch (e) {
-      console.error("Erro de rede fetchSavedFilters:", e);
+    } catch (e: any) {
+      toast.error("Erro de rede nos filtros: " + e.message);
     }
   }, []);
 
