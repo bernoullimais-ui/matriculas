@@ -942,6 +942,12 @@ function CampaignWizard({
   const [lpDescricao, setLpDescricao] = useState(editCampaign?.landing_page?.descricao || '');
   const [lpBanner, setLpBanner] = useState(editCampaign?.landing_page?.banner_url || '');
   const [lpVideo, setLpVideo] = useState(editCampaign?.landing_page?.video_url || '');
+  const [mediaType, setMediaType] = useState(() => {
+    const url = editCampaign?.landing_page?.video_url || '';
+    if (!url) return 'video';
+    const isVideo = url.includes('youtube.com') || url.includes('youtu.be') || url.includes('vimeo.com') || url.includes('/embed/');
+    return isVideo ? 'video' : 'image';
+  });
   const [lpPrecoOrig, setLpPrecoOrig] = useState(editCampaign?.landing_page?.preco_original?.toString() || '');
   const [lpPrecoPromo, setLpPrecoPromo] = useState(editCampaign?.landing_page?.preco_promocional?.toString() || '');
   const [lpCondicao, setLpCondicao] = useState(editCampaign?.landing_page?.condicao_texto || '');
@@ -1520,14 +1526,38 @@ function CampaignWizard({
               <label className={labelClass}>Descrição</label>
               <textarea value={lpDescricao} onChange={e => setLpDescricao(e.target.value)} rows={4} placeholder="Descreva a oferta, benefícios..." className={`${inputClass} resize-none`} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className={labelClass}>URL do Banner</label>
+                <label className={labelClass}>URL do Banner (Topo)</label>
                 <input value={lpBanner} onChange={e => setLpBanner(e.target.value)} placeholder="https://..." className={inputClass} />
               </div>
-              <div>
-                <label className={labelClass}>URL do Vídeo (YouTube)</label>
-                <input value={lpVideo} onChange={e => setLpVideo(e.target.value)} placeholder="https://youtube.com/embed/..." className={inputClass} />
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className={labelClass}>
+                    {mediaType === 'video' ? 'URL do Vídeo (YouTube)' : 'URL da Imagem de Destaque'}
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMediaType('video')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${mediaType === 'video' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                    >
+                      Vídeo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMediaType('image')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${mediaType === 'image' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                    >
+                      Imagem
+                    </button>
+                  </div>
+                </div>
+                {mediaType === 'video' ? (
+                  <input value={lpVideo} onChange={e => setLpVideo(e.target.value)} placeholder="https://youtube.com/watch?v=..." className={inputClass} />
+                ) : (
+                  <input value={lpVideo} onChange={e => setLpVideo(e.target.value)} placeholder="https://... (URL da Imagem)" className={inputClass} />
+                )}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">

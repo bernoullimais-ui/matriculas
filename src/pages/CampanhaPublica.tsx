@@ -273,18 +273,26 @@ export default function CampanhaPublica() {
                 </div>
               )}
 
-              {/* Video */}
-              {embedUrl && (
+              {/* Media (Video or Image) */}
+              {lp.video_url && (
                 <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                  <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
-                    <iframe
-                      src={embedUrl}
-                      className="absolute inset-0 w-full h-full"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                      title="Vídeo da campanha"
+                  {embedUrl ? (
+                    <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
+                      <iframe
+                        src={embedUrl}
+                        className="absolute inset-0 w-full h-full border-0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                        title="Vídeo da campanha"
+                      />
+                    </div>
+                  ) : (
+                    <img
+                      src={lp.video_url}
+                      alt="Destaque da campanha"
+                      className="w-full h-auto object-cover max-h-[480px] mx-auto block"
                     />
-                  </div>
+                  )}
                 </div>
               )}
 
