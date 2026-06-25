@@ -2150,7 +2150,26 @@ app.use('/api/admin', requireAdminAuth);
     }
   });
 
-  // POST /api/admin/campaigns/audience-count — preview do tamanho do público
+  // DELETE /api/admin/campaigns/:id — exclui campanha e dados relacionados
+  app.delete('/api/admin/campaigns/:id', requireAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      // Delete related data first (respecting FK order)
+      await supabase.from('campaign_sends').delete().eq('campaign_id', id);
+      await supabase.from('campaign_metrics').delete().eq('campaign_id', id);
+      await supabase.from('campaign_emails').delete().eq('campaign_id', id);
+      await supabase.from('campaign_landing_pages').delete().eq('campaign_id', id);
+      await supabase.from('campaign_targets').delete().eq('campaign_id', id);
+      const { error } = await supabase.from('campaigns').delete().eq('id', id);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/admin/campaigns/:id/audience-count — preview do tamanho do público
+
   app.post('/api/admin/campaigns/audience-count', requireAdminAuth, async (req, res) => {
     try {
       const { targets } = req.body;

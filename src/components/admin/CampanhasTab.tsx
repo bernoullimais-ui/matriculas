@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Megaphone, Plus, Search, Filter, Send, Eye, BarChart3, Archive,
-  ChevronRight, ChevronLeft, CheckCircle2, Mail, Globe, Users, X,
-  Loader2, TrendingUp, MousePointerClick, UserPlus, ShoppingCart,
+  Megaphone, Plus, Search, Send, Eye, BarChart3, Archive,
+  ChevronRight, ChevronLeft, CheckCircle2, Mail, Globe, X,
+  Loader2, MousePointerClick, UserPlus, ShoppingCart,
   DollarSign, Play, Pause, Edit3, Trash2, ExternalLink, Copy,
-  AlertCircle, Clock, Zap, Target, Image as ImageIcon, FileText, Code
+  AlertCircle, Clock, Zap, Image as ImageIcon, FileText, Code, MessageSquare
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import toast from 'react-hot-toast';
@@ -152,6 +152,9 @@ export default function CampanhasTab() {
   const [search, setSearch] = useState('');
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [options, setOptions] = useState<{ unidades: string[]; turmas: { id: string; nome: string; unidades_selecionadas?: string[] }[]; cupons: { id: string; nome: string }[] }>({ unidades: [], turmas: [], cupons: [] });
+  const [deleteModal, setDeleteModal] = useState<{ open: boolean; campaign: Campaign | null }>({ open: false, campaign: null });
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [previewCampaign, setPreviewCampaign] = useState<Campaign | null>(null);
 
   const fetchCampaigns = useCallback(async () => {
     setLoading(true);
@@ -186,6 +189,36 @@ export default function CampanhasTab() {
       setCampaigns(prev => prev.map(c => c.id === id ? { ...c, status: 'arquivada' } : c));
       toast.success('Campanha arquivada');
     } catch { toast.error('Erro ao arquivar'); }
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/admin/campaigns/${id}`, { method: 'DELETE', headers: authHeader() });
+      if (res.ok) {
+        setCampaigns(prev => prev.filter(c => c.id !== id));
+        toast.success('Campanha excluída com sucesso!');
+        setDeleteModal({ open: false, campaign: null });
+      } else {
+        const d = await res.json();
+        toast.error(d.error || 'Erro ao excluir campanha');
+      }
+    } catch { toast.error('Erro ao excluir campanha'); }
+    finally { setDeletingId(null); }
+  };
+
+  const handleDuplicate = async (campaign: Campaign) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/campaigns/${campaign.id}`, { headers: authHeader() });
+      if (!res.ok) throw new Error('Falha ao carregar campanha');
+      const full: Campaign = await res.json();
+      // Open wizard with all data pre-filled but no id (new campaign)
+      setSelectedCampaign({ ...full, id: '', nome: `[Cópia] ${full.nome}`, slug: `copia-${full.slug}`, status: 'rascunho' });
+      setSubView('wizard');
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao duplicar');
+    } finally { setLoading(false); }
   };
 
   const [dispatchState, setDispatchState] = useState<{ active: boolean; current: number; total: number; targetName: string; delayRemaining: number | null }>({ active: false, current: 0, total: 0, targetName: '', delayRemaining: null });
@@ -468,7 +501,7 @@ export default function CampanhasTab() {
                 )}
 
                 {/* Actions */}
-                <div className="flex gap-2 border-t border-slate-50 pt-3">
+                <div className="flex gap-2 border-t border-slate-50 pt-3 flex-wrap">
                   <button
                     onClick={() => { setSelectedCampaign(campaign); setSubView('analytics'); }}
                     className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-slate-50 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 rounded-xl text-xs font-bold transition-colors"
@@ -476,10 +509,23 @@ export default function CampanhasTab() {
                     <BarChart3 size={13} /> Analytics
                   </button>
                   <button
+                    onClick={() => setPreviewCampaign(campaign)}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-slate-50 hover:bg-sky-50 text-slate-600 hover:text-sky-700 rounded-xl text-xs font-bold transition-colors"
+                  >
+                    <Eye size={13} /> Prévia
+                  </button>
+                  <button
                     onClick={() => { setSelectedCampaign(campaign); setSubView('wizard'); }}
                     className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-bold transition-colors"
                   >
                     <Edit3 size={13} /> Editar
+                  </button>
+                  <button
+                    onClick={() => handleDuplicate(campaign)}
+                    title="Duplicar campanha"
+                    className="p-2 bg-slate-50 hover:bg-violet-50 text-slate-400 hover:text-violet-600 rounded-xl transition-colors"
+                  >
+                    <Copy size={13} />
                   </button>
                   {campaign.status !== 'arquivada' && campaign.status !== 'ativa' && (
                     <button
@@ -493,11 +539,18 @@ export default function CampanhasTab() {
                     <button
                       onClick={() => handleArchive(campaign.id)}
                       title="Arquivar"
-                      className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl transition-colors"
+                      className="p-2 bg-slate-50 hover:bg-amber-50 text-slate-400 hover:text-amber-500 rounded-xl transition-colors"
                     >
                       <Archive size={13} />
                     </button>
                   )}
+                  <button
+                    onClick={() => setDeleteModal({ open: true, campaign })}
+                    title="Excluir permanentemente"
+                    className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-xl transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
               </div>
             );
@@ -543,11 +596,242 @@ export default function CampanhasTab() {
           </div>
         </div>
       )}
+
+      {/* ── Delete Confirmation Modal ── */}
+      {deleteModal.open && deleteModal.campaign && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                <Trash2 size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-800">Excluir Campanha</h3>
+                <p className="text-sm text-slate-500 font-medium mt-0.5">Esta ação não pode ser desfeita.</p>
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-xl p-4">
+              <p className="text-sm text-slate-700 font-medium">
+                Você está prestes a excluir permanentemente a campanha:
+              </p>
+              <p className="text-sm font-black text-slate-900 mt-1">"{deleteModal.campaign.nome}"</p>
+              <p className="text-xs text-slate-400 mt-1">Todos os logs de envio, métricas e dados da landing page também serão removidos.</p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteModal({ open: false, campaign: null })}
+                className="flex-1 py-2.5 border-2 border-slate-200 text-slate-600 hover:border-slate-300 font-bold text-sm rounded-xl transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => deleteModal.campaign && handleDelete(deleteModal.campaign.id)}
+                disabled={!!deletingId}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {deletingId ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                Excluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Preview Modal ── */}
+      {previewCampaign && (
+        <PreviewModal campaign={previewCampaign} onClose={() => setPreviewCampaign(null)} />
+      )}
+    </div>
+  );
+}
+
+// ─── Preview Modal ────────────────────────────────────────────────────────────
+
+function PreviewModal({ campaign, onClose }: { campaign: Campaign; onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<'email' | 'whatsapp' | 'lp' | 'imagem'>('email');
+  const [refAluno, setRefAluno] = useState<any>(null);
+  const [loadingAluno, setLoadingAluno] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      setLoadingAluno(true);
+      try {
+        const res = await fetch(`/api/admin/campaigns/${campaign.id}/audience`, { headers: authHeader() });
+        if (res.ok) {
+          const audience = await res.json();
+          if (audience && audience.length > 0) setRefAluno(audience[0]);
+        }
+      } finally { setLoadingAluno(false); }
+    })();
+  }, [campaign.id]);
+
+  const substituirTags = (text: string) => {
+    if (!text) return text;
+    const nome = refAluno?.nome || refAluno?.nome_completo || 'João Silva';
+    const unidade = refAluno?.unidade || 'Unidade Exemplo';
+    const turma = refAluno?.turma || 'Turma Exemplo';
+    const responsavel = refAluno?.responsavel || 'Maria Silva';
+    const plano = refAluno?.plano || 'Plano Mensal';
+    const statusMatricula = refAluno?.status || 'ativo';
+    const linkLp = campaign.slug ? `https://sportforkids.com.br/campanha/${campaign.slug}` : 'https://sportforkids.com.br';
+    return text
+      .replace(/\{NOME_ALUNO\}/g, nome)
+      .replace(/\{UNIDADE\}/g, unidade)
+      .replace(/\{TURMA\}/g, turma)
+      .replace(/\{RESPONSAVEL\}/g, responsavel)
+      .replace(/\{PLANO\}/g, plano)
+      .replace(/\{STATUS_MATRICULA\}/g, statusMatricula)
+      .replace(/\{LINK_LP\}/g, linkLp);
+  };
+
+  const isWhatsapp = campaign.metodo_envio === 'whatsapp';
+  const hasEmail = campaign.tipo === 'email' || campaign.tipo === 'ambos';
+  const hasLP = (campaign.tipo === 'landing_page' || campaign.tipo === 'ambos') && campaign.landing_page?.ativa;
+  const hasImagem = campaign.email?.formato === 'imagem' && !!campaign.email?.imagem_url;
+
+  // set sensible default tab
+  useEffect(() => {
+    if (isWhatsapp) setActiveTab('whatsapp');
+    else if (hasEmail) setActiveTab('email');
+    else if (hasLP) setActiveTab('lp');
+    else if (hasImagem) setActiveTab('imagem');
+  }, [isWhatsapp, hasEmail, hasLP, hasImagem]);
+
+  const tabs = [
+    ...(isWhatsapp ? [{ id: 'whatsapp' as const, label: 'WhatsApp', icon: <MessageSquare size={13} /> }] : []),
+    ...(hasEmail && !isWhatsapp ? [{ id: 'email' as const, label: 'E-mail', icon: <Mail size={13} /> }] : []),
+    ...(hasImagem ? [{ id: 'imagem' as const, label: 'Flyer', icon: <ImageIcon size={13} /> }] : []),
+    ...(hasLP ? [{ id: 'lp' as const, label: 'Landing Page', icon: <Globe size={13} /> }] : []),
+  ];
+
+  const emailContent = campaign.email?.conteudo ? substituirTags(campaign.email.conteudo) : '';
+  const emailSubject = campaign.email?.assunto ? substituirTags(campaign.email.assunto) : '';
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b border-slate-100">
+          <div>
+            <h3 className="text-base font-black text-slate-800">{campaign.nome}</h3>
+            {loadingAluno ? (
+              <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Loader2 size={11} className="animate-spin" /> Carregando dados de referência...</p>
+            ) : refAluno ? (
+              <p className="text-xs text-slate-500 mt-0.5">Prévia com dados de: <span className="font-bold text-slate-700">{refAluno.nome || refAluno.nome_completo}</span> ({refAluno.unidade})</p>
+            ) : (
+              <p className="text-xs text-slate-400 mt-0.5">Usando dados genéricos (sem audiência definida)</p>
+            )}
+          </div>
+          <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        {tabs.length > 1 && (
+          <div className="flex gap-1 px-5 pt-4">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === tab.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+              >
+                {tab.icon} {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Content */}
+        <div className="flex-1 overflow-auto p-5">
+          {/* WhatsApp Preview */}
+          {activeTab === 'whatsapp' && (
+            <div className="bg-[#e5ddd5] rounded-xl p-6 min-h-40">
+              <div className="flex justify-end">
+                <div className="bg-[#dcf8c6] rounded-2xl rounded-tr-sm p-3 max-w-xs shadow-sm">
+                  {campaign.email?.imagem_url && (
+                    <img src={campaign.email.imagem_url} alt="flyer" className="rounded-xl mb-2 max-h-48 object-cover w-full" />
+                  )}
+                  <p className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">
+                    {emailContent || <span className="italic text-slate-400">Nenhuma mensagem configurada</span>}
+                  </p>
+                  <p className="text-[10px] text-slate-400 text-right mt-1">Agora ✓✓</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Email Preview */}
+          {activeTab === 'email' && (
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 space-y-1">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-400 w-16 shrink-0">De:</span>
+                  <span className="font-medium text-slate-700">{campaign.email?.remetente_nome || 'Sport For Kids'} &lt;{campaign.email?.remetente_email || 'contato@sportforkids.com.br'}&gt;</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-400 w-16 shrink-0">Assunto:</span>
+                  <span className="font-bold text-slate-800">{emailSubject || '(sem assunto)'}</span>
+                </div>
+              </div>
+              <div className="p-5 bg-white">
+                {campaign.email?.formato === 'html' ? (
+                  <iframe
+                    srcDoc={emailContent}
+                    className="w-full min-h-64 border-0"
+                    sandbox="allow-same-origin"
+                    title="Email preview"
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                    {emailContent || <span className="italic text-slate-400">Nenhum conteúdo de e-mail configurado</span>}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Image/Flyer Preview */}
+          {activeTab === 'imagem' && (
+            <div className="flex items-center justify-center bg-slate-50 rounded-xl p-4">
+              <img
+                src={campaign.email?.imagem_url}
+                alt="Flyer"
+                className="max-h-[60vh] max-w-full rounded-xl shadow-md object-contain"
+              />
+            </div>
+          )}
+
+          {/* Landing Page Preview */}
+          {activeTab === 'lp' && campaign.slug && (
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <div className="bg-slate-50 px-4 py-2 border-b border-slate-100 flex items-center gap-2 text-xs text-slate-500">
+                <Globe size={12} />
+                <span>sportforkids.com.br/campanha/{campaign.slug}</span>
+                <a
+                  href={`/campanha/${campaign.slug}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-auto text-indigo-600 hover:underline flex items-center gap-1"
+                >
+                  Abrir <ExternalLink size={11} />
+                </a>
+              </div>
+              <iframe
+                src={`/campanha/${campaign.slug}`}
+                className="w-full h-96 border-0"
+                title="Landing page preview"
+              />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 // ─── Send Log Table ───────────────────────────────────────────────────────────
+
 
 function SendLogTable({ campaignId, isWhatsapp }: { campaignId: string, isWhatsapp: boolean }) {
   const [sends, setSends] = useState<any[]>([]);
