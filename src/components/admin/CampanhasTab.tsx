@@ -639,6 +639,10 @@ function CampaignWizard({
   const [aiPrompt, setAiPrompt] = useState('');
   const [generatingAi, setGeneratingAi] = useState(false);
   const [previewAiAlunos, setPreviewAiAlunos] = useState<any[] | null>(null);
+  
+  const [savedFilters, setSavedFilters] = useState<any[]>([]);
+  const [selectedSavedFilterId, setSelectedSavedFilterId] = useState('');
+  const [lastGeneratedAiCode, setLastGeneratedAiCode] = useState('');
 
   // Step 3
   const [assunto, setAssunto] = useState(editCampaign?.email?.assunto || '');
@@ -698,7 +702,19 @@ function CampaignWizard({
     finally { setLoadingAudience(false); }
   }, [targets]);
 
-  useEffect(() => { if (step === 2) fetchAudienceCount(); }, [targets, step, fetchAudienceCount]);
+  const fetchSavedFilters = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/campaigns/saved-filters', { headers: authHeader() });
+      if (res.ok) setSavedFilters(await res.json());
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => { 
+    if (step === 2) {
+      fetchAudienceCount();
+      fetchSavedFilters();
+    }
+  }, [targets, step, fetchAudienceCount, fetchSavedFilters]);
 
   const addTarget = (tipo: CampaignTarget['tipo_alvo'], valor?: string) => {
     if (targets.some(t => t.tipo_alvo === tipo && t.valor_alvo === valor)) return;
@@ -736,22 +752,27 @@ function CampaignWizard({
   const inputClass = "w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none text-sm font-medium";
   const labelClass = "block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5";
 
-  const generateAiAudience = async () => {
-    if (!aiPrompt.trim()) return;
+  const generateAiAudience = async (useSavedCode?: string) => {
+    if (!aiPrompt.trim() && !useSavedCode) return;
     setGeneratingAi(true);
     setPreviewAiAlunos(null);
     try {
+      const payload: any = { prompt: aiPrompt };
+      if (useSavedCode) payload.filterCode = useSavedCode;
+
       const res = await fetch('/api/admin/campaigns/smart-audience-filter', {
         method: 'POST',
         headers: authHeader(),
-        body: JSON.stringify({ prompt: aiPrompt })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erro na IA');
       
       setPreviewAiAlunos(data.matched || []);
+      setLastGeneratedAiCode(data.code || useSavedCode);
+
       if (data.matched && data.matched.length > 0) {
-        toast.success(`IA encontrou ${data.matched.length} alunos!`);
+        toast.success(useSavedCode ? `Filtro aplicado! Encontrados ${data.matched.length} alunos.` : `IA encontrou ${data.matched.length} alunos!`);
       } else {
         toast.error('Nenhum aluno encontrado para esse critério.');
       }
@@ -759,6 +780,47 @@ function CampaignWizard({
       toast.error(e.message || 'Erro ao processar instrução da IA');
     } finally {
       setGeneratingAi(false);
+    }
+  };
+
+  const handleSaveFilter = async () => {
+    const defaultName = aiPrompt.slice(0, 50) + (aiPrompt.length > 50 ? '...' : '');
+    const nome = prompt("Dê um nome para este filtro:", defaultName);
+    if (!nome) return;
+    try {
+      const res = await fetch('/api/admin/campaigns/saved-filters', {
+        method: 'POST',
+        headers: authHeader(),
+        body: JSON.stringify({ name: nome, code: lastGeneratedAiCode })
+      });
+      if (res.ok) {
+        toast.success("Filtro salvo com sucesso!");
+        fetchSavedFilters();
+      } else {
+        toast.error("Erro ao salvar filtro.");
+      }
+    } catch {
+      toast.error("Erro ao salvar filtro.");
+    }
+  };
+
+  const handleDeleteSavedFilter = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este filtro salvo?")) return;
+    try {
+      const res = await fetch(`/api/admin/campaigns/saved-filters/${id}`, {
+        method: 'DELETE',
+        headers: authHeader()
+      });
+      if (res.ok) {
+        toast.success("Filtro excluído!");
+        setSavedFilters(prev => prev.filter(f => f.id !== id));
+        if (selectedSavedFilterId === id) {
+          setSelectedSavedFilterId('');
+          setAiPrompt('');
+        }
+      }
+    } catch {
+      toast.error("Erro ao excluir filtro.");
     }
   };
 
@@ -923,36 +985,96 @@ function CampaignWizard({
 
             {/* Audiência Inteligente (IA) */}
             <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl p-5 border border-indigo-100 shadow-inner">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white shrink-0">🤖</div>
-                <div>
-                  <label className="block text-sm font-black text-indigo-900 uppercase tracking-wider">Audiência Inteligente</label>
-                  <p className="text-xs text-indigo-700/80">Descreva o perfil dos alunos e a IA fará o filtro automático.</p>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white shrink-0">🤖</div>
+                  <div>
+                    <label className="block text-sm font-black text-indigo-900 uppercase tracking-wider">Audiência Inteligente</label>
+                    <p className="text-xs text-indigo-700/80">Descreva o perfil dos alunos e a IA fará o filtro automático.</p>
+                  </div>
                 </div>
               </div>
+
+              {savedFilters.length > 0 && (
+                <div className="mb-4">
+                  <label className="block text-xs font-bold text-indigo-800 mb-1">Filtros Salvos</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedSavedFilterId}
+                      onChange={e => {
+                        setSelectedSavedFilterId(e.target.value);
+                        const f = savedFilters.find(x => x.id === e.target.value);
+                        if (f) { setAiPrompt(f.name); }
+                      }}
+                      className="flex-1 px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="">-- Selecione um filtro salvo --</option>
+                      {savedFilters.map(f => (
+                        <option key={f.id} value={f.id}>{f.name}</option>
+                      ))}
+                    </select>
+                    {selectedSavedFilterId && (
+                      <>
+                        <button
+                          onClick={() => {
+                            const f = savedFilters.find(x => x.id === selectedSavedFilterId);
+                            if (f) generateAiAudience(f.code);
+                          }}
+                          className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition-colors"
+                        >
+                          Carregar
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSavedFilter(selectedSavedFilterId)}
+                          className="px-3 py-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors"
+                          title="Excluir filtro"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-3">
                 <textarea 
                   value={aiPrompt}
-                  onChange={e => setAiPrompt(e.target.value)}
+                  onChange={e => {
+                    setAiPrompt(e.target.value);
+                    if (selectedSavedFilterId) setSelectedSavedFilterId('');
+                  }}
                   placeholder="Ex: Alunos inativos nos últimos 5 meses na unidade Bernoulli..."
                   className="w-full px-4 py-3 bg-white border border-indigo-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none text-sm min-h-[80px] resize-y"
-                  disabled={generatingAi}
+                  disabled={generatingAi || !!selectedSavedFilterId}
                 />
-                <button 
-                  onClick={generateAiAudience}
-                  disabled={generatingAi || !aiPrompt.trim()}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-md shadow-indigo-500/20"
-                >
-                  {generatingAi ? <><Loader2 size={16} className="animate-spin" /> Processando com Gemini...</> : <><Plus size={16} /> Gerar Filtro</>}
-                </button>
+                {!selectedSavedFilterId && (
+                  <button 
+                    onClick={() => generateAiAudience()}
+                    disabled={generatingAi || !aiPrompt.trim()}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-md shadow-indigo-500/20"
+                  >
+                    {generatingAi ? <><Loader2 size={16} className="animate-spin" /> Processando com Gemini...</> : <><Plus size={16} /> Gerar Filtro</>}
+                  </button>
+                )}
               </div>
 
               {/* Preview dos Resultados da IA */}
               {previewAiAlunos && (
                 <div className="mt-4 p-4 bg-white rounded-xl border border-indigo-200">
-                  <h4 className="text-sm font-bold text-slate-800 mb-2">
-                    ✅ A IA encontrou {previewAiAlunos.length} aluno{previewAiAlunos.length !== 1 ? 's' : ''}
-                  </h4>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-bold text-slate-800">
+                      ✅ A IA encontrou {previewAiAlunos.length} aluno{previewAiAlunos.length !== 1 ? 's' : ''}
+                    </h4>
+                    {!selectedSavedFilterId && (
+                      <button 
+                        onClick={handleSaveFilter}
+                        className="text-xs font-bold text-green-700 bg-green-100 px-3 py-1 rounded-full hover:bg-green-200 transition-colors flex items-center gap-1"
+                      >
+                        <Archive size={12} /> Salvar este Filtro
+                      </button>
+                    )}
+                  </div>
                   {previewAiAlunos.length > 0 ? (
                     <>
                       <div className="max-h-32 overflow-y-auto mb-3 bg-slate-50 p-2 rounded text-xs text-slate-600">

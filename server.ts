@@ -2122,15 +2122,54 @@ app.use('/api/admin', requireAdminAuth);
     }
   });
 
-  // POST /api/admin/campaigns/smart-audience-filter — AI generation
+  // GET /api/admin/campaigns/saved-filters — Lista filtros salvos
+  app.get('/api/admin/campaigns/saved-filters', requireAdminAuth, async (req, res) => {
+    try {
+      const { data, error } = await supabase.from('saved_ai_filters').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      res.json(data || []);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/admin/campaigns/saved-filters — Salva um filtro
+  app.post('/api/admin/campaigns/saved-filters', requireAdminAuth, async (req, res) => {
+    try {
+      const { name, code } = req.body;
+      if (!name || !code) return res.status(400).json({ error: 'Name and code are required' });
+      const { data, error } = await supabase.from('saved_ai_filters').insert({ name, code }).select().single();
+      if (error) throw error;
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // DELETE /api/admin/campaigns/saved-filters/:id — Deleta um filtro
+  app.delete('/api/admin/campaigns/saved-filters/:id', requireAdminAuth, async (req, res) => {
+    try {
+      const { error } = await supabase.from('saved_ai_filters').delete().eq('id', req.params.id);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/admin/campaigns/smart-audience-filter — AI generation ou uso direto de código
   app.post('/api/admin/campaigns/smart-audience-filter', requireAdminAuth, async (req, res) => {
     try {
-      const { prompt } = req.body;
-      if (!process.env.GEMINI_API_KEY) {
-        return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
-      }
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const systemInstruction = `Você é um assistente de engenharia de software especializado em Javascript.
+      const { prompt, filterCode } = req.body;
+      let code = filterCode || '';
+
+      // Se não enviou o código diretamente, pedimos à IA
+      if (!code) {
+        if (!process.env.GEMINI_API_KEY) {
+          return res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
+        }
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const systemInstruction = `Você é um assistente de engenharia de software especializado em Javascript.
 O usuário fornecerá uma descrição em linguagem natural de um público-alvo (alunos) que ele deseja filtrar.
 Sua tarefa é retornar APENAS O CORPO de uma função Javascript que avalia se um aluno atende aos critérios.
 A função recebe um objeto 'context' com as seguintes propriedades:
@@ -2156,13 +2195,14 @@ Regras:
 12. PASSADO VS PRESENTE: O banco armazena apenas o status ATUAL ('ativo', 'cancelado'). Para saber quando uma matrícula começou, SEMPRE use \`matricula.data_matricula\` (NÃO use created_at, pois pode ser a data de importação do sistema). Se o prompt pedir alunos que "tiveram" matrícula num ano passado (ex: "apenas em 2025"), a matrícula NÃO PODE estar ativa hoje; logo, ela DEVE possuir \`data_cancelamento\` não nula e cujo ano seja menor ou igual ao ano em questão.
 `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-        config: { systemInstruction, temperature: 0.1 }
-      });
-      let code = response.text || '';
-      code = code.replace(/```javascript/gi, '').replace(/```js/gi, '').replace(/```/g, '').trim();
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: prompt,
+          config: { systemInstruction, temperature: 0.1 }
+        });
+        code = response.text || '';
+        code = code.replace(/```javascript/gi, '').replace(/```js/gi, '').replace(/```/g, '').trim();
+      }
 
       // Função para buscar todos os registros (paginação manual devido ao limite de 1000 do Supabase)
       const fetchAll = async (table: string) => {
