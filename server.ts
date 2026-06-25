@@ -2318,7 +2318,7 @@ Regras:
       const { slug } = req.params;
       const { data, error } = await supabase
         .from('campaigns')
-        .select('id, nome, slug, status, campaign_landing_pages(*, cupom:cupons(*))')
+        .select('id, nome, slug, status, data_fim, campaign_targets(*), campaign_landing_pages(*, cupom:cupons(*))')
         .eq('slug', slug)
         .neq('status', 'arquivada')
         .maybeSingle();
@@ -2334,8 +2334,21 @@ Regras:
         return res.status(404).json({ error: 'Landing page inativa' });
       }
 
+      // Extrai lista de unidades dos targets
+      const targets: any[] = (data as any).campaign_targets || [];
+      const unidades: string[] = targets
+        .filter((t: any) => t.tipo_alvo === 'unidade' && t.valor_alvo)
+        .map((t: any) => t.valor_alvo);
+
+      // Se não há targets de unidade específica, busca todas as unidades
+      let todasUnidades: string[] = [];
+      if (unidades.length === 0) {
+        const { data: opts } = await supabase.from('options').select('value').eq('type', 'unidade');
+        if (opts) todasUnidades = opts.map((o: any) => o.value || o.nome || o).filter(Boolean);
+      }
+
       res.json({
-        campaign: { nome: data.nome, slug: data.slug, status: data.status },
+        campaign: { nome: data.nome, slug: data.slug, status: data.status, data_fim: (data as any).data_fim, unidades: unidades.length > 0 ? unidades : todasUnidades },
         landing_page: lp
       });
     } catch (e: any) {
@@ -2369,7 +2382,7 @@ Regras:
   app.post('/api/public/campanha/:slug/lead', async (req, res) => {
     try {
       const { slug } = req.params;
-      const { nome_responsavel, email, whatsapp, nome_aluno, idade_aluno } = req.body;
+      const { nome_responsavel, email, whatsapp, nome_aluno, idade_aluno, unidade } = req.body;
 
       if (!nome_responsavel || !email) {
         return res.status(400).json({ error: 'Nome e e-mail são obrigatórios' });
@@ -2380,7 +2393,7 @@ Regras:
       // Insere no Supabase como lead
       const { error: insertErr } = await supabase.from('alunos').insert([{
         nome_completo: nome_aluno || nome_responsavel,
-        unidade: 'SEM UNIDADE',
+        unidade: unidade || 'SEM UNIDADE',
         responsavel_1: nome_responsavel,
         email: email,
         whatsapp_1: whatsapp || null,
