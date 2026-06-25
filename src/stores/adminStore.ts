@@ -83,7 +83,7 @@ export const useAdminStore = create<AdminStoreState>((set, get) => ({
         fetch('/api/admin/leads', { headers }),
         fetch('/api/admin/loja/produtos', { headers }),
         fetch('/api/admin/loja/categorias', { headers }),
-        fetch('/api/admin/loja/pedidos', { headers }),
+        fetch('/api/admin/loja/pedidos?all=true', { headers }),
         fetch('/api/admin/eventos', { headers }),
         fetch('/api/admin/eventos/inscricoes', { headers }),
         fetch('/api/admin/cupons', { headers }),
