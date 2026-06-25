@@ -54,7 +54,7 @@ export function FinanceTab() {
 
       const [finRes, pedRes, insRes] = await Promise.all([
         fetch(`/api/admin/financial-report?startDate=${startISO}&endDate=${endISO}`, { headers }),
-        fetch('/api/admin/loja/pedidos', { headers }),
+        fetch('/api/admin/loja/pedidos?all=true', { headers }),
         fetch('/api/admin/eventos/inscricoes', { headers })
       ]);
 
