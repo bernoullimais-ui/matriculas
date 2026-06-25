@@ -85,8 +85,8 @@ export function FinanceTab() {
   const computedFinance = React.useMemo(() => {
     if (!financialData) return null;
 
-    const limitStart = new Date(finStartDate);
-    const limitEnd = new Date(finEndDate);
+    const limitStart = new Date(finStartDate + 'T00:00:00');
+    const limitEnd = new Date(finEndDate + 'T23:59:59');
 
     // 1. Helper to extract payment metadata
     const getPaymentInfo = (p: any) => {
