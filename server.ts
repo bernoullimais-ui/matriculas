@@ -2388,7 +2388,7 @@ Regras:
         return res.status(400).json({ error: 'Nome e e-mail são obrigatórios' });
       }
 
-      const { data: campaign } = await supabase.from('campaigns').select('id').eq('slug', slug).maybeSingle();
+      const { data: campaign } = await supabase.from('campaigns').select('id, nome').eq('slug', slug).maybeSingle();
 
       // Insere no Supabase como lead
       const { error: insertErr } = await supabase.from('alunos').insert([{
@@ -2404,6 +2404,27 @@ Regras:
 
       if (insertErr) {
         console.error('[Campanhas/Lead] Erro ao inserir lead:', insertErr);
+      }
+
+      // Envia mensagem de confirmação por WhatsApp
+      if (whatsapp) {
+        const msg = `Olá, *${nome_responsavel}*!\n\n` +
+          `Agradecemos o seu interesse na nossa campanha *${campaign?.nome || 'Sport for Kids'}*! 🌟\n\n` +
+          `Confirmamos o recebimento dos seus dados:\n` +
+          `- *Responsável:* ${nome_responsavel}\n` +
+          `- *E-mail:* ${email}\n` +
+          `- *WhatsApp:* ${whatsapp}\n` +
+          (nome_aluno ? `- *Aluno(a):* ${nome_aluno}\n` : '') +
+          (idade_aluno ? `- *Idade do Aluno(a):* ${idade_aluno} anos\n` : '') +
+          (unidade ? `- *Unidade de Interesse:* ${unidade}\n` : '') + '\n' +
+          `Estamos muito felizes com o seu contato! Nossa equipe já está disponível para tirar qualquer dúvida, ajudar com os horários de aulas e auxiliar você no processo de matrícula.\n\n` +
+          `Se quiser adiantar o atendimento ou tiver alguma dúvida, basta responder diretamente a esta mensagem! 😊\n\n` +
+          `Atenciosamente,\n` +
+          `*Equipe Sport for Kids*`;
+
+        sendWhatsAppMessage(whatsapp, nome_responsavel, msg, unidade).catch(e => {
+          console.error('[Campanhas/Lead] Erro ao enviar mensagem de boas-vindas do lead:', e.message);
+        });
       }
 
       // Incrementa leads_gerados nas métricas
