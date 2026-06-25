@@ -80,7 +80,7 @@ export function FinanceTab() {
   const [isFinProfDropdownOpen, setIsFinProfDropdownOpen] = useState(false);
   const [finSearchStudent, setFinSearchStudent] = useState('');
   const [finPrimaryTab, setFinPrimaryTab] = useState<'projetada' | 'aferida' | 'inadimplencias'>('aferida');
-  const [finSecondaryTab, setFinSecondaryTab] = useState<'professor' | 'unidade' | 'detalhado' | 'sem_integral' | 'estudantes_integral' | 'wix' | 'pagarme' | 'comissionamento' | ''>('wix');
+  const [finSecondaryTab, setFinSecondaryTab] = useState<'professor' | 'unidade' | 'detalhado' | 'sem_integral' | 'estudantes_integral' | 'wix' | 'pagarme' | 'loja' | 'eventos' | 'consolidado' | 'comissionamento' | ''>('consolidado');
 
   const computedFinance = React.useMemo(() => {
     if (!financialData) return null;
@@ -656,7 +656,7 @@ export function FinanceTab() {
                         onClick={() => {
                           setFinPrimaryTab(id);
                           if (id === 'projetada') setFinSecondaryTab('professor');
-                          else if (id === 'aferida') setFinSecondaryTab('wix');
+                          else if (id === 'aferida') setFinSecondaryTab('consolidado');
                           else setFinSecondaryTab('');
                         }}
                         className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all uppercase tracking-wide ${
@@ -948,11 +948,11 @@ export function FinanceTab() {
                         ['sem_integral', 'Sem Integral'],
                         ['estudantes_integral', 'Estudantes Integral']
                       ] as const : [
+                        ['consolidado', 'Recebimentos Consolidado'],
                         ['wix', 'Pagamentos Wix'],
                         ['pagarme', 'Pagamentos Pagar.me'],
                         ['loja', 'Recebimentos Loja'],
-                        ['eventos', 'Recebimentos Eventos'],
-                        ['consolidado', 'Recebimentos Consolidado']
+                        ['eventos', 'Recebimentos Eventos']
                       ] as const).map(([id, label]) => (
                         <button
                           key={id}
