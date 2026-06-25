@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Download, RefreshCw, User, MapPin, Search, ChevronDown, CheckCircle2, AlertTriangle, AlertCircle, Calendar } from 'lucide-react';
 import { formatDateDisplay } from '../../utils/dateUtils';
 import { useAdminStore } from '../../stores/adminStore';
