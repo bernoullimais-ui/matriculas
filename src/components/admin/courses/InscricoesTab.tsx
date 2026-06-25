@@ -277,6 +277,7 @@ export function InscricoesTab() {
                           <th className="p-4">Estudante</th>
                           <th className="p-4">Responsável</th>
                           <th className="p-4">Categoria</th>
+                          <th className="p-4">Status</th>
                           <th className="p-4">Check-in / Presença</th>
                           <th className="p-4 text-right">Ações</th>
                         </tr>
@@ -287,6 +288,13 @@ export function InscricoesTab() {
                             <td className="p-4 font-semibold text-slate-800">{ins.nome_aluno || 'Estudante'}</td>
                             <td className="p-4 text-xs text-slate-500">{ins.nome_responsavel || 'N/A'}</td>
                             <td className="p-4 text-xs font-medium text-slate-600">{ins.categoria || 'Geral'}</td>
+                            <td className="p-4">
+                              {ins.taxa_paga || (ins.status || '').toLowerCase() === 'confirmada' || ins.status === 'pago' ? (
+                                <span className="px-2 py-1 bg-emerald-50 text-emerald-700 font-black uppercase text-[10px] tracking-wider rounded-lg">Pago</span>
+                              ) : (
+                                <span className="px-2 py-1 bg-amber-50 text-amber-700 font-black uppercase text-[10px] tracking-wider rounded-lg">Pendente</span>
+                              )}
+                            </td>
                             <td className="p-4">
                               <label className="flex items-center gap-2 cursor-pointer">
                                 <input 
