@@ -705,8 +705,15 @@ function CampaignWizard({
   const fetchSavedFilters = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/campaigns/saved-filters', { headers: authHeader() });
-      if (res.ok) setSavedFilters(await res.json());
-    } catch { /* silent */ }
+      if (res.ok) {
+        setSavedFilters(await res.json());
+      } else {
+        const text = await res.text();
+        console.error("Erro fetchSavedFilters:", text);
+      }
+    } catch (e) {
+      console.error("Erro de rede fetchSavedFilters:", e);
+    }
   }, []);
 
   useEffect(() => { 
@@ -995,9 +1002,8 @@ function CampaignWizard({
                 </div>
               </div>
 
-              {savedFilters.length > 0 && (
-                <div className="mb-4">
-                  <label className="block text-xs font-bold text-indigo-800 mb-1">Filtros Salvos</label>
+              <div className="mb-4">
+                  <label className="block text-xs font-bold text-indigo-800 mb-1">Filtros Salvos {savedFilters.length === 0 && '(Nenhum encontrado)'}</label>
                   <div className="flex items-center gap-2">
                     <select
                       value={selectedSavedFilterId}
@@ -1013,6 +1019,13 @@ function CampaignWizard({
                         <option key={f.id} value={f.id}>{f.name}</option>
                       ))}
                     </select>
+                    <button 
+                      onClick={fetchSavedFilters}
+                      className="px-2 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200"
+                      title="Atualizar"
+                    >
+                      🔄
+                    </button>
                     {selectedSavedFilterId && (
                       <>
                         <button
@@ -1035,7 +1048,6 @@ function CampaignWizard({
                     )}
                   </div>
                 </div>
-              )}
 
               <div className="space-y-3">
                 <textarea 
