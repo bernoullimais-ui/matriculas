@@ -890,6 +890,224 @@ function SendLogTable({ campaignId, isWhatsapp }: { campaignId: string, isWhatsa
   );
 }
 
+// ─── AI Copy Generator Modal ──────────────────────────────────────────────────
+
+function AiCopyGeneratorModal({
+  isOpen,
+  onClose,
+  campaignName,
+  onApply
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  campaignName: string;
+  onApply: (data: { emailSubject: string; emailBody: string; whatsappText: string; lpDescription: string }) => void;
+}) {
+  const [topic, setTopic] = useState('');
+  const [targetAudience, setTargetAudience] = useState('');
+  const [condition, setCondition] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [result, setResult] = useState<{
+    emailSubject: string;
+    emailBody: string;
+    whatsappText: string;
+    lpDescription: string;
+  } | null>(null);
+  const [activeTab, setActiveTab] = useState<'email' | 'whatsapp' | 'lp'>('email');
+
+  useEffect(() => {
+    if (isOpen) {
+      setTopic('');
+      setTargetAudience('');
+      setCondition('');
+      setResult(null);
+      setActiveTab('email');
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleGenerate = async () => {
+    if (!topic.trim()) {
+      toast.error('O tema/objetivo principal é obrigatório.');
+      return;
+    }
+    setGenerating(true);
+    setResult(null);
+    try {
+      const res = await fetch('/api/admin/campaigns/generate-copy', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionStorage.getItem('admin_token')}`
+        },
+        body: JSON.stringify({ topic, targetAudience, condition, name: campaignName })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Erro ao gerar cópias.');
+      }
+      const data = await res.json();
+      setResult(data);
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao gerar textos.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleApply = () => {
+    if (!result) return;
+    onApply(result);
+    toast.success('Textos aplicados com sucesso! Revise os campos.');
+    onClose();
+  };
+
+  const labelClass = "block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5";
+  const inputClass = "w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-sm";
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-md" onClick={onClose} />
+      <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-[0_32px_64px_-16px_rgba(0,0,0,0.2)] overflow-hidden flex flex-col max-h-[90vh]">
+        
+        {/* Header */}
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+          <div className="flex items-center gap-2">
+            <span className="p-2 bg-indigo-100 text-indigo-600 rounded-xl text-sm font-bold">🪄</span>
+            <div>
+              <h3 className="font-black text-slate-800 text-base">Criar Copys com IA</h3>
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-0.5">Gere textos persuasivos para E-mail, WhatsApp e Landing Page</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 bg-white hover:bg-slate-100 rounded-full text-slate-400 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
+          {!result ? (
+            <div className="space-y-4">
+              <div>
+                <label className={labelClass}>Tema / Objetivo Principal da Campanha *</label>
+                <textarea
+                  value={topic}
+                  onChange={e => setTopic(e.target.value)}
+                  placeholder="Ex: Matrículas abertas para as turmas de Judô e Ballet do segundo semestre..."
+                  className={`${inputClass} h-20 resize-none`}
+                  disabled={generating}
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Condição Especial / Oferta (Opcional)</label>
+                  <input
+                    value={condition}
+                    onChange={e => setCondition(e.target.value)}
+                    placeholder="Ex: 20% de desconto..."
+                    className={inputClass}
+                    disabled={generating}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Público-Alvo (Opcional)</label>
+                  <input
+                    value={targetAudience}
+                    onChange={e => setTargetAudience(e.target.value)}
+                    placeholder="Ex: Alunos inativos, pais ocupados..."
+                    className={inputClass}
+                    disabled={generating}
+                  />
+                </div>
+              </div>
+              
+              <button
+                onClick={handleGenerate}
+                disabled={generating || !topic.trim()}
+                className="w-full py-4 mt-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {generating ? (
+                  <>
+                    <Loader2 className="animate-spin" size={18} />
+                    Criando textos com Gemini...
+                  </>
+                ) : (
+                  <>
+                    🪄 Gerar Textos com IA
+                  </>
+                )}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Tabs */}
+              <div className="flex border-b border-slate-100 bg-slate-50 p-1 rounded-xl">
+                {[
+                  { id: 'email', label: '📧 E-mail' },
+                  { id: 'whatsapp', label: '💬 WhatsApp' },
+                  { id: 'lp', label: '📄 Landing Page' },
+                ].map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setActiveTab(t.id as any)}
+                    className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all ${activeTab === t.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Tab Contents */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 min-h-[200px] max-h-[300px] overflow-y-auto">
+                {activeTab === 'email' && (
+                  <div className="space-y-3">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase text-slate-400">Assunto:</span>
+                      <p className="font-bold text-slate-800 text-sm mt-0.5">{result.emailSubject}</p>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold uppercase text-slate-400">Corpo:</span>
+                      <p className="text-slate-600 text-xs whitespace-pre-wrap mt-1 leading-relaxed">{result.emailBody}</p>
+                    </div>
+                  </div>
+                )}
+                {activeTab === 'whatsapp' && (
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-400">Mensagem:</span>
+                    <p className="text-slate-600 text-xs whitespace-pre-wrap mt-1 leading-relaxed">{result.whatsappText}</p>
+                  </div>
+                )}
+                {activeTab === 'lp' && (
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-400">Descrição:</span>
+                    <p className="text-slate-600 text-xs whitespace-pre-wrap mt-1 leading-relaxed">{result.lpDescription}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setResult(null)}
+                  className="flex-1 py-3.5 border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition-all text-sm"
+                >
+                  ← Refinar Entrada
+                </button>
+                <button
+                  onClick={handleApply}
+                  className="flex-1 py-3.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all text-sm"
+                >
+                  ✓ Aplicar na Campanha
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Campaign Wizard ──────────────────────────────────────────────────────────
 
 function CampaignWizard({
@@ -957,6 +1175,7 @@ function CampaignWizard({
   const [whatsappCta, setWhatsappCta] = useState('');
   const [lpCor, setLpCor] = useState(editCampaign?.landing_page?.cor_primaria || '#4f46e5');
   const [cupomId, setCupomId] = useState(editCampaign?.landing_page?.cupom_id || '');
+  const [isCopyAiOpen, setIsCopyAiOpen] = useState(false);
 
   const [lojaProdutos, setLojaProdutos] = useState<any[]>([]);
   const [eventosDisponiveis, setEventosDisponiveis] = useState<any[]>([]);
@@ -1430,7 +1649,16 @@ function CampaignWizard({
         {/* ── Step 3: E-mail ── */}
         {step === 3 && (
           <div className="space-y-5 max-w-2xl">
-            <h3 className="text-base font-black text-slate-800">{metodoEnvio === 'whatsapp' ? 'Conteúdo da Mensagem' : 'Conteúdo do E-mail'}</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-black text-slate-800">{metodoEnvio === 'whatsapp' ? 'Conteúdo da Mensagem' : 'Conteúdo do E-mail'}</h3>
+              <button
+                type="button"
+                onClick={() => setIsCopyAiOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 rounded-xl text-xs font-bold text-indigo-700 transition-all shadow-sm"
+              >
+                <span>🪄</span> Gerar com IA
+              </button>
+            </div>
             {metodoEnvio !== 'whatsapp' && (
               <>
                 <div>
@@ -1505,10 +1733,19 @@ function CampaignWizard({
           <div className="space-y-5 max-w-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-black text-slate-800">Landing Page</h3>
-              <button onClick={() => setLpAtiva(!lpAtiva)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm border-2 transition-all ${lpAtiva ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-500'}`}>
-                <Globe size={14} /> {lpAtiva ? 'Ativa' : 'Inativa'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCopyAiOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 rounded-xl text-xs font-bold text-indigo-700 transition-all shadow-sm"
+                >
+                  <span>🪄</span> Gerar com IA
+                </button>
+                <button onClick={() => setLpAtiva(!lpAtiva)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm border-2 transition-all ${lpAtiva ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-500'}`}>
+                  <Globe size={14} /> {lpAtiva ? 'Ativa' : 'Inativa'}
+                </button>
+              </div>
             </div>
 
             {tipo === 'email' && (
@@ -1752,6 +1989,21 @@ function CampaignWizard({
           </div>
         </div>
       </div>
+      
+      <AiCopyGeneratorModal
+        isOpen={isCopyAiOpen}
+        onClose={() => setIsCopyAiOpen(false)}
+        campaignName={nome}
+        onApply={(result) => {
+          if (result.emailSubject) setAssunto(result.emailSubject);
+          if (metodoEnvio === 'whatsapp') {
+            if (result.whatsappText) setConteudo(result.whatsappText);
+          } else {
+            if (result.emailBody) setConteudo(result.emailBody);
+          }
+          if (result.lpDescription) setLpDescricao(result.lpDescription);
+        }}
+      />
     </div>
   );
 }

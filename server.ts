@@ -2310,6 +2310,89 @@ Regras:
     }
   });
 
+  // POST /api/admin/campaigns/generate-copy — Gerador de Copy via IA para campanhas (E-mail, WhatsApp, Landing Page)
+  app.post('/api/admin/campaigns/generate-copy', requireAdminAuth, async (req, res) => {
+    try {
+      const { topic, targetAudience, condition, name } = req.body;
+
+      if (!topic) {
+        return res.status(400).json({ error: 'O tema/objetivo da campanha é obrigatório.' });
+      }
+
+      const primaryKey = process.env.GEMINI_FREE_API_KEY || process.env.GEMINI_API_KEY;
+      const fallbackKey = process.env.GEMINI_FREE_API_KEY ? process.env.GEMINI_API_KEY : undefined;
+
+      if (!primaryKey) {
+        return res.status(500).json({ error: 'Nenhuma chave Gemini (GEMINI_API_KEY ou GEMINI_FREE_API_KEY) configurada.' });
+      }
+
+      const systemInstruction = `Você é um copywriter de marketing profissional especializado em campanhas educacionais e esportivas para a escola de esportes infantil "Sport for Kids".
+Sua tarefa é gerar conteúdos persuasivos (copy) para três canais de comunicação com base nas informações fornecidas pelo usuário:
+1. E-mail (Assunto e Corpo de e-mail formatado)
+2. WhatsApp (Mensagem curta, com emojis e quebras de linha)
+3. Landing Page (Descrição persuasiva)
+
+Siga estas diretrizes de tom e voz:
+- Amigável, acolhedor, profissional e focado no desenvolvimento infantil (esporte, saúde, fazer amigos, diversão).
+- Tom persuasivo mas sem soar artificial ou forçado.
+- Use emojis moderadamente para tornar a leitura dinâmica.
+
+Você DEVE retornar APENAS um objeto JSON válido no seguinte formato. Não adicione nenhuma formatação markdown (como blocos de código \`\`\`json), nenhum texto explicativo, introdução ou conclusão. Retorne apenas o JSON puro para que o JSON.parse funcione diretamente.
+
+Formato JSON esperado:
+{
+  "emailSubject": "Assunto cativante do e-mail",
+  "emailBody": "Corpo do e-mail completo com quebras de linha usando \\n e parágrafos estruturados",
+  "whatsappText": "Mensagem formatada para o WhatsApp com quebras de linha \\n e emojis",
+  "lpDescription": "Descrição longa e persuasiva para a Landing Page detalhando os benefícios da campanha e chamada para ação (CTA)"
+}`;
+
+      const prompt = `Gere copys de campanha com as seguintes informações:
+- Tema/Objetivo: ${topic}
+${name ? `- Nome da Campanha: ${name}` : ''}
+${targetAudience ? `- Público-Alvo: ${targetAudience}` : ''}
+${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
+
+      let response;
+      try {
+        const ai = new GoogleGenAI({ apiKey: primaryKey });
+        response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: prompt,
+          config: {
+            systemInstruction,
+            temperature: 0.7,
+            responseMimeType: 'application/json'
+          }
+        });
+      } catch (e: any) {
+        if (fallbackKey && primaryKey !== fallbackKey) {
+          console.log("Falha na chave primária do Gemini ao gerar copy, tentando chave reserva...");
+          const fallbackAi = new GoogleGenAI({ apiKey: fallbackKey });
+          response = await fallbackAi.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+              systemInstruction,
+              temperature: 0.7,
+              responseMimeType: 'application/json'
+            }
+          });
+        } else {
+          throw e;
+        }
+      }
+
+      let responseText = response.text || '{}';
+      // Strip markdown code block wrappers if present
+      responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+      res.json(JSON.parse(responseText));
+    } catch (e: any) {
+      console.error('[Campanhas/GenerateCopy] Erro ao gerar copy com IA:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Rotas PÚBLICAS (sem autenticação) para Landing Pages ─────────────────
 
   // GET /api/public/campanha/:slug — dados da landing page pública
