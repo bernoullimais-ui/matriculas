@@ -40,6 +40,17 @@ function getEmbedUrl(url: string): string | null {
   return null;
 }
 
+function renderDescricao(text: string) {
+  if (!text) return null;
+  const parts = text.split('**');
+  return parts.map((part, index) => {
+    if (index % 2 === 1) {
+      return <strong key={index} className="font-bold text-slate-900">{part}</strong>;
+    }
+    return part;
+  });
+}
+
 // ─── Countdown Timer ──────────────────────────────────────────────────────────
 
 function CountdownTimer({ dataFim, cor }: { dataFim: string; cor: string }) {
@@ -269,7 +280,7 @@ export default function CampanhaPublica() {
               {/* Description */}
               {lp.descricao && (
                 <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-                  <p className="text-slate-700 leading-relaxed whitespace-pre-line">{lp.descricao}</p>
+                  <p className="text-slate-700 leading-relaxed whitespace-pre-line">{renderDescricao(lp.descricao)}</p>
                 </div>
               )}
 
