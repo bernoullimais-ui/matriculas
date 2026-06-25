@@ -7062,8 +7062,8 @@ Regras:
             fetchAllFromSupabase('pagamentos', 'valor, status, data_vencimento, created_at'),
             fetchAllFromSupabase('pagamentos_wix', 'valor, status_transacao, provedor_pagamento, data_pagamento_gmt_03, created_at, aluno_id, cobranca_email, produto_nome'),
             fetchAllFromSupabase('pagamentos_pagseguro', 'valor_bruto, status, data_transacao, created_at'),
-            fetchAllFromSupabase('evento_inscricoes', 'valor_pago, status, taxa_paga, provedor_pagamento, created_at'),
-            fetchAllFromSupabase('loja_pedidos', 'total, status, provedor_pagamento, created_at')
+            fetchAllFromSupabase('evento_inscricoes', 'valor_pago, status, taxa_paga, created_at'),
+            fetchAllFromSupabase('loja_pedidos', 'total, status, created_at')
           ]);
 
           pagamentos.forEach((p: any) => {
