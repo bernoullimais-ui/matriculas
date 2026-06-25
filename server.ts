@@ -1870,6 +1870,46 @@ app.use('/api/admin', requireAdminAuth);
     }
   });
 
+  // GET /api/admin/campaigns/saved-filters — Lista filtros salvos
+  app.get('/api/admin/campaigns/saved-filters', requireAdminAuth, async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Surrogate-Control', 'no-store');
+      
+      const { data, error } = await supabase.from('saved_ai_filters').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      res.json(data || []);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/admin/campaigns/saved-filters — Salva um filtro
+  app.post('/api/admin/campaigns/saved-filters', requireAdminAuth, async (req, res) => {
+    try {
+      const { name, code } = req.body;
+      if (!name || !code) return res.status(400).json({ error: 'Name and code are required' });
+      const { data, error } = await supabase.from('saved_ai_filters').insert({ name, code }).select().single();
+      if (error) throw error;
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // DELETE /api/admin/campaigns/saved-filters/:id — Deleta um filtro
+  app.delete('/api/admin/campaigns/saved-filters/:id', requireAdminAuth, async (req, res) => {
+    try {
+      const { error } = await supabase.from('saved_ai_filters').delete().eq('id', req.params.id);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // GET /api/admin/campaigns/:id — detalhe de campanha
   app.get('/api/admin/campaigns/:id', requireAdminAuth, async (req, res) => {
     try {
@@ -2122,45 +2162,7 @@ app.use('/api/admin', requireAdminAuth);
     }
   });
 
-  // GET /api/admin/campaigns/saved-filters — Lista filtros salvos
-  app.get('/api/admin/campaigns/saved-filters', requireAdminAuth, async (req, res) => {
-    try {
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      res.setHeader('Surrogate-Control', 'no-store');
-      
-      const { data, error } = await supabase.from('saved_ai_filters').select('*').order('created_at', { ascending: false });
-      if (error) throw error;
-      res.json(data || []);
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
 
-  // POST /api/admin/campaigns/saved-filters — Salva um filtro
-  app.post('/api/admin/campaigns/saved-filters', requireAdminAuth, async (req, res) => {
-    try {
-      const { name, code } = req.body;
-      if (!name || !code) return res.status(400).json({ error: 'Name and code are required' });
-      const { data, error } = await supabase.from('saved_ai_filters').insert({ name, code }).select().single();
-      if (error) throw error;
-      res.json(data);
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  // DELETE /api/admin/campaigns/saved-filters/:id — Deleta um filtro
-  app.delete('/api/admin/campaigns/saved-filters/:id', requireAdminAuth, async (req, res) => {
-    try {
-      const { error } = await supabase.from('saved_ai_filters').delete().eq('id', req.params.id);
-      if (error) throw error;
-      res.json({ success: true });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
 
   // POST /api/admin/campaigns/smart-audience-filter — AI generation ou uso direto de código
   app.post('/api/admin/campaigns/smart-audience-filter', requireAdminAuth, async (req, res) => {
