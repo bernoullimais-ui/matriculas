@@ -1194,6 +1194,7 @@ export function FinanceTab() {
                                         <th className="p-4">Data</th>
                                         <th className="p-4">Origem</th>
                                         <th className="p-4">Cliente/Estudante</th>
+                                        <th className="p-4">Unidade/Turma</th>
                                         <th className="p-4">Método</th>
                                         <th className="p-4 text-right">Valor</th>
                                         <th className="p-4 text-center">Status</th>
@@ -1202,7 +1203,7 @@ export function FinanceTab() {
                                     <tbody className="divide-y divide-slate-100">
                                       {cList.length === 0 ? (
                                         <tr>
-                                          <td colSpan={6} className="p-8 text-center text-slate-400 italic">
+                                          <td colSpan={7} className="p-8 text-center text-slate-400 italic">
                                             Nenhum recebimento encontrado para o período.
                                           </td>
                                         </tr>
@@ -1225,6 +1226,12 @@ export function FinanceTab() {
                                               <div className="text-xs font-bold text-slate-800">{item.responsavel || '—'}</div>
                                               {item.aluno && item.aluno !== '—' && (
                                                 <div className="text-[10px] text-slate-500 font-medium">{item.aluno}</div>
+                                              )}
+                                            </td>
+                                            <td className="p-4">
+                                              <div className="text-xs font-semibold text-slate-800">{item.unidade && item.unidade !== '—' ? item.unidade : '—'}</div>
+                                              {item.turma && item.turma !== '—' && (
+                                                <div className="text-[10px] text-slate-500 font-medium">{item.turma}</div>
                                               )}
                                             </td>
                                             <td className="p-4 text-xs font-semibold text-slate-500 uppercase">
