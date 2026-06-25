@@ -7068,7 +7068,7 @@ Regras:
 
           pagamentos.forEach((p: any) => {
             if (p.status === 'pago' || p.status === 'conciliado') {
-              const d = new Date(p.data_vencimento || p.created_at);
+              const d = processDate(p.data_vencimento, p.created_at);
               if (d >= limitStart && d <= limitEnd) {
                 const val = Number(p.valor || 0);
                 sum += val;

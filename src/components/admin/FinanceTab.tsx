@@ -248,8 +248,16 @@ export function FinanceTab() {
       });
     } else if (finPrimaryTab === 'aferida') {
       const rawPaymentsInPeriod = (financialData.pagamentos || []).filter((p: any) => {
-        const payDate = new Date(p.data_vencimento || p.created_at);
-        if (payDate < limitStart || payDate > limitEnd) return false;
+        let dStr = p.data_vencimento || p.created_at;
+        if (typeof dStr === 'string' && dStr.includes('/')) {
+          const parts = dStr.split(' ')[0].split('/');
+          if (parts.length === 3) {
+            let y = parts[2]; if (y.length === 2) y = `20${y}`;
+            dStr = `${y}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}T12:00:00Z`;
+          }
+        }
+        const payDate = new Date(dStr);
+        if (isNaN(payDate.getTime()) || payDate < limitStart || payDate > limitEnd) return false;
         const info = getPaymentInfo(p);
         if (finSelectedUnit && (info.unitName || '').trim() !== finSelectedUnit.trim()) return false;
         if (finSelectedProf.length > 0 && !finSelectedProf.includes((info.profName || '').trim())) return false;
@@ -506,7 +514,7 @@ export function FinanceTab() {
   const filteredLojaGlobally = useMemo(() => {
     return pedidos.filter(p => {
       const d = new Date(p.created_at);
-      if (!(d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59'))) return false;
+      if (!(d >= new Date(finStartDate + 'T00:00:00') && d <= new Date(finEndDate + 'T23:59:59'))) return false;
       if (finSearchStudent) {
         const q = finSearchStudent.toLowerCase();
         return p.nome_cliente?.toLowerCase().includes(q) || p.whatsapp_cliente?.includes(q);
@@ -518,7 +526,7 @@ export function FinanceTab() {
   const filteredEventosGlobally = useMemo(() => {
     return inscricoes.filter(i => {
       const d = new Date(i.created_at);
-      if (!(d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59'))) return false;
+      if (!(d >= new Date(finStartDate + 'T00:00:00') && d <= new Date(finEndDate + 'T23:59:59'))) return false;
       if (finSearchStudent) {
         const q = finSearchStudent.toLowerCase();
         return i.nome_responsavel?.toLowerCase().includes(q) || i.telefone_responsavel?.includes(q) || i.nome_aluno?.toLowerCase().includes(q);
@@ -818,18 +826,12 @@ export function FinanceTab() {
                     let titleRealizada = "Receita Realizada (Bruto)";
                     let transactionLabel = "Transações Efetivadas";
                     
-                    const filteredLoja = pedidos.filter(p => {
-                      const d = new Date(p.created_at);
-                      return d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59');
-                    });
+                    const filteredLoja = filteredLojaGlobally;
                     const lojaPago = filteredLoja.filter(p => p.status === 'pago').reduce((acc, p) => acc + Number(p.total || 0), 0);
                     const lojaPedidosPagos = filteredLoja.filter(p => p.status === 'pago').length;
                     const lojaPedidosTotais = filteredLoja.length;
 
-                    const filteredEventos = inscricoes.filter(i => {
-                      const d = new Date(i.created_at);
-                      return d >= new Date(finStartDate) && d <= new Date(finEndDate + 'T23:59:59');
-                    });
+                    const filteredEventos = filteredEventosGlobally;
                     const isEventoPago = (i: any) => i.taxa_paga || i.status?.toLowerCase() === 'confirmada' || i.status === 'pago';
                     const eventosPago = filteredEventos.filter(isEventoPago).reduce((acc, i) => acc + Number(i.valor_pago || 0), 0);
                     const eventosPagosCount = filteredEventos.filter(isEventoPago).length;
