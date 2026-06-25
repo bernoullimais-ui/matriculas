@@ -630,14 +630,6 @@ export function FinanceTab() {
                         Atualizar Dados
                       </button>
                       <button 
-                        onClick={handleSyncPayments}
-                        disabled={loadingAction}
-                        className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-                      >
-                        <RefreshCw size={14} className={loadingAction ? 'animate-spin' : ''} />
-                        Sincronizar Pagar.me
-                      </button>
-                      <button 
                         onClick={handleExportCSV}
                         disabled={!computedFinance}
                         className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-50"
