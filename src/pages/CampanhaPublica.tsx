@@ -411,7 +411,7 @@ export default function CampanhaPublica() {
                         style={{ background: primaryColor }}
                       >
                         {submitting ? <Loader2 size={18} className="animate-spin" /> : null}
-                        {ctaTexto}
+                        Enviar Dados
                       </button>
                     </form>
 
