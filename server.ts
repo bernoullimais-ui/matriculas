@@ -13921,6 +13921,57 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     }
   });
 
+  // ─── POST /api/admin/sofia/conversas/nova ──────────────────────────────────
+  // Inicia uma nova sessão de conversa para envio ativo
+  app.post('/api/admin/sofia/conversas/nova', async (req, res) => {
+    try {
+      const { telefone, identidade_nome, responsavel_nome } = req.body;
+      if (!telefone || !identidade_nome) {
+        return res.status(400).json({ error: 'Telefone e identidade são obrigatórios' });
+      }
+
+      // Check if there is already an active/escalado session
+      const { data: existing } = await supabase
+        .from('conversas_whatsapp')
+        .select('id, status')
+        .eq('telefone', telefone)
+        .eq('identidade_nome', identidade_nome)
+        .neq('status', 'encerrado')
+        .order('ultima_mensagem_at', { ascending: false })
+        .limit(1);
+
+      if (existing && existing.length > 0) {
+        return res.json({ id: existing[0].id, isNew: false });
+      }
+
+      // Create new session
+      const historicoInicial = [{
+        role: 'system',
+        content: 'Conversa iniciada ativamente pelo painel.',
+        timestamp: new Date().toISOString()
+      }];
+
+      const { data, error } = await supabase
+        .from('conversas_whatsapp')
+        .insert({
+          telefone,
+          identidade_nome,
+          status: 'ativo',
+          total_mensagens: 0,
+          historico: historicoInicial,
+          responsavel_nome: responsavel_nome || ''
+        })
+        .select('id')
+        .single();
+
+      if (error) throw error;
+
+      res.json({ id: data.id, isNew: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── POST /api/admin/sofia/conversas/:id/responder ───────────────────────────
   // Admin responde diretamente ao responsável via WhatsApp
   app.post('/api/admin/sofia/conversas/:id/responder', async (req, res) => {
