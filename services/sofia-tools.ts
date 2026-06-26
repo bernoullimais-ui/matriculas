@@ -321,7 +321,17 @@ export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<
 
     // Atualiza o nome do responsável na sessão da conversa, incluindo dependentes e unidade
     if (ctx.conversaId) {
-      const responsavelNome = alunos[0].responsavel_1 || alunos[0].responsavel_2 || 'Responsável';
+      // Find which responsavel matches the phone
+      const isResp2 = alunos.some(a => {
+        if (!a.whatsapp_2) return false;
+        const w2 = a.whatsapp_2.replace(/\D/g, '');
+        return w2.includes(telSem9) || telSem9.includes(w2);
+      });
+
+      const responsavelNome = isResp2
+        ? (alunos[0].responsavel_2 || alunos[0].responsavel_1 || 'Responsável')
+        : (alunos[0].responsavel_1 || alunos[0].responsavel_2 || 'Responsável');
+
       const nomesAlunos = alunos.map(a => a.nome_completo.split(' ')[0]).join(', ');
       const unidades = [...new Set(alunos.map(a => a.unidade).filter(Boolean))].join(', ');
       
