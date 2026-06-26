@@ -14025,7 +14025,18 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       }
 
       attendantName = attendantName || user?.email || 'Equipe';
-      const signatureMsg = mensagem?.trim() ? `*[${attendantName}]*\n${mensagem}` : `*[${attendantName}]* enviou um anexo.`;
+      const { assinaturaAtiva, assinaturaPersonalizada } = req.body;
+      
+      let signatureMsg = mensagem?.trim() || '';
+      // If there's an attachment but no message, signatureMsg is empty at this point
+      
+      if (assinaturaAtiva !== false) {
+        // If the user provided a custom signature, use it. Otherwise default to their name.
+        const nameToUse = assinaturaPersonalizada?.trim() || attendantName;
+        signatureMsg = mensagem?.trim() ? `*[${nameToUse}]*\n${mensagem}` : `*[${nameToUse}]* enviou um anexo.`;
+      } else if (!mensagem?.trim() && req.body.media) {
+        signatureMsg = `Arquivo anexado.`;
+      }
 
       // Se tiver media em base64, faz upload pro Supabase Storage
       let finalMediaUrl = req.body.media;
