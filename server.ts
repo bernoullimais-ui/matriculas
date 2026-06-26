@@ -1201,6 +1201,9 @@ function createAdminToken(username: string): string {
 
 
 async function requireAdminAuth(req: any, res: any, next: any) {
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
   try {
     const authHeader = req.headers['authorization'];
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
