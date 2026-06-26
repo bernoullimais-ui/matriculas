@@ -1201,19 +1201,26 @@ function createAdminToken(username: string): string {
 
 
 async function requireAdminAuth(req: any, res: any, next: any) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type, Authorization');
+
   if (req.method === 'OPTIONS') {
-    return next();
+    return res.status(200).end();
   }
   try {
     const authHeader = req.headers['authorization'];
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.log('[requireAdminAuth] Falhou: sem authHeader ou formato errado', authHeader);
       return res.status(401).json({ error: 'Não autorizado. Faça login no painel admin.' });
     }
     const token = authHeader.split(' ')[1];
     const { data: { user }, error } = await supabase.auth.getUser(token);
     if (error || !user) {
+      console.error('[requireAdminAuth] Erro Supabase:', error, 'Token (inicio):', token?.substring(0,10));
       return res.status(401).json({ error: 'Token inválido ou expirado.' });
     }
+    req.user = user;
     next();
   } catch (err) {
     console.error('requireAdminAuth error:', err);
@@ -13752,9 +13759,15 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     const body = req.body;
 
     // Ignora mensagens ENVIADAS (direction: 'out' ou 'outbound') — só processa RECEBIDAS
-    const direction = body?.direction || body?.type || body?.messageType || '';
+    const direction = String(body?.direction || body?.type || body?.messageType || body?.Payload?.Direction || '').toLowerCase();
     if (direction === 'out' || direction === 'outbound' || direction === 'sent') {
       return res.status(200).json({ ok: true, skipped: 'outgoing_message' });
+    }
+    
+    // Ignora ecos de mensagens enviadas pelos atendentes (padrão *[Nome]* ou *[Nome]*:)
+    const rawMsg = body?.Payload?.Content?.LastMessage?.Content || body?.Payload?.Content?.Text || body?.Payload?.Content?.Body || body?.message?.text || body?.text || body?.content || body?.message || body?.body;
+    if (typeof rawMsg === 'string' && /^\*\[.*?\]\*[:\n\r]*\s*/.test(rawMsg)) {
+      return res.status(200).json({ ok: true, skipped: 'echo_attendant' });
     }
 
     // Ignora se é evento de "Nova conversa" sem mensagem
@@ -13764,12 +13777,16 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     }
     
     // Extrai dados da mensagem recebida (formato UTalk)
-    const telefone = body?.phone || body?.from || body?.sender || body?.contact?.phone || body?.toPhone;
-    const mensagem = body?.message?.text || body?.text || body?.content || body?.message || body?.body;
-    const fromPhone = body?.fromPhone || body?.channelPhone || body?.channel?.phone || body?.toPhone || '';
+    const utalkContact = body?.Payload?.Contact?.PhoneNumber || body?.Payload?.Content?.Contact?.PhoneNumber;
+    const utalkText = body?.Payload?.Content?.LastMessage?.Content || body?.Payload?.Content?.Text || body?.Payload?.Content?.Body;
+    const utalkChannel = body?.Payload?.Channel?.PhoneNumber || body?.Payload?.Content?.Channel?.PhoneNumber;
+    
+    const telefone = utalkContact || body?.phone || body?.from || body?.sender || body?.contact?.phone || body?.toPhone;
+    const mensagem = utalkText || body?.message?.text || body?.text || body?.content || body?.message || body?.body;
+    const fromPhone = utalkChannel || body?.fromPhone || body?.channelPhone || body?.channel?.phone || body?.toPhone || '';
     
     if (!telefone || !mensagem || typeof mensagem !== 'string' || !mensagem.trim()) {
-      console.log('[Sofia Webhook] Payload ignorado (sem telefone/mensagem):', JSON.stringify(body).substring(0, 300));
+      console.log('[Sofia Webhook] Payload ignorado (sem telefone/mensagem):', JSON.stringify(body));
       return res.status(200).json({ ok: true, skipped: true });
     }
 
@@ -13786,78 +13803,76 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       return res.status(200).json({ ok: true, skipped: 'rate_limit' });
     }
 
-    // Responde imediatamente para o UTalk (evita timeout e reenvios)
-    res.status(200).json({ ok: true, processing: true });
+    // Processamento síncrono (obrigatório em Serverless Vercel)
+    try {
+      const { processarMensagem, buscarConfigSofia } = await getSofiaServices();
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
-    // Processamento assíncrono
-    setImmediate(async () => {
-      try {
-        const { processarMensagem, buscarConfigSofia } = await getSofiaServices();
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-
-        // Identifica a identidade/unidade pelo número de destino (fromPhone)
-        let identidadeNome = '';
-        if (fromNorm) {
-          const { data: identidades } = await supabase
-            .from('identidades')
-            .select('nome, utalk_from_phone')
-            .not('utalk_from_phone', 'is', null);
-          
-          const identidade = identidades?.find(i => 
-            i.utalk_from_phone?.replace(/\D/g, '').includes(fromNorm) ||
-            fromNorm.includes(i.utalk_from_phone?.replace(/\D/g, '') || '')
-          );
-          identidadeNome = identidade?.nome || '';
-        }
-
-        // Se não achou identidade pelo fromPhone, usa a primeira disponível
-        if (!identidadeNome) {
-          const { data: fallback } = await supabase
-            .from('identidades')
-            .select('nome')
-            .not('utalk_token', 'is', null)
-            .limit(1)
-            .single();
-          identidadeNome = fallback?.nome || 'Sport for Kids';
-        }
-
-        const config = await buscarConfigSofia(supabase, identidadeNome, UTALK_URL);
-        if (!config) {
-          console.error(`[Sofia] Config não encontrada para identidade: ${identidadeNome}`);
-          return;
-        }
-
-        // Processa mensagem com o agente IA
-        const { resposta, escalado } = await processarMensagem(
-          supabase,
-          ai,
-          telNorm,
-          mensagem,
-          config
+      // Identifica a identidade/unidade pelo número de destino (fromPhone)
+      let identidadeNome = '';
+      if (fromNorm) {
+        const { data: identidades } = await supabase
+          .from('identidades')
+          .select('nome, utalk_from_phone')
+          .not('utalk_from_phone', 'is', null);
+        
+        const identidade = identidades?.find(i => 
+          i.utalk_from_phone?.replace(/\D/g, '').includes(fromNorm) ||
+          fromNorm.includes(i.utalk_from_phone?.replace(/\D/g, '') || '')
         );
-
-        // Envia resposta se não escalado (ou se tem resposta de escalamento)
-        if (resposta) {
-          await fetch(UTALK_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${config.utalkToken}`,
-              'token': config.utalkToken,
-              'x-token': config.utalkToken
-            },
-            body: JSON.stringify({
-              toPhone: telNorm.startsWith('55') ? telNorm : `55${telNorm}`,
-              fromPhone: config.utalkFromPhone.replace(/\D/g, ''),
-              organizationId: config.utalkOrganizationId,
-              message: resposta
-            })
-          });
-        }
-      } catch (e) {
-        console.error('[Sofia] Erro no processamento async:', e);
+        identidadeNome = identidade?.nome || '';
       }
-    });
+
+      // Se não achou identidade pelo fromPhone, usa a primeira disponível
+      if (!identidadeNome) {
+        const { data: fallback } = await supabase
+          .from('identidades')
+          .select('nome')
+          .not('utalk_token', 'is', null)
+          .limit(1)
+          .single();
+        identidadeNome = fallback?.nome || 'Sport for Kids';
+      }
+
+      const config = await buscarConfigSofia(supabase, identidadeNome, UTALK_URL);
+      if (!config) {
+        console.error(`[Sofia] Config não encontrada para identidade: ${identidadeNome}`);
+        return res.status(200).json({ error: 'Config missing' });
+      }
+
+      // Processa mensagem com o agente IA
+      const { resposta, escalado } = await processarMensagem(
+        supabase,
+        ai,
+        telNorm,
+        mensagem,
+        config
+      );
+
+      // Envia resposta se não escalado (ou se tem resposta de escalamento)
+      if (resposta) {
+        await fetch(UTALK_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.utalkToken}`,
+            'token': config.utalkToken,
+            'x-token': config.utalkToken
+          },
+          body: JSON.stringify({
+            toPhone: telNorm.startsWith('55') ? telNorm : `55${telNorm}`,
+            fromPhone: config.utalkFromPhone.replace(/\D/g, ''),
+            organizationId: config.utalkOrganizationId,
+            message: `*Sofia, Assistente Virtual da Sport for Kids*\n\n${resposta}`
+          })
+        });
+      }
+
+      return res.status(200).json({ ok: true, processed: true });
+    } catch (e: any) {
+      console.error('[Sofia Webhook] Erro:', e);
+      return res.status(500).json({ error: 'Erro ao processar' });
+    }
   });
 
   // ─── GET /api/admin/sofia/conversas ─────────────────────────────────────────
@@ -13868,7 +13883,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       
       let query = supabase
         .from('conversas_whatsapp')
-        .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids')
+        .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids, historico')
         .order('ultima_mensagem_at', { ascending: false })
         .limit(parseInt(limite as string))
         .range(
@@ -13913,8 +13928,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       const { id } = req.params;
       const { mensagem } = req.body;
 
-      if (!mensagem?.trim()) {
-        return res.status(400).json({ error: 'Mensagem não pode ser vazia' });
+      if (!mensagem?.trim() && !req.body.media) {
+        return res.status(400).json({ error: 'Mensagem ou anexo é obrigatório' });
       }
 
       // Busca dados da conversa
@@ -13939,6 +13954,81 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       const telNorm = conversa.telefone.replace(/\D/g, '');
 
+      // Identifica o atendente pelo token JWT
+      const user = (req as any).user;
+      let attendantName = user?.user_metadata?.name || user?.user_metadata?.full_name;
+
+      if (!attendantName && user?.email) {
+        // Tenta buscar o nome na tabela usuarios do Supabase, já que muitos usuários não têm o metadata
+        const emailPrefix = user.email.split('@')[0];
+        const { data: usuarioData } = await supabase
+          .from('usuarios')
+          .select('nome')
+          .or(`login.eq.${user.email},login.eq.${emailPrefix}`)
+          .limit(1)
+          .maybeSingle();
+          
+        if (usuarioData?.nome) {
+          attendantName = usuarioData.nome;
+        }
+      }
+
+      attendantName = attendantName || user?.email || 'Equipe';
+      const signatureMsg = mensagem?.trim() ? `*[${attendantName}]*\n${mensagem}` : `*[${attendantName}]* enviou um anexo.`;
+
+      // Se tiver media em base64, faz upload pro Supabase Storage
+      let finalMediaUrl = req.body.media;
+      if (req.body.media && (req.body.media.includes(';base64,') || req.body.media.length > 1000)) {
+        try {
+          const matches = req.body.media.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+          let contentType = 'application/octet-stream';
+          let base64Data = req.body.media;
+          
+          if (matches && matches.length === 3) {
+            contentType = matches[1];
+            base64Data = matches[2];
+          } else if (req.body.media.includes(',')) {
+            base64Data = req.body.media.split(',')[1];
+          }
+
+          const buffer = Buffer.from(base64Data, 'base64');
+          const fileExt = (req.body.mediaName || 'file').split('.').pop() || 'bin';
+          const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+          
+          const { data, error } = await supabase.storage
+            .from('whatsapp_media')
+            .upload(fileName, buffer, {
+              contentType: contentType,
+              cacheControl: '3600',
+              upsert: false
+            });
+            
+          if (!error) {
+            const { data: publicUrlData } = supabase.storage
+              .from('whatsapp_media')
+              .getPublicUrl(fileName);
+            finalMediaUrl = publicUrlData.publicUrl;
+          }
+        } catch (err) {
+          console.error("[Sofia Responder] Exception uploading media:", err);
+        }
+      }
+
+      const utalkPayload: any = {
+        toPhone: telNorm.startsWith('55') ? telNorm : `55${telNorm}`,
+        fromPhone: identidade.utalk_from_phone.replace(/\D/g, ''),
+        organizationId: identidade.utalk_organization_id || '',
+        message: signatureMsg
+      };
+
+      if (finalMediaUrl) {
+        utalkPayload.media = finalMediaUrl;
+        utalkPayload.mediaUrl = finalMediaUrl;
+        utalkPayload.file = finalMediaUrl;
+        utalkPayload.mediaName = req.body.mediaName || "anexo";
+        utalkPayload.fileName = req.body.mediaName || "anexo";
+      }
+
       // Envia mensagem via UTalk
       const utalkRes = await fetch(UTALK_URL, {
         method: 'POST',
@@ -13948,12 +14038,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
           'token': identidade.utalk_token,
           'x-token': identidade.utalk_token
         },
-        body: JSON.stringify({
-          toPhone: telNorm.startsWith('55') ? telNorm : `55${telNorm}`,
-          fromPhone: identidade.utalk_from_phone.replace(/\D/g, ''),
-          organizationId: identidade.utalk_organization_id || '',
-          message: mensagem
-        })
+        body: JSON.stringify(utalkPayload)
       });
 
       if (!utalkRes.ok) {
@@ -13962,11 +14047,17 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       }
 
       // Adiciona mensagem ao histórico como mensagem do "model" (atendente)
+      const partData: any = { text: `[Atendente - ${attendantName}]\n${mensagem || ''}` };
+      if (finalMediaUrl) {
+        partData.mediaUrl = finalMediaUrl;
+        partData.mediaName = req.body.mediaName || 'Anexo';
+      }
+      
       const historicoAtualizado = [
         ...(conversa.historico || []),
         {
           role: 'model',
-          parts: [{ text: `[Atendente]: ${mensagem}` }],
+          parts: [partData],
           timestamp: new Date().toISOString()
         }
       ];
@@ -14066,7 +14157,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       const { identidade } = req.params;
       const { data, error } = await supabase
         .from('identidades')
-        .select('nome, nome_agente_ia, utalk_token, utalk_from_phone, utalk_organization_id')
+        .select('nome, nome_agente_ia, utalk_token, utalk_from_phone, utalk_organization_id, ia_ativa, base_conhecimento')
         .eq('nome', identidade)
         .single();
 
@@ -14078,26 +14169,40 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   });
 
   // ─── PATCH /api/admin/sofia/config/:identidade ───────────────────────────────
-  // Atualiza nome do agente IA para uma identidade
+  // Atualiza configurações do agente IA para uma identidade
   app.patch('/api/admin/sofia/config/:identidade', async (req, res) => {
     try {
       const { identidade } = req.params;
-      const { nome_agente_ia } = req.body;
-
-      if (!nome_agente_ia?.trim()) {
-        return res.status(400).json({ error: 'Nome do agente não pode ser vazio' });
+      const { nome_agente_ia, ia_ativa } = req.body;
+      
+      const updates: any = {};
+      if (nome_agente_ia !== undefined) {
+        if (!nome_agente_ia.trim()) return res.status(400).json({ error: 'Nome não pode ser vazio' });
+        updates.nome_agente_ia = nome_agente_ia.trim();
+      }
+      if (ia_ativa !== undefined) {
+        updates.ia_ativa = Boolean(ia_ativa);
+      }
+      if (req.body.base_conhecimento !== undefined) {
+        updates.base_conhecimento = req.body.base_conhecimento;
       }
 
       const { error } = await supabase
         .from('identidades')
-        .update({ nome_agente_ia: nome_agente_ia.trim() })
+        .update(updates)
         .eq('nome', identidade);
 
       if (error) throw error;
-      res.json({ ok: true, nome_agente_ia: nome_agente_ia.trim() });
+      res.json({ ok: true, ...updates });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
+  });
+
+  // ─── POST /api/admin/sofia/config/:identidade/base-conhecimento/upload ────
+  // Uploads desativados temporariamente devido a incompatibilidade do pdf-parse no Vercel
+  app.post('/api/admin/sofia/config/:identidade/base-conhecimento/upload', async (req: any, res) => {
+    res.status(501).json({ error: 'Upload de arquivos temporariamente desativado' });
   });
 
   // Vite middleware for development

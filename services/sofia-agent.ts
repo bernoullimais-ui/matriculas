@@ -21,6 +21,7 @@ import {
 export interface SofiaMessage {
   role: 'user' | 'model';
   parts: any[];  // Suporta text parts, function calls e function responses
+  timestamp?: string; // Horário exato da mensagem
 }
 
 export interface ConversaWhatsapp {
@@ -44,8 +45,10 @@ export interface SofiaConfig {
   utalkToken: string;
   utalkFromPhone: string;
   utalkOrganizationId: string;
+  iaAtiva?: boolean;
   utalkUrl: string;
   adminWhatsapp?: string;       // Número do admin para notificação de escalamento
+  baseConhecimento?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -126,11 +129,11 @@ async function enviarMensagemUTalk(
 // Gera System Prompt dinâmico
 // ─────────────────────────────────────────────────────────────────────────────
 
-function gerarSystemPrompt(nomeAgente: string): string {
+function gerarSystemPrompt(nomeAgente: string, alunosContext?: string, baseConhecimento?: string): string {
   const agora = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const horarioComercial = isHorarioComercial();
 
-  return `Você é ${nomeAgente}, assistente virtual da Sport for Kids.
+  let prompt = `Você é ${nomeAgente}, assistente virtual da Sport for Kids.
 Seu papel é atender responsáveis de alunos com empatia, clareza e agilidade pelo WhatsApp.
 
 DATA E HORA ATUAL: ${agora}
@@ -140,7 +143,17 @@ IDENTIDADE:
 - Você é um assistente virtual — não finjas ser humana, mas seja calorosa e próxima
 - Use linguagem descontraída mas profissional, como a de uma secretária simpática
 - Responda SEMPRE em português brasileiro
+`;
 
+  if (baseConhecimento) {
+    prompt += `\nBASE DE CONHECIMENTO (Informações e Regras da Unidade):\n${baseConhecimento}\n\n`;
+  }
+
+  if (alunosContext) {
+    prompt += `\nINFORMAÇÃO OBTIDA AUTOMATICAMENTE DO BANCO DE DADOS PELO TELEFONE DO USUÁRIO:\n${alunosContext}\n\nSE ENCONTROU O RESPONSÁVEL, CUMPRIMENTE-O PELO NOME IMEDIATAMENTE (Você NÃO precisa pedir o nome dele, pois o sistema já identificou!).\n`;
+  }
+
+  prompt += `
 REGRAS DE OURO:
 1. NUNCA invente informações — use APENAS os dados retornados pelas ferramentas
 2. Para ações que alteram dados (cancelamento, mudança de turma), SEMPRE confirme com o responsável antes de executar
@@ -185,6 +198,8 @@ NÃO FAÇA:
 ❌ Não forneça dados de outros alunos/responsáveis
 ❌ Não discuta assuntos não relacionados à escola
 ❌ Não prometa ações que dependem exclusivamente da equipe`;
+
+  return prompt;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -301,7 +316,45 @@ export async function processarMensagem(
   // 1. Carregar ou criar sessão
   const conversa = await carregarOuCriarSessao(supabase, telNorm, config.identidadeNome);
   
-  // 2. Se escalada, não processar com IA
+  const isPrimeiraMensagem = conversa.historico.length === 0;
+
+  // 1.5 Prevenção de duplicatas (Retries do Webhook ou ecos da IA)
+  if (!isPrimeiraMensagem) {
+    const ultimaMsg = conversa.historico[conversa.historico.length - 1];
+    const ultimaMsgText = ultimaMsg.parts?.map((p: any) => p.text || '').join('').trim();
+    const tempoDesdeUltima = Date.now() - new Date(conversa.ultima_mensagem_at || Date.now()).getTime();
+    // Busca a última mensagem do usuário no histórico
+    const ultimaUserMsg = [...conversa.historico].reverse().find(m => m.role === 'user');
+    const ultimaUserMsgText = ultimaUserMsg?.parts?.map((p: any) => p.text || '').join('').trim();
+    
+    // Evita loop por retry de webhook: se for mesma mensagem de usuário em < 5 minutos
+    if (ultimaUserMsg && ultimaUserMsgText === mensagemTexto.trim() && tempoDesdeUltima < 300000) {
+      console.log(`[Sofia] Mensagem duplicada ignorada (retry/spam): ${telNorm}`);
+      return { resposta: '', escalado: conversa.status === 'escalado', conversaId: conversa.id };
+    }
+    
+    // Evita loop por eco de forma definitiva: verifica a assinatura fixa da Sofia
+    if (mensagemTexto.includes('Sofia, Assistente Virtual') || (ultimaMsg.role === 'model' && ultimaMsgText && mensagemTexto.includes(ultimaMsgText))) {
+      console.log(`[Sofia] Eco de mensagem da IA ignorado: ${telNorm}`);
+      return { resposta: '', escalado: conversa.status === 'escalado', conversaId: conversa.id };
+    }
+  }
+
+  // 2. Se a IA estiver desativada, apenas salva a mensagem no painel e ignora
+  if (config.iaAtiva === false) {
+    const historico: SofiaMessage[] = [
+      ...conversa.historico,
+      { role: 'user', parts: [{ text: mensagemTexto }], timestamp: new Date().toISOString() }
+    ];
+    await salvarHistorico(supabase, conversa.id, historico);
+    return {
+      resposta: '',
+      escalado: conversa.status === 'escalado',
+      conversaId: conversa.id
+    };
+  }
+  
+  // 3. Se escalada, não processar com IA
   if (conversa.status === 'escalado') {
     return {
       resposta: '',  // Sem resposta automática
@@ -310,21 +363,35 @@ export async function processarMensagem(
     };
   }
 
-  // 3. Contexto para as ferramentas
+  // 4. Adiciona mensagem do usuário ao histórico E SALVA IMEDIATAMENTE (p/ evitar webhook retries)
+  const historico: SofiaMessage[] = [
+    ...conversa.historico,
+    { role: 'user', parts: [{ text: mensagemTexto }], timestamp: new Date().toISOString() }
+  ];
+  await salvarHistorico(supabase, conversa.id, historico);
+
+  // 5. Contexto para as ferramentas
   const toolCtx: SofiaToolContext = {
     supabase,
     telefone: telNorm,
     identidadeNome: config.identidadeNome,
-    nomeAgente: config.nomeAgente
+    nomeAgente: config.nomeAgente,
+    conversaId: conversa.id
   };
 
-  // 4. Adiciona mensagem do usuário ao histórico
-  const historico: SofiaMessage[] = [
-    ...conversa.historico,
-    { role: 'user', parts: [{ text: mensagemTexto }] }
-  ];
+  // 6. Se é a PRIMEIRA mensagem da conversa, busca alunos antecipadamente para injetar no prompt
+  let alunosContextStr: string | undefined;
+  if (isPrimeiraMensagem) {
+    // Para evitar importar a função e ter dependência circular, podemos chamar o executarFerramenta diretamente
+    try {
+      const res = await executarFerramenta('buscar_alunos_do_responsavel', {}, toolCtx, conversa.id);
+      alunosContextStr = typeof res === 'string' ? res : JSON.stringify(res);
+    } catch (e) {
+      console.error('[Sofia] Erro ao buscar alunos no início da conversa:', e);
+    }
+  }
 
-  // 5. Chama o Gemini com Function Calling
+  // 6. Chama o Gemini com Function Calling
   let respostaFinal = '';
   let escalado = false;
   let loopCount = 0;
@@ -343,7 +410,7 @@ export async function processarMensagem(
           parts: m.parts
         })),
         config: {
-          systemInstruction: gerarSystemPrompt(config.nomeAgente),
+          systemInstruction: gerarSystemPrompt(config.nomeAgente, alunosContextStr, config.baseConhecimento),
           temperature: 0.4,
           tools: [{
             functionDeclarations: SOFIA_TOOL_DECLARATIONS
@@ -368,7 +435,8 @@ export async function processarMensagem(
         // Adiciona resposta ao histórico
         historico.push({
           role: 'model',
-          parts: [{ text: respostaFinal }]
+          parts: [{ text: respostaFinal }],
+          timestamp: new Date().toISOString()
         });
         break;
       }
@@ -376,7 +444,8 @@ export async function processarMensagem(
       // Adiciona a resposta do modelo (com tool calls) ao histórico
       historico.push({
         role: 'model' as const,
-        parts: parts as any[]
+        parts: parts as any[],
+        timestamp: new Date().toISOString()
       });
 
       // Executa as ferramentas chamadas
@@ -403,7 +472,8 @@ export async function processarMensagem(
       // Adiciona resultados das ferramentas ao histórico
       historico.push({
         role: 'user',
-        parts: toolResults
+        parts: toolResults,
+        timestamp: new Date().toISOString()
       });
 
       // Se escalado, para o loop
@@ -451,7 +521,7 @@ export async function buscarConfigSofia(
   try {
     const { data: identidade, error } = await supabase
       .from('identidades')
-      .select('nome, utalk_token, utalk_from_phone, utalk_organization_id, nome_agente_ia')
+      .select('nome, utalk_token, utalk_from_phone, utalk_organization_id, nome_agente_ia, ia_ativa, base_conhecimento')
       .eq('nome', identidadeNome)
       .single();
 
@@ -465,6 +535,8 @@ export async function buscarConfigSofia(
       utalkToken: identidade.utalk_token,
       utalkFromPhone: identidade.utalk_from_phone,
       utalkOrganizationId: identidade.utalk_organization_id || '',
+      iaAtiva: identidade.ia_ativa !== false, // default true
+      baseConhecimento: identidade.base_conhecimento || undefined,
       utalkUrl
     };
   } catch (e) {

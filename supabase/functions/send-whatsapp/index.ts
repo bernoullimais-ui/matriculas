@@ -80,7 +80,7 @@ serve(async (req) => {
         toPhone: phone,
         fromPhone: utalkFrom,
         organizationId: utalkOrgId,
-        message: message,
+        message: `*[Gestão Sport for Kids]*\n\n${message}`,
         contactName: contactName || 'Cliente'
       })
     });

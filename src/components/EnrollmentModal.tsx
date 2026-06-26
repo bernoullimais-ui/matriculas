@@ -2369,7 +2369,9 @@ export default function EnrollmentModal({
         body: JSON.stringify({ 
           code: couponCode,
           guardianId: formData.guardian.id,
-          cpf: formData.guardian.cpf
+          cpf: formData.guardian.cpf,
+          unidade: formData.student.unidade,
+          turma: formData.student.turmaComplementar
         })
       });
       const data = await response.json();

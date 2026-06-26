@@ -17,6 +17,7 @@ export interface SofiaToolContext {
   telefone: string;             // Telefone do responsável (normalizado, só dígitos)
   identidadeNome: string;       // Nome da unidade/identidade que recebeu a mensagem
   nomeAgente: string;           // Nome do agente IA (ex: "Sofia")
+  conversaId?: string;          // ID da sessão (opcional, para atualizações da sessão na base)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -281,14 +282,19 @@ function formatCurrency(value: number | null | undefined): string {
 export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<string> {
   try {
     const telNorm = normalizeTelefone(ctx.telefone);
-    const telVariants = [telNorm, `55${telNorm}`, telNorm.replace(/^55/, '')].filter(Boolean);
+    const telSem55 = telNorm.startsWith('55') ? telNorm.substring(2) : telNorm;
+    
+    // Cria strings com * entre cada dígito para achar números formatados como (71) 99141-4913 no PostgREST
+    const wildcardSem55 = '*' + telSem55.split('').join('*') + '*';
+    const wildcardCom55 = '*' + ('55' + telSem55).split('').join('*') + '*';
+    const telVariants = [wildcardSem55, wildcardCom55];
 
-    // Busca por whatsapp1 ou whatsapp2 em qualquer variante do número
+    // Busca por whatsapp_1 ou whatsapp_2 em qualquer variante do número
     const { data: alunos, error } = await ctx.supabase
       .from('alunos')
-      .select('id, nome_completo, unidade, status_matricula, responsavel1, whatsapp1, responsavel2, whatsapp2, email, data_nascimento')
+      .select('id, nome_completo, unidade, status_matricula, responsavel_1, whatsapp_1, responsavel_2, whatsapp_2, email, data_nascimento')
       .or(
-        telVariants.map(t => `whatsapp1.ilike.%${t}%,whatsapp2.ilike.%${t}%`).join(',')
+        telVariants.map(t => `whatsapp_1.ilike.${t},whatsapp_2.ilike.${t}`).join(',')
       )
       .limit(10);
 
@@ -301,6 +307,23 @@ export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<
       });
     }
 
+    // Atualiza o nome do responsável na sessão da conversa, incluindo dependentes e unidade
+    if (ctx.conversaId) {
+      const responsavelNome = alunos[0].responsavel_1 || alunos[0].responsavel_2 || 'Responsável';
+      const nomesAlunos = alunos.map(a => a.nome_completo.split(' ')[0]).join(', ');
+      const unidades = [...new Set(alunos.map(a => a.unidade).filter(Boolean))].join(', ');
+      
+      const tituloResponsavel = `${responsavelNome} (${nomesAlunos} - ${unidades})`;
+      
+      await ctx.supabase
+        .from('conversas_whatsapp')
+        .update({
+          responsavel_nome: tituloResponsavel,
+          aluno_ids: alunos.map(a => a.id)
+        })
+        .eq('id', ctx.conversaId);
+    }
+
     return JSON.stringify({
       encontrado: true,
       total: alunos.length,
@@ -309,8 +332,8 @@ export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<
         nome: a.nome_completo,
         unidade: a.unidade,
         status_matricula: a.status_matricula,
-        responsavel1: a.responsavel1,
-        responsavel2: a.responsavel2,
+        responsavel1: a.responsavel_1,
+        responsavel2: a.responsavel_2,
         email: a.email
       }))
     });
@@ -703,7 +726,7 @@ export async function reenviarContrato(
     // Busca dados do aluno
     const { data: aluno } = await ctx.supabase
       .from('alunos')
-      .select('nome_completo, email, responsavel1')
+      .select('nome_completo, email, responsavel_1')
       .eq('id', alunoId)
       .single();
 
@@ -723,7 +746,7 @@ export async function reenviarContrato(
       detalhes: {
         origem: 'sofia_whatsapp',
         email_destino: aluno.email,
-        responsavel: aluno.responsavel1,
+        responsavel: aluno.responsavel_1,
         telefone_responsavel: ctx.telefone,
         solicitado_em: new Date().toISOString()
       }
