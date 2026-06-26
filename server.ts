@@ -4183,6 +4183,16 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
             isValid = false;
           }
 
+          // Validate Unidade constraint
+          if (isValid && coupon.unidade && student.unidade && String(coupon.unidade).trim().toLowerCase() !== String(student.unidade).trim().toLowerCase()) {
+            isValid = false;
+          }
+
+          // Validate Turma (Course) constraint
+          if (isValid && coupon.turma_id && turmaId && coupon.turma_id !== turmaId) {
+            isValid = false;
+          }
+
           if (isValid) {
             couponData = coupon;
             if (coupon.tipo === 'fixo') {
@@ -4369,7 +4379,8 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
           unidade: student.unidade,
           turma: student.turmaComplementar,
           turma_id: turmaId,
-          status: 'pendente'
+          status: 'pendente',
+          plano: (couponData && couponData.plano_registro) ? couponData.plano_registro : 'Mensal'
         }])
         .select()
         .single();
@@ -7102,7 +7113,7 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
   });
 
   app.post("/api/coupons/validate", async (req, res) => {
-    const { code, guardianId, cpf } = req.body;
+    const { code, guardianId, cpf, unidade, turma } = req.body;
     try {
       const today = new Date().toISOString().split('T')[0];
       const { data: coupon, error } = await supabase
@@ -7113,6 +7124,25 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
         .single();
 
       if (error || !coupon) return res.status(404).json({ error: "Cupom inválido ou expirado" });
+
+      // Validate Unidade constraint
+      if (coupon.unidade && unidade && String(coupon.unidade).trim().toLowerCase() !== String(unidade).trim().toLowerCase()) {
+        return res.status(400).json({ error: `Este cupom só é válido para a unidade "${coupon.unidade}"` });
+      }
+
+      // Validate Turma (Course) constraint
+      if (coupon.turma_id && turma) {
+        const { data: tData } = await supabase
+          .from('turmas')
+          .select('id')
+          .eq('nome', turma.trim())
+          .limit(1)
+          .maybeSingle();
+        
+        if (tData && tData.id !== coupon.turma_id) {
+          return res.status(400).json({ error: "Este cupom não se aplica ao curso selecionado." });
+        }
+      }
 
       // Check expiration
       if (coupon.data_expiracao && coupon.data_expiracao < today) {
@@ -11964,7 +11994,7 @@ app.post('/api/webhooks/wix', async (req, res) => {
     try {
       console.log('--- CREATE COUPON PAYLOAD ---');
       console.log(req.body);
-      const { codigo, tipo_desconto, valor, escopo, produto_id, evento_id, limite_total_uso, limite_por_usuario, validade, aplicar_em, turma_id } = req.body;
+      const { codigo, tipo_desconto, valor, escopo, produto_id, evento_id, limite_total_uso, limite_por_usuario, validade, aplicar_em, turma_id, unidade, plano_registro } = req.body;
       
       const { data, error } = await supabase
         .from('cupons')
@@ -11986,7 +12016,9 @@ app.post('/api/webhooks/wix', async (req, res) => {
           data_expiracao: validade ? new Date(validade).toISOString().split('T')[0] : null, // Sync for courses
           ativo: true,
           created_at: new Date().toISOString(),
-          turma_id: turma_id || null
+          turma_id: turma_id || null,
+          unidade: unidade || null,
+          plano_registro: plano_registro || null
         }])
         .select()
         .single();
@@ -12002,7 +12034,7 @@ app.post('/api/webhooks/wix', async (req, res) => {
   app.put("/api/admin/cupons/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const { codigo, tipo_desconto, valor, escopo, produto_id, evento_id, limite_total_uso, limite_por_usuario, validade, ativo, usos_atuais, aplicar_em, turma_id } = req.body;
+      const { codigo, tipo_desconto, valor, escopo, produto_id, evento_id, limite_total_uso, limite_por_usuario, validade, ativo, usos_atuais, aplicar_em, turma_id, unidade, plano_registro } = req.body;
 
       const updates: any = {};
       if (codigo !== undefined) {
@@ -12024,6 +12056,8 @@ app.post('/api/webhooks/wix', async (req, res) => {
       if (ativo !== undefined) updates.ativo = ativo;
       if (aplicar_em !== undefined) updates.aplicar_em = aplicar_em;
       if (turma_id !== undefined) updates.turma_id = turma_id || null;
+      if (unidade !== undefined) updates.unidade = unidade || null;
+      if (plano_registro !== undefined) updates.plano_registro = plano_registro || null;
 
       // Handle limit fields:
       // - A positive number → update to that value
@@ -12061,6 +12095,178 @@ app.post('/api/webhooks/wix', async (req, res) => {
       if (error) throw error;
       res.json({ success: true });
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- BATCH COUPON (LOTES SERIADOS) ENDPOINTS ---
+
+  // GET /api/admin/cupons/lotes — List all coupon batches
+  app.get("/api/admin/cupons/lotes", requireAdminAuth, async (req, res) => {
+    try {
+      const { data: lotes, error } = await supabase
+        .from('cupons_lotes')
+        .select('*, cupons(id, codigo, usos_atuais, cupom_usos(id))')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const result = (lotes || []).map((lote: any) => {
+        const total = lote.cupons?.length || 0;
+        const used = lote.cupons?.filter((c: any) => (c.usos_atuais && c.usos_atuais > 0) || (c.cupom_usos?.length > 0)).length || 0;
+        return {
+          ...lote,
+          total_cupons: total,
+          cupons_utilizados: used
+        };
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      console.error("[GET /api/admin/cupons/lotes] Erro:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/admin/cupons/lotes/:id/codigos — List all generated codes for a batch
+  app.get("/api/admin/cupons/lotes/:id/codigos", requireAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const { data: cupons, error } = await supabase
+        .from('cupons')
+        .select('*, cupom_usos(*)')
+        .eq('lote_id', id)
+        .order('codigo', { ascending: true });
+
+      if (error) throw error;
+
+      const respIds = (cupons || []).flatMap(c => c.cupom_usos || []).map(u => u.responsavel_id).filter(Boolean);
+      const responsaveisMap: Record<string, string> = {};
+
+      if (respIds.length > 0) {
+        const { data: resps } = await supabase
+          .from('responsaveis')
+          .select('id, nome_completo')
+          .in('id', respIds);
+        if (resps) {
+          resps.forEach(r => {
+            responsaveisMap[r.id] = r.nome_completo;
+          });
+        }
+      }
+
+      const result = (cupons || []).map(c => {
+        const usages = (c.cupom_usos || []).map((u: any) => ({
+          id: u.id,
+          responsavel_id: u.responsavel_id,
+          responsavel_nome: responsaveisMap[u.responsavel_id] || 'Responsável não localizado'
+        }));
+        return {
+          id: c.id,
+          codigo: c.codigo,
+          ativo: c.ativo,
+          usos_atuais: c.usos_atuais,
+          cupom_usos: usages
+        };
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      console.error(`[GET /api/admin/cupons/lotes/:id/codigos] Erro:`, err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/admin/cupons/gerar-lote — Generate a batch of unique, serialized single-use coupons
+  app.post("/api/admin/cupons/gerar-lote", requireAdminAuth, async (req, res) => {
+    try {
+      const { prefixo, quantidade, tipo_desconto, valor, unidade, turma_id, validade, aplicar_em, limite_por_usuario, plano_registro } = req.body;
+
+      if (!prefixo || !quantidade || Number(quantidade) <= 0 || !valor || Number(valor) <= 0) {
+        return res.status(400).json({ error: "Prefixo, quantidade e valor são obrigatórios." });
+      }
+
+      // 1. Create Batch record
+      const { data: lote, error: loteError } = await supabase
+        .from('cupons_lotes')
+        .insert([{
+          prefixo: prefixo.toUpperCase().trim(),
+          quantidade: Number(quantidade),
+          tipo_desconto,
+          valor: Number(valor),
+          unidade: unidade || null,
+          turma_id: turma_id || null,
+          validade: validade ? new Date(validade).toISOString() : null,
+          limite_por_usuario: limite_por_usuario ? Number(limite_por_usuario) : 1,
+          plano_registro: plano_registro || null,
+          aplicar_em: aplicar_em || 'todas_parcelas'
+        }])
+        .select()
+        .single();
+
+      if (loteError) throw loteError;
+
+      // Helper to generate a 4-char random code suffix
+      const randomStr = () => Math.random().toString(36).substring(2, 6).toUpperCase();
+
+      // 2. Generate and insert N coupons in bulk
+      const cuponsToInsert = [];
+      const cleanPrefix = prefixo.toUpperCase().trim();
+      
+      for (let i = 1; i <= Number(quantidade); i++) {
+        const seq = String(i).padStart(3, '0');
+        const code = `${cleanPrefix}${seq}-${randomStr()}`;
+        
+        cuponsToInsert.push({
+          codigo: code,
+          nome: code,
+          tipo_desconto,
+          tipo: tipo_desconto === 'porcentagem' ? 'percentual' : 'fixo',
+          aplicar_em: aplicar_em || 'todas_parcelas',
+          data_inicio: new Date().toISOString().split('T')[0],
+          valor: Number(valor),
+          escopo: turma_id ? 'curso_especifico' : 'cursos_todos',
+          limite_total_uso: 1,
+          limite_uso: 1,
+          limite_por_usuario: limite_por_usuario ? Number(limite_por_usuario) : 1,
+          validade: validade ? new Date(validade).toISOString() : null,
+          data_expiracao: validade ? new Date(validade).toISOString().split('T')[0] : null,
+          ativo: true,
+          created_at: new Date().toISOString(),
+          turma_id: turma_id || null,
+          unidade: unidade || null,
+          plano_registro: plano_registro || null,
+          lote_id: lote.id
+        });
+      }
+
+      const { error: couponsError } = await supabase
+        .from('cupons')
+        .insert(cuponsToInsert);
+
+      if (couponsError) {
+        // Rollback batch creation if coupons generation fails
+        await supabase.from('cupons_lotes').delete().eq('id', lote.id);
+        throw couponsError;
+      }
+
+      res.json({ success: true, loteId: lote.id, quantidade: cuponsToInsert.length });
+    } catch (err: any) {
+      console.error("[POST /api/admin/cupons/gerar-lote] Erro:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // DELETE /api/admin/cupons/lotes/:id — Delete batch and cascade delete coupons
+  app.delete("/api/admin/cupons/lotes/:id", requireAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { error } = await supabase.from('cupons_lotes').delete().eq('id', id);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error(`[DELETE /api/admin/cupons/lotes/:id] Erro:`, err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -13049,27 +13255,26 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       await supabase.from('matriculas').update({ 
         pagarme_subscription_id: subscription.id,
-        plano: 'Mensal'
+        plano: matricula.plano || 'Mensal'
       }).eq('id', matriculaId);
 
       // Register coupon usage if a coupon was used
       if (matricula.cupom_id) {
         await supabase.from('cupons_usos').insert([{
           cupom_id: matricula.cupom_id,
-          matricula_id: matriculaId,
-          aluno_id: matricula.aluno_id
+          responsavel_id: aluno?.responsavel_id
         }]);
 
         // Increment coupon usage count
         const { data: cupomDb } = await supabase
           .from('cupons')
-          .select('quantidade_usos')
+          .select('usos_atuais')
           .eq('id', matricula.cupom_id)
           .single();
           
         if (cupomDb) {
           await supabase.from('cupons').update({
-            quantidade_usos: (cupomDb.quantidade_usos || 0) + 1
+            usos_atuais: (cupomDb.usos_atuais || 0) + 1
           }).eq('id', matricula.cupom_id);
         }
       }
@@ -13124,6 +13329,14 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       if (!guardian || !student || !turma) throw new Error("Dados não encontrados.");
 
+      let planoRegistro = 'Mensal';
+      if (cupom_id) {
+        const { data: coupon } = await supabase.from('cupons').select('plano_registro').eq('id', cupom_id).maybeSingle();
+        if (coupon && coupon.plano_registro) {
+          planoRegistro = coupon.plano_registro;
+        }
+      }
+
       const mockPaymentId = `pix_exc_${Date.now()}`;
       let nextBillingDate = new Date();
       if (dia_vencimento) {
@@ -13155,7 +13368,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         turma: turma.nome,
         turma_id: turma.id,
         status: 'pendente',
-        plano: 'Mensal',
+        plano: planoRegistro,
         pagarme_subscription_id: 'internal_pix',
         motivo_excecao_pix: motivo_excecao,
         criado_por_admin_id: adminId,
@@ -13263,6 +13476,14 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       const { data: turma } = await supabase.from('turmas').select('*').eq('id', turmaId).single();
 
+      let planoRegistro = 'Mensal';
+      if (cupom_id) {
+        const { data: coupon } = await supabase.from('cupons').select('plano_registro').eq('id', cupom_id).maybeSingle();
+        if (coupon && coupon.plano_registro) {
+          planoRegistro = coupon.plano_registro;
+        }
+      }
+
       const mockPaymentId = `pix_exc_${Date.now()}`;
 
       const finalAmount = Math.max(1, Number(valor_mensal) - (valorDesconto || 0));
@@ -13287,7 +13508,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         turma: turma.nome,
         turma_id: turma.id,
         status: 'pendente',
-        plano: 'Mensal',
+        plano: planoRegistro,
         pagarme_subscription_id: 'internal_pix',
         motivo_excecao_pix: motivo_excecao,
         criado_por_admin_id: adminId,
@@ -13476,6 +13697,406 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       res.status(500).json({ error: err.message });
     }
   });
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SOFIA — AGENTE IA WHATSAPP
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Importação lazy dos serviços da Sofia (evita ciclo na inicialização)
+  async function getSofiaServices() {
+    const { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa } = 
+      await import('./services/sofia-agent.js');
+    return { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa };
+  }
+
+  const UTALK_URL = process.env.UTALK_URL || 'https://app-utalk.umbler.com/api/v1/messages/simplified/';
+  const SOFIA_WEBHOOK_SECRET = process.env.SOFIA_WEBHOOK_SECRET || 'sofia-sfk-secret';
+
+  // Mapa de rate limiting por telefone
+  const sofiaRateLimit = new Map<string, { count: number; resetAt: number }>();
+  const RATE_LIMIT_MAX = 30;
+  const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hora
+
+  function checkRateLimit(telefone: string): boolean {
+    const now = Date.now();
+    const entry = sofiaRateLimit.get(telefone);
+    if (!entry || now > entry.resetAt) {
+      sofiaRateLimit.set(telefone, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+      return true;
+    }
+    if (entry.count >= RATE_LIMIT_MAX) return false;
+    entry.count++;
+    return true;
+  }
+
+  /**
+   * POST /webhook/whatsapp
+   * Recebe mensagens do UTalk e processa com a Sofia.
+   * Aceita o token via query parameter (?token=...) ou header 'x-webhook-token'.
+   * O UTalk não suporta headers customizados, então usar: /webhook/whatsapp?token=SEU_TOKEN
+   */
+  app.post('/webhook/whatsapp', async (req, res) => {
+    // Validação do token — aceita via query param (?token=) ou header
+    const token = req.query.token as string
+      || req.headers['x-webhook-token'] as string
+      || req.headers['authorization'] as string;
+
+    if (token !== SOFIA_WEBHOOK_SECRET && token !== `Bearer ${SOFIA_WEBHOOK_SECRET}`) {
+      console.warn('[Sofia Webhook] Token inválido recebido. Token recebido:', String(token || '').substring(0, 8) + '...');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    // UTalk pode enviar diferentes formatos — suportamos os principais
+    const body = req.body;
+
+    // Ignora mensagens ENVIADAS (direction: 'out' ou 'outbound') — só processa RECEBIDAS
+    const direction = body?.direction || body?.type || body?.messageType || '';
+    if (direction === 'out' || direction === 'outbound' || direction === 'sent') {
+      return res.status(200).json({ ok: true, skipped: 'outgoing_message' });
+    }
+
+    // Ignora se é evento de "Nova conversa" sem mensagem
+    const evento = body?.event || body?.eventType || '';
+    if (evento === 'new_conversation' || evento === 'conversation_created') {
+      return res.status(200).json({ ok: true, skipped: 'new_conversation_event' });
+    }
+    
+    // Extrai dados da mensagem recebida (formato UTalk)
+    const telefone = body?.phone || body?.from || body?.sender || body?.contact?.phone || body?.toPhone;
+    const mensagem = body?.message?.text || body?.text || body?.content || body?.message || body?.body;
+    const fromPhone = body?.fromPhone || body?.channelPhone || body?.channel?.phone || body?.toPhone || '';
+    
+    if (!telefone || !mensagem || typeof mensagem !== 'string' || !mensagem.trim()) {
+      console.log('[Sofia Webhook] Payload ignorado (sem telefone/mensagem):', JSON.stringify(body).substring(0, 300));
+      return res.status(200).json({ ok: true, skipped: true });
+    }
+
+    // Ignora mensagens enviadas pelo próprio bot (número da empresa == número do contato)
+    const fromNorm = fromPhone.replace(/\D/g, '');
+    const telNorm = telefone.replace(/\D/g, '');
+    if (fromNorm && telNorm && (fromNorm.endsWith(telNorm) || telNorm.endsWith(fromNorm))) {
+      return res.status(200).json({ ok: true, skipped: 'own_message' });
+    }
+
+    // Rate limiting
+    if (!checkRateLimit(telNorm)) {
+      console.warn(`[Sofia] Rate limit excedido para ${telNorm}`);
+      return res.status(200).json({ ok: true, skipped: 'rate_limit' });
+    }
+
+    // Responde imediatamente para o UTalk (evita timeout e reenvios)
+    res.status(200).json({ ok: true, processing: true });
+
+    // Processamento assíncrono
+    setImmediate(async () => {
+      try {
+        const { processarMensagem, buscarConfigSofia } = await getSofiaServices();
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+
+        // Identifica a identidade/unidade pelo número de destino (fromPhone)
+        let identidadeNome = '';
+        if (fromNorm) {
+          const { data: identidades } = await supabase
+            .from('identidades')
+            .select('nome, utalk_from_phone')
+            .not('utalk_from_phone', 'is', null);
+          
+          const identidade = identidades?.find(i => 
+            i.utalk_from_phone?.replace(/\D/g, '').includes(fromNorm) ||
+            fromNorm.includes(i.utalk_from_phone?.replace(/\D/g, '') || '')
+          );
+          identidadeNome = identidade?.nome || '';
+        }
+
+        // Se não achou identidade pelo fromPhone, usa a primeira disponível
+        if (!identidadeNome) {
+          const { data: fallback } = await supabase
+            .from('identidades')
+            .select('nome')
+            .not('utalk_token', 'is', null)
+            .limit(1)
+            .single();
+          identidadeNome = fallback?.nome || 'Sport for Kids';
+        }
+
+        const config = await buscarConfigSofia(supabase, identidadeNome, UTALK_URL);
+        if (!config) {
+          console.error(`[Sofia] Config não encontrada para identidade: ${identidadeNome}`);
+          return;
+        }
+
+        // Processa mensagem com o agente IA
+        const { resposta, escalado } = await processarMensagem(
+          supabase,
+          ai,
+          telNorm,
+          mensagem,
+          config
+        );
+
+        // Envia resposta se não escalado (ou se tem resposta de escalamento)
+        if (resposta) {
+          await fetch(UTALK_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${config.utalkToken}`,
+              'token': config.utalkToken,
+              'x-token': config.utalkToken
+            },
+            body: JSON.stringify({
+              toPhone: telNorm.startsWith('55') ? telNorm : `55${telNorm}`,
+              fromPhone: config.utalkFromPhone.replace(/\D/g, ''),
+              organizationId: config.utalkOrganizationId,
+              message: resposta
+            })
+          });
+        }
+      } catch (e) {
+        console.error('[Sofia] Erro no processamento async:', e);
+      }
+    });
+  });
+
+  // ─── GET /api/admin/sofia/conversas ─────────────────────────────────────────
+  // Lista conversas para o painel de monitoramento (com filtros)
+  app.get('/api/admin/sofia/conversas', async (req, res) => {
+    try {
+      const { status, identidade, limite = '50', pagina = '0' } = req.query;
+      
+      let query = supabase
+        .from('conversas_whatsapp')
+        .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids')
+        .order('ultima_mensagem_at', { ascending: false })
+        .limit(parseInt(limite as string))
+        .range(
+          parseInt(pagina as string) * parseInt(limite as string),
+          (parseInt(pagina as string) + 1) * parseInt(limite as string) - 1
+        );
+
+      if (status) query = query.eq('status', status as string);
+      if (identidade) query = query.eq('identidade_nome', identidade as string);
+
+      const { data, error, count } = await query;
+      if (error) throw error;
+
+      res.json({ conversas: data || [], total: count });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── GET /api/admin/sofia/conversas/:id ──────────────────────────────────────
+  // Detalhe de uma conversa com histórico completo
+  app.get('/api/admin/sofia/conversas/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { data, error } = await supabase
+        .from('conversas_whatsapp')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (error) throw error;
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── POST /api/admin/sofia/conversas/:id/responder ───────────────────────────
+  // Admin responde diretamente ao responsável via WhatsApp
+  app.post('/api/admin/sofia/conversas/:id/responder', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { mensagem } = req.body;
+
+      if (!mensagem?.trim()) {
+        return res.status(400).json({ error: 'Mensagem não pode ser vazia' });
+      }
+
+      // Busca dados da conversa
+      const { data: conversa, error: convError } = await supabase
+        .from('conversas_whatsapp')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (convError || !conversa) throw new Error('Conversa não encontrada');
+
+      // Busca config da identidade
+      const { data: identidade } = await supabase
+        .from('identidades')
+        .select('utalk_token, utalk_from_phone, utalk_organization_id, nome_agente_ia')
+        .eq('nome', conversa.identidade_nome)
+        .single();
+
+      if (!identidade?.utalk_token) {
+        return res.status(400).json({ error: 'UTalk não configurado para esta unidade' });
+      }
+
+      const telNorm = conversa.telefone.replace(/\D/g, '');
+
+      // Envia mensagem via UTalk
+      const utalkRes = await fetch(UTALK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${identidade.utalk_token}`,
+          'token': identidade.utalk_token,
+          'x-token': identidade.utalk_token
+        },
+        body: JSON.stringify({
+          toPhone: telNorm.startsWith('55') ? telNorm : `55${telNorm}`,
+          fromPhone: identidade.utalk_from_phone.replace(/\D/g, ''),
+          organizationId: identidade.utalk_organization_id || '',
+          message: mensagem
+        })
+      });
+
+      if (!utalkRes.ok) {
+        const errText = await utalkRes.text();
+        throw new Error(`UTalk error: ${errText}`);
+      }
+
+      // Adiciona mensagem ao histórico como mensagem do "model" (atendente)
+      const historicoAtualizado = [
+        ...(conversa.historico || []),
+        {
+          role: 'model',
+          parts: [{ text: `[Atendente]: ${mensagem}` }],
+          timestamp: new Date().toISOString()
+        }
+      ];
+
+      await supabase
+        .from('conversas_whatsapp')
+        .update({
+          historico: historicoAtualizado,
+          ultima_mensagem_at: new Date().toISOString()
+        })
+        .eq('id', id);
+
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── POST /api/admin/sofia/conversas/:id/resolver ────────────────────────────
+  // Admin marca conversa como resolvida (reativa Sofia)
+  app.post('/api/admin/sofia/conversas/:id/resolver', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { resolverConversa } = await getSofiaServices();
+      await resolverConversa(supabase, id);
+      res.json({ ok: true, status: 'ativo' });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── POST /api/admin/sofia/conversas/:id/encerrar ────────────────────────────
+  // Encerra uma conversa definitivamente
+  app.post('/api/admin/sofia/conversas/:id/encerrar', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { encerrarConversa } = await getSofiaServices();
+      await encerrarConversa(supabase, id);
+      res.json({ ok: true, status: 'encerrado' });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── GET /api/admin/sofia/metricas ───────────────────────────────────────────
+  // Métricas do agente para o painel
+  app.get('/api/admin/sofia/metricas', async (req, res) => {
+    try {
+      const { identidade, periodo = '7' } = req.query;
+      const diasAtras = new Date(Date.now() - parseInt(periodo as string) * 24 * 60 * 60 * 1000).toISOString();
+
+      let query = supabase
+        .from('conversas_whatsapp')
+        .select('id, status, total_mensagens, identidade_nome, created_at, escalado_at')
+        .gte('created_at', diasAtras);
+
+      if (identidade) query = query.eq('identidade_nome', identidade as string);
+
+      const { data: conversas, error } = await query;
+      if (error) throw error;
+
+      const total = conversas?.length || 0;
+      const ativas = conversas?.filter(c => c.status === 'ativo').length || 0;
+      const escaladas = conversas?.filter(c => c.status === 'escalado').length || 0;
+      const encerradas = conversas?.filter(c => c.status === 'encerrado').length || 0;
+      const taxaEscalamento = total > 0 ? Math.round((escaladas / total) * 100) : 0;
+      const mediaMsg = total > 0
+        ? Math.round((conversas?.reduce((s, c) => s + (c.total_mensagens || 0), 0) || 0) / total)
+        : 0;
+
+      // Distribuição por dia
+      const porDia: Record<string, number> = {};
+      conversas?.forEach(c => {
+        const dia = c.created_at?.split('T')[0] || '';
+        porDia[dia] = (porDia[dia] || 0) + 1;
+      });
+
+      res.json({
+        periodo_dias: parseInt(periodo as string),
+        total_conversas: total,
+        ativas,
+        escaladas,
+        encerradas,
+        taxa_escalamento_pct: taxaEscalamento,
+        media_mensagens_por_conversa: mediaMsg,
+        por_dia: porDia
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── GET /api/admin/sofia/config ─────────────────────────────────────────────
+  // Retorna configuração do agente por identidade (incluindo nome do agente)
+  app.get('/api/admin/sofia/config/:identidade', async (req, res) => {
+    try {
+      const { identidade } = req.params;
+      const { data, error } = await supabase
+        .from('identidades')
+        .select('nome, nome_agente_ia, utalk_token, utalk_from_phone, utalk_organization_id')
+        .eq('nome', identidade)
+        .single();
+
+      if (error) throw error;
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── PATCH /api/admin/sofia/config/:identidade ───────────────────────────────
+  // Atualiza nome do agente IA para uma identidade
+  app.patch('/api/admin/sofia/config/:identidade', async (req, res) => {
+    try {
+      const { identidade } = req.params;
+      const { nome_agente_ia } = req.body;
+
+      if (!nome_agente_ia?.trim()) {
+        return res.status(400).json({ error: 'Nome do agente não pode ser vazio' });
+      }
+
+      const { error } = await supabase
+        .from('identidades')
+        .update({ nome_agente_ia: nome_agente_ia.trim() })
+        .eq('nome', identidade);
+
+      if (error) throw error;
+      res.json({ ok: true, nome_agente_ia: nome_agente_ia.trim() });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Vite middleware for development
   async function startServer() {
     const PORT = 3000;

@@ -20,6 +20,10 @@
       "dest": "/server.ts"
     },
     {
+      "src": "/webhook/(.*)",
+      "dest": "/server.ts"
+    },
+    {
       "src": "/loja/produto/(.*)",
       "dest": "/server.ts"
     },
