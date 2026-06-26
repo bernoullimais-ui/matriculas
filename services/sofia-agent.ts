@@ -6,7 +6,7 @@
  * persiste histórico e executa ferramentas.
  */
 
-import { GoogleGenAI, FunctionCallingConfigMode } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import { SupabaseClient } from '@supabase/supabase-js';
 import {
   SOFIA_TOOL_DECLARATIONS,
@@ -20,7 +20,7 @@ import {
 
 export interface SofiaMessage {
   role: 'user' | 'model';
-  parts: { text: string }[];
+  parts: any[];  // Suporta text parts, function calls e function responses
 }
 
 export interface ConversaWhatsapp {
@@ -375,18 +375,18 @@ export async function processarMensagem(
 
       // Adiciona a resposta do modelo (com tool calls) ao histórico
       historico.push({
-        role: 'model',
-        parts: parts
+        role: 'model' as const,
+        parts: parts as any[]
       });
 
       // Executa as ferramentas chamadas
       const toolResults: any[] = [];
       for (const toolCallPart of toolCallParts) {
-        const { name, args } = toolCallPart.functionCall;
+        const { name, args } = toolCallPart.functionCall as { name: string; args: Record<string, any> };
         
         // Verifica escalamento
         if (name === 'escalar_para_humano') {
-          await notificarEscalamento(supabase, conversa, args.motivo || 'Não especificado', config);
+          await notificarEscalamento(supabase, conversa, String(args?.motivo || 'Não especificado'), config);
           escalado = true;
         }
 

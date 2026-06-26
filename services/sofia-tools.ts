@@ -6,6 +6,7 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { Type } from '@google/genai';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipo de contexto passado para todas as ferramentas
@@ -27,7 +28,7 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'buscar_alunos_do_responsavel',
     description: 'Busca os alunos vinculados ao número de WhatsApp do responsável que está conversando. Deve ser chamada no início de toda conversa de responsável identificado.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {},
       required: []
     }
@@ -36,10 +37,10 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'buscar_matriculas',
     description: 'Retorna as matrículas (ativas e canceladas) de um aluno específico, incluindo nome da turma, horários, status, plano e datas.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
         aluno_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID do aluno (obtido via buscar_alunos_do_responsavel)'
         }
       },
@@ -50,10 +51,10 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'buscar_presencas',
     description: 'Retorna a frequência/presenças recentes de um aluno nas últimas 4 semanas.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
         aluno_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID do aluno'
         }
       },
@@ -64,10 +65,10 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'buscar_pagamentos',
     description: 'Retorna o histórico completo de pagamentos de um aluno: status (pago, pendente, vencido), valores, datas de vencimento e pagamento, e método.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
         aluno_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID do aluno'
         }
       },
@@ -78,14 +79,14 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'buscar_turmas_disponiveis',
     description: 'Lista turmas abertas e disponíveis para matrícula, com horários, professor, local e vagas. Útil para responsáveis com interesse em matrícula ou mudança de turma.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
         unidade: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Nome da unidade para filtrar (opcional)'
         },
         modalidade: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Modalidade esportiva para filtrar (ex: natação, judô, ballet) - opcional'
         }
       },
@@ -96,7 +97,7 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'buscar_eventos',
     description: 'Retorna eventos ativos ou futuros da escola, com datas, descrição e informações de inscrição.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {},
       required: []
     }
@@ -105,18 +106,18 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'criar_tarefa_cancelamento',
     description: 'Cria uma solicitação formal de cancelamento de matrícula. Esta ação cria uma tarefa pendente para aprovação da equipe. Use apenas após confirmação explícita do responsável (resposta "SIM").',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
         aluno_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID do aluno'
         },
         matricula_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID da matrícula a cancelar'
         },
         motivo: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Motivo do cancelamento informado pelo responsável'
         }
       },
@@ -127,22 +128,22 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'criar_solicitacao_experimental',
     description: 'Registra o interesse de agendamento de uma aula experimental para um novo aluno ou visitante. Cria um registro para que a equipe entre em contato.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
         nome_aluno: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Nome do aluno que irá fazer a aula experimental'
         },
         responsavel_nome: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Nome do responsável'
         },
         modalidade_interesse: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Modalidade esportiva de interesse (opcional)'
         },
         observacao: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Observações adicionais (ex: idade do aluno, disponibilidade)'
         }
       },
@@ -153,14 +154,14 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'reenviar_pix',
     description: 'Reenvia o link ou código PIX de uma mensalidade em aberto para o responsável.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
         aluno_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID do aluno'
         },
         pagamento_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID do pagamento específico (opcional — se omitido, usa o mais recente em aberto)'
         }
       },
@@ -171,14 +172,14 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'reenviar_contrato',
     description: 'Reenvia o contrato de matrícula por e-mail para o responsável.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
         aluno_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID do aluno'
         },
         matricula_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID da matrícula (opcional — usa a ativa mais recente se omitido)'
         }
       },
@@ -189,22 +190,22 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'criar_tarefa_mudanca_turma',
     description: 'Registra uma solicitação de mudança de turma ou horário para análise da equipe. Não executa a mudança diretamente.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
         aluno_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID do aluno'
         },
         matricula_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID da matrícula atual'
         },
         motivo: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Motivo da solicitação de mudança'
         },
         preferencia_horario: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Horário ou turma preferida (se informado pelo responsável)'
         }
       },
@@ -215,18 +216,18 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'atualizar_cadastro',
     description: 'Atualiza o e-mail ou telefone de contato do responsável no cadastro do aluno.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
         aluno_id: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'ID do aluno'
         },
         campo: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Campo a atualizar: "email" ou "telefone"'
         },
         novo_valor: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Novo valor para o campo'
         }
       },
@@ -237,10 +238,10 @@ export const SOFIA_TOOL_DECLARATIONS = [
     name: 'escalar_para_humano',
     description: 'Encaminha o atendimento para um membro humano da equipe. Use quando: (1) a pergunta está fora das capacidades da IA, (2) o responsável solicitar explicitamente, (3) a situação envolve reclamação grave ou conflito, (4) após 3 tentativas sem resolver o problema.',
     parameters: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
         motivo: {
-          type: 'STRING',
+          type: Type.STRING,
           description: 'Motivo do escalamento para o registro interno'
         }
       },
