@@ -219,7 +219,7 @@ async function carregarOuCriarSessao(
     .from('conversas_whatsapp')
     .select('*')
     .eq('telefone', telNorm)
-    .eq('status', 'ativo')
+    .in('status', ['ativo', 'escalado'])
     .gte('ultima_mensagem_at', expiracaoLimite)
     .order('ultima_mensagem_at', { ascending: false })
     .limit(1)
@@ -354,7 +354,14 @@ export async function processarMensagem(
     };
   }
   
-  // 3. Se escalada, não processar com IA
+  // 3. Adiciona mensagem do usuário ao histórico E SALVA IMEDIATAMENTE (p/ evitar webhook retries)
+  const historico: SofiaMessage[] = [
+    ...conversa.historico,
+    { role: 'user', parts: [{ text: mensagemTexto }], timestamp: new Date().toISOString() }
+  ];
+  await salvarHistorico(supabase, conversa.id, historico);
+
+  // 4. Se escalada, não processar com IA (mas já salvou a msg)
   if (conversa.status === 'escalado') {
     return {
       resposta: '',  // Sem resposta automática
@@ -362,13 +369,6 @@ export async function processarMensagem(
       conversaId: conversa.id
     };
   }
-
-  // 4. Adiciona mensagem do usuário ao histórico E SALVA IMEDIATAMENTE (p/ evitar webhook retries)
-  const historico: SofiaMessage[] = [
-    ...conversa.historico,
-    { role: 'user', parts: [{ text: mensagemTexto }], timestamp: new Date().toISOString() }
-  ];
-  await salvarHistorico(supabase, conversa.id, historico);
 
   // 5. Contexto para as ferramentas
   const toolCtx: SofiaToolContext = {
