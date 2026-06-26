@@ -284,10 +284,22 @@ export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<
     const telNorm = normalizeTelefone(ctx.telefone);
     const telSem55 = telNorm.startsWith('55') ? telNorm.substring(2) : telNorm;
     
+    // Variante sem o 9º dígito (caso no banco esteja salvo sem o 9)
+    const telSem9 = (telSem55.length === 11 && telSem55[2] === '9') 
+      ? telSem55.substring(0, 2) + telSem55.substring(3) 
+      : telSem55;
+
     // Cria strings com * entre cada dígito para achar números formatados como (71) 99141-4913 no PostgREST
-    const wildcardSem55 = '*' + telSem55.split('').join('*') + '*';
-    const wildcardCom55 = '*' + ('55' + telSem55).split('').join('*') + '*';
-    const telVariants = [wildcardSem55, wildcardCom55];
+    const createWildcard = (t: string) => '*' + t.split('').join('*') + '*';
+    
+    const telVariants = [
+      createWildcard(telSem55),
+      createWildcard('55' + telSem55),
+      ...(telSem55 !== telSem9 ? [
+        createWildcard(telSem9),
+        createWildcard('55' + telSem9)
+      ] : [])
+    ];
 
     // Busca por whatsapp_1 ou whatsapp_2 em qualquer variante do número
     const { data: alunos, error } = await ctx.supabase
