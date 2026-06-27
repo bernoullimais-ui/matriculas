@@ -15,6 +15,19 @@ export function PedidosTab() {
   const [lojaStatusFilter, setLojaStatusFilter] = useState('');
   const [pedidoDetailModal, setPedidoDetailModal] = useState({ isOpen: false, pedido: null as any });
 
+  const userRole = sessionStorage.getItem('admin_role') || 'administrativo';
+  let autorizacoes: any[] = [];
+  try {
+    const raw = sessionStorage.getItem('admin_autorizacoes');
+    if (raw) autorizacoes = JSON.parse(raw);
+  } catch (e) {}
+
+  const canDelete = (() => {
+    if (userRole.toLowerCase().includes('master')) return true;
+    const rule = autorizacoes.find(a => a.sistema === 'painel_admin' && a.modulo === 'loja_pedidos');
+    return rule ? !!rule.pode_excluir : false;
+  })();
+
 
   return (
     <>
@@ -116,30 +129,32 @@ export function PedidosTab() {
                                   >
                                     <ExternalLink size={16} />
                                   </button>
-                                  <button 
-                                    onClick={async () => {
-                                      if (!window.confirm('Tem certeza que deseja excluir este pedido?')) return;
-                                      try {
-                                        const token = sessionStorage.getItem('admin_token');
-                                        const res = await fetch(`/api/admin/loja/pedidos/${ped.id}`, { 
-                                          method: 'DELETE',
-                                          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-                                        });
-                                        if (res.ok) {
-                                          toast.success('Pedido excluído com sucesso!');
-                                          loadData();
-                                        } else {
+                                  {canDelete && (
+                                    <button 
+                                      onClick={async () => {
+                                        if (!window.confirm('Tem certeza que deseja excluir este pedido?')) return;
+                                        try {
+                                          const token = sessionStorage.getItem('admin_token');
+                                          const res = await fetch(`/api/admin/loja/pedidos/${ped.id}`, { 
+                                            method: 'DELETE',
+                                            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+                                          });
+                                          if (res.ok) {
+                                            toast.success('Pedido excluído com sucesso!');
+                                            loadData();
+                                          } else {
+                                            toast.error('Erro ao excluir pedido');
+                                          }
+                                        } catch (err) {
                                           toast.error('Erro ao excluir pedido');
                                         }
-                                      } catch (err) {
-                                        toast.error('Erro ao excluir pedido');
-                                      }
-                                    }}
-                                    className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors inline-flex"
-                                    title="Excluir Pedido"
-                                  >
-                                    <Trash2 size={16} />
-                                  </button>
+                                      }}
+                                      className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors inline-flex"
+                                      title="Excluir Pedido"
+                                    >
+                                      <Trash2 size={16} />
+                                    </button>
+                                  )}
                                 </td>
                               </tr>
                             ))}
