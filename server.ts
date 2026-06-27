@@ -13961,8 +13961,30 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   app.get('/api/admin/sofia/conversas', async (req, res) => {
     try {
       const { status, identidade, limite = '50', pagina = '0' } = req.query;
-      const allowedUnits = await getAdminAllowedUnits((req as any).user);
 
+      const dbUser = await supabase
+        .from('usuarios')
+        .select('id, nivel, unidade')
+        .eq('auth_id', (req as any).user.id)
+        .maybeSingle()
+        .then(r => r.data);
+
+      let allowedUnits: string[] | null = [];
+      if (dbUser) {
+        const nivelLower = (dbUser.nivel || '').toLowerCase();
+        const unidadeLower = (dbUser.unidade || '').toLowerCase();
+        const isMaster = nivelLower.includes('master') || 
+                         nivelLower.includes('start') || 
+                         unidadeLower.includes('todas') || 
+                         unidadeLower.includes('gestao global');
+        if (isMaster) {
+          allowedUnits = null;
+        } else {
+          allowedUnits = (dbUser.unidade || '').split(',').map((u: string) => u.trim()).filter(Boolean);
+        }
+      }
+
+      const operatorId = dbUser?.id || null;
       let conversas = [];
       let total = 0;
 
@@ -13970,7 +13992,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         // Master/Global: vê tudo
         let query = supabase
           .from('conversas_whatsapp')
-          .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids, historico', { count: 'exact' })
+          .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids, historico, atendente_id', { count: 'exact' })
           .order('ultima_mensagem_at', { ascending: false })
           .limit(parseInt(limite as string))
           .range(
@@ -13987,7 +14009,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         total = count || 0;
       } else {
         // Restrito por unidade
-        if (allowedUnits.length === 0) {
+        if (allowedUnits.length === 0 && !operatorId) {
           return res.json({ conversas: [], total: 0 });
         }
 
@@ -13999,14 +14021,16 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
           p_status: status || null,
           p_identidade: identidade || null,
           p_limit: limit,
-          p_offset: offset
+          p_offset: offset,
+          p_user_id: operatorId
         });
         if (error) throw error;
 
         const { data: countData, error: countError } = await supabase.rpc('get_conversas_count_by_unidades', {
           p_allowed_units: allowedUnits,
           p_status: status || null,
-          p_identidade: identidade || null
+          p_identidade: identidade || null,
+          p_user_id: operatorId
         });
         if (countError) throw countError;
 
@@ -14025,15 +14049,39 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   app.get('/api/admin/sofia/conversas/:id', async (req, res) => {
     try {
       const { id } = req.params;
-      const allowedUnits = await getAdminAllowedUnits((req as any).user);
+
+      const dbUser = await supabase
+        .from('usuarios')
+        .select('id, nivel, unidade')
+        .eq('auth_id', (req as any).user.id)
+        .maybeSingle()
+        .then(r => r.data);
+
+      let allowedUnits: string[] | null = [];
+      if (dbUser) {
+        const nivelLower = (dbUser.nivel || '').toLowerCase();
+        const unidadeLower = (dbUser.unidade || '').toLowerCase();
+        const isMaster = nivelLower.includes('master') || 
+                         nivelLower.includes('start') || 
+                         unidadeLower.includes('todas') || 
+                         unidadeLower.includes('gestao global');
+        if (isMaster) {
+          allowedUnits = null;
+        } else {
+          allowedUnits = (dbUser.unidade || '').split(',').map((u: string) => u.trim()).filter(Boolean);
+        }
+      }
+
+      const operatorId = dbUser?.id || null;
 
       if (allowedUnits !== null) {
-        if (allowedUnits.length === 0) {
+        if (allowedUnits.length === 0 && !operatorId) {
           return res.status(403).json({ error: 'Acesso negado.' });
         }
         const { data: hasAccess, error: accessError } = await supabase.rpc('check_conversa_acesso', {
           p_conversa_id: id,
-          p_allowed_units: allowedUnits
+          p_allowed_units: allowedUnits,
+          p_user_id: operatorId
         });
         if (accessError) throw accessError;
         if (!hasAccess) {
@@ -14125,15 +14173,38 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       if (convError || !conversa) throw new Error('Conversa não encontrada');
 
-      // Validar acesso por unidade se o atendente for restrito
-      const allowedUnits = await getAdminAllowedUnits((req as any).user);
+      const dbUser = await supabase
+        .from('usuarios')
+        .select('id, nivel, unidade')
+        .eq('auth_id', (req as any).user.id)
+        .maybeSingle()
+        .then(r => r.data);
+
+      let allowedUnits: string[] | null = [];
+      if (dbUser) {
+        const nivelLower = (dbUser.nivel || '').toLowerCase();
+        const unidadeLower = (dbUser.unidade || '').toLowerCase();
+        const isMaster = nivelLower.includes('master') || 
+                         nivelLower.includes('start') || 
+                         unidadeLower.includes('todas') || 
+                         unidadeLower.includes('gestao global');
+        if (isMaster) {
+          allowedUnits = null;
+        } else {
+          allowedUnits = (dbUser.unidade || '').split(',').map((u: string) => u.trim()).filter(Boolean);
+        }
+      }
+
+      const operatorId = dbUser?.id || null;
+
       if (allowedUnits !== null) {
-        if (allowedUnits.length === 0) {
+        if (allowedUnits.length === 0 && !operatorId) {
           return res.status(403).json({ error: 'Acesso negado.' });
         }
         const { data: hasAccess, error: accessError } = await supabase.rpc('check_conversa_acesso', {
           p_conversa_id: id,
-          p_allowed_units: allowedUnits
+          p_allowed_units: allowedUnits,
+          p_user_id: operatorId
         });
         if (accessError) throw accessError;
         if (!hasAccess) {
@@ -14322,14 +14393,38 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     try {
       const { id } = req.params;
 
-      const allowedUnits = await getAdminAllowedUnits((req as any).user);
+      const dbUser = await supabase
+        .from('usuarios')
+        .select('id, nivel, unidade')
+        .eq('auth_id', (req as any).user.id)
+        .maybeSingle()
+        .then(r => r.data);
+
+      let allowedUnits: string[] | null = [];
+      if (dbUser) {
+        const nivelLower = (dbUser.nivel || '').toLowerCase();
+        const unidadeLower = (dbUser.unidade || '').toLowerCase();
+        const isMaster = nivelLower.includes('master') || 
+                         nivelLower.includes('start') || 
+                         unidadeLower.includes('todas') || 
+                         unidadeLower.includes('gestao global');
+        if (isMaster) {
+          allowedUnits = null;
+        } else {
+          allowedUnits = (dbUser.unidade || '').split(',').map((u: string) => u.trim()).filter(Boolean);
+        }
+      }
+
+      const operatorId = dbUser?.id || null;
+
       if (allowedUnits !== null) {
-        if (allowedUnits.length === 0) {
+        if (allowedUnits.length === 0 && !operatorId) {
           return res.status(403).json({ error: 'Acesso negado.' });
         }
         const { data: hasAccess, error: accessError } = await supabase.rpc('check_conversa_acesso', {
           p_conversa_id: id,
-          p_allowed_units: allowedUnits
+          p_allowed_units: allowedUnits,
+          p_user_id: operatorId
         });
         if (accessError) throw accessError;
         if (!hasAccess) {
@@ -14340,6 +14435,97 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       const { encerrarConversa } = await getSofiaServices();
       await encerrarConversa(supabase, id);
       res.json({ ok: true, status: 'encerrado' });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Lista operadores ativos para transferência de atendimento
+  app.get('/api/admin/sofia/operadores', async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('id, nome, login, nivel, unidade')
+        .eq('ativo', true)
+        .order('nome', { ascending: true });
+
+      if (error) throw error;
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Transfere a conversa para outro atendente humano
+  app.post('/api/admin/sofia/conversas/:id/transferir', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { atendente_id, mensagem_interna } = req.body;
+
+      if (!atendente_id) {
+        return res.status(400).json({ error: 'atendente_id é obrigatório' });
+      }
+
+      // 1. Busca dados da conversa
+      const { data: conversa, error: convError } = await supabase
+        .from('conversas_whatsapp')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (convError || !conversa) throw new Error('Conversa não encontrada');
+
+      // 2. Busca o operador atual que está fazendo a requisição (Remetente)
+      const user = (req as any).user;
+      const dbUserRemetente = await supabase
+        .from('usuarios')
+        .select('id, nome')
+        .eq('auth_id', user.id)
+        .maybeSingle()
+        .then(r => r.data);
+
+      const nomeRemetente = dbUserRemetente?.nome || user.email || 'Atendente';
+
+      // 3. Busca o operador de destino (Receptor)
+      const { data: dbUserReceptor, error: recError } = await supabase
+        .from('usuarios')
+        .select('nome')
+        .eq('id', atendente_id)
+        .maybeSingle();
+
+      if (recError || !dbUserReceptor) throw new Error('Operador de destino não encontrado');
+      const nomeReceptor = dbUserReceptor.nome;
+
+      // 4. Se houver nota interna, adiciona ao histórico
+      let historicoAtualizado = conversa.historico || [];
+      if (mensagem_interna?.trim()) {
+        const timestamp = new Date().toISOString();
+        const notaText = `[Nota Interna - De ${nomeRemetente} Para ${nomeReceptor}]\n${mensagem_interna.trim()}`;
+        historicoAtualizado = [
+          ...historicoAtualizado,
+          {
+            role: 'model',
+            parts: [{ text: notaText }],
+            timestamp: timestamp
+          }
+        ];
+      }
+
+      // 5. Atualiza o atendente_id e status para "escalado" (atendimento humano)
+      const { error: updateError } = await supabase
+        .from('conversas_whatsapp')
+        .update({
+          atendente_id: atendente_id,
+          status: 'escalado',
+          escalado_at: new Date().toISOString(),
+          historico: historicoAtualizado,
+          ultima_mensagem_at: new Date().toISOString()
+        })
+        .eq('id', id);
+
+      if (updateError) throw updateError;
+
+      res.json({ ok: true, status: 'escalado', atendente_id });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
