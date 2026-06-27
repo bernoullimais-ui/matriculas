@@ -511,8 +511,8 @@ export default function UnifiedAdmin() {
             {tab === 'rh_folha' && <FolhaPagamentoTab />}
             {tab === 'b2b_regras' && <RegrasB2BTab />}
             {tab === 'b2b_conciliacao' && <ConciliacaoB2BTab />}
-            {tab === 'settings' && userRole === 'master' && <SettingsTab />}
-            {tab === 'campanhas' && userRole === 'master' && <CampanhasTab />}
+            {tab === 'settings' && hasAccess('configuracoes') && <SettingsTab />}
+            {tab === 'campanhas' && hasAccess('comercial_campanhas') && <CampanhasTab />}
           </div>
         </div>
       </main>
