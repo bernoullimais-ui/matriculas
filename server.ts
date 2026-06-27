@@ -13924,7 +13924,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
             toPhone: telNorm.startsWith('55') ? telNorm : `55${telNorm}`,
             fromPhone: config.utalkFromPhone.replace(/\D/g, ''),
             organizationId: config.utalkOrganizationId,
-            message: `*${config.nomeAgente}, Assistente Virtual da Sport for Kids*\n\n${resposta}`
+            message: `*[${config.nomeAgente}, Assistente Virtual da Sport for Kids]*\n\n${resposta}`
           })
         });
 
@@ -14355,7 +14355,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       if (assinaturaAtiva !== false) {
         // If the user provided a custom signature, use it. Otherwise default to their name.
         const nameToUse = assinaturaPersonalizada?.trim() || attendantName;
-        signatureMsg = mensagem?.trim() ? `*[${nameToUse}]*\n${mensagem}` : `*[${nameToUse}]* enviou um anexo.`;
+        signatureMsg = mensagem?.trim() ? `*[${nameToUse}]*\n\n${mensagem}` : `*[${nameToUse}]* enviou um anexo.`;
       } else if (!mensagem?.trim() && req.body.media) {
         signatureMsg = `Arquivo anexado.`;
       }
