@@ -429,7 +429,8 @@ export default function PortalLandingPage() {
     const stored = localStorage.getItem('guardian');
     if (!stored) {
       toast.error('Por favor, faça login para acessar o portal.');
-      navigate('/');
+      const search = window.location.search;
+      navigate(`/${search}`);
       return;
     }
 
@@ -485,6 +486,22 @@ export default function PortalLandingPage() {
       }
     }
   }, [navigate]);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const action = urlParams.get('action') || urlParams.get('acao');
+    if (action === 'trial' || action === 'experimental') {
+      const stored = localStorage.getItem('guardian');
+      if (stored) {
+        setIsTrialModalOpen(true);
+        // Clean query params
+        const url = new URL(window.location.href);
+        url.searchParams.delete('action');
+        url.searchParams.delete('acao');
+        window.history.replaceState({}, '', url.pathname + url.search);
+      }
+    }
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('guardian');

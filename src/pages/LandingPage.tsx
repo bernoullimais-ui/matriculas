@@ -19,6 +19,24 @@ export default function LandingPage({ onStartEnrollment, onLoginSuccess, logoUrl
   useEffect(() => {
     document.title = "Sport for Kids — Praticar Esporte é Fazer Amigos";
   }, []);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const action = urlParams.get('action') || urlParams.get('acao');
+    if (action === 'trial' || action === 'experimental') {
+      const stored = localStorage.getItem('guardian');
+      if (stored) {
+        try {
+          onLoginSuccess(JSON.parse(stored));
+        } catch (e) {
+          setIsLoginModalOpen(true);
+        }
+      } else {
+        setIsLoginModalOpen(true);
+      }
+    }
+  }, [onLoginSuccess]);
+
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isLoadingConfigs, setIsLoadingConfigs] = useState(true);
   const [configs, setConfigs] = useState({

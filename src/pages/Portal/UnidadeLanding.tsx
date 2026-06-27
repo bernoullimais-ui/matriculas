@@ -80,10 +80,28 @@ export default function UnidadeLanding() {
 
   useEffect(() => {
     const stored = localStorage.getItem('guardian');
+    let parsedGuardian = null;
     if (stored) {
       try {
-        setGuardian(JSON.parse(stored));
+        parsedGuardian = JSON.parse(stored);
+        setGuardian(parsedGuardian);
       } catch (e) {}
+    }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const action = urlParams.get('action') || urlParams.get('acao');
+    if (action === 'trial' || action === 'experimental') {
+      if (parsedGuardian) {
+        setIsTrialModalOpen(true);
+        // Clean query params
+        const url = new URL(window.location.href);
+        url.searchParams.delete('action');
+        url.searchParams.delete('acao');
+        window.history.replaceState({}, '', url.pathname + url.search);
+      } else {
+        setPendingAction('experimental');
+        setIsLoginModalOpen(true);
+      }
     }
   }, []);
   
@@ -283,6 +301,11 @@ export default function UnidadeLanding() {
           } else if (pendingAction === 'experimental') {
             setIsTrialModalOpen(true);
             setPendingAction(null);
+            // Clean query params
+            const url = new URL(window.location.href);
+            url.searchParams.delete('action');
+            url.searchParams.delete('acao');
+            window.history.replaceState({}, '', url.pathname + url.search);
           }
         }} 
         unidades={todasUnidades}

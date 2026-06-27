@@ -37,14 +37,15 @@ export default function App() {
       }
     }
     
+    const search = window.location.search;
     if (registeredUnit) {
       const slug = registeredUnit.toLowerCase().replace(/\s+/g, '-');
-      window.location.href = `/portal/${slug}`;
+      window.location.href = `/portal/${slug}${search}`;
     } else if (firstUnit) {
       const slug = firstUnit.toLowerCase().replace(/\s+/g, '-');
-      window.location.href = `/portal/${slug}`;
+      window.location.href = `/portal/${slug}${search}`;
     } else {
-      window.location.href = '/portal';
+      window.location.href = `/portal${search}`;
     }
   };
 
