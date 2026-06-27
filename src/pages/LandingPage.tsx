@@ -23,7 +23,7 @@ export default function LandingPage({ onStartEnrollment, onLoginSuccess, logoUrl
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const action = urlParams.get('action') || urlParams.get('acao');
-    if (action === 'trial' || action === 'experimental') {
+    if (action === 'trial' || action === 'experimental' || action === 'enroll' || action === 'enrollment' || action === 'matricula') {
       const stored = localStorage.getItem('guardian');
       if (stored) {
         try {

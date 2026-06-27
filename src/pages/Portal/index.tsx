@@ -500,6 +500,16 @@ export default function PortalLandingPage() {
         url.searchParams.delete('acao');
         window.history.replaceState({}, '', url.pathname + url.search);
       }
+    } else if (action === 'enroll' || action === 'enrollment' || action === 'matricula') {
+      const stored = localStorage.getItem('guardian');
+      if (stored) {
+        setIsEnrollmentModalOpen(true);
+        // Clean query params
+        const url = new URL(window.location.href);
+        url.searchParams.delete('action');
+        url.searchParams.delete('acao');
+        window.history.replaceState({}, '', url.pathname + url.search);
+      }
     }
   }, []);
 
