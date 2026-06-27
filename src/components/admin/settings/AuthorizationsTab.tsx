@@ -13,8 +13,45 @@ interface Autorizacao {
   pode_excluir: boolean;
 }
 
-const MODULOS_PAINEL = ['configuracoes', 'b2b', 'matriculas', 'financeiro', 'analytics', 'ecommerce', 'usuarios', 'turmas', 'alunos'];
-const MODULOS_GESTAO = ['dashboard', 'matriculas', 'financeiro', 'turmas', 'alunos', 'b2b', 'configuracoes'];
+const MODULOS_PAINEL = [
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'analytics', label: 'Analytics' },
+  { id: 'financeiro', label: 'Financeiro' },
+  { id: 'gestao_alunos_matriculas', label: 'Gestão de Alunos - Matrículas' },
+  { id: 'gestao_alunos_aprovacoes', label: 'Gestão de Alunos - Aprovações' },
+  { id: 'gestao_alunos_fila_espera', label: 'Gestão de Alunos - Fila de Espera' },
+  { id: 'gestao_alunos_fale_conosco', label: 'Gestão de Alunos - Fale Conosco' },
+  { id: 'loja_pedidos', label: 'Loja - Pedidos' },
+  { id: 'loja_produtos', label: 'Loja - Produtos' },
+  { id: 'loja_categorias', label: 'Loja - Categorias' },
+  { id: 'cursos_eventos_eventos', label: 'Cursos / Eventos - Eventos' },
+  { id: 'cursos_eventos_inscricoes', label: 'Cursos / Eventos - Inscrições' },
+  { id: 'comercial_campanhas', label: 'Comercial - Campanhas' },
+  { id: 'comercial_cupons', label: 'Comercial - Cupons' },
+  { id: 'escolas_parceiras_regras_repasse', label: 'Escolas Parceiras - Regras de Repasse' },
+  { id: 'escolas_parceiras_conciliacao', label: 'Escolas Parceiras - Conciliação' },
+  { id: 'recursos_humanos_contratos_equipe', label: 'Recursos Humanos - Contratos & Equipe' },
+  { id: 'recursos_humanos_folha_pagamento', label: 'Recursos Humanos - Folha de Pagamento' },
+  { id: 'configuracoes', label: 'Configurações' }
+];
+
+const MODULOS_GESTAO = [
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'alunos', label: 'Alunos' },
+  { id: 'turmas', label: 'Turmas' },
+  { id: 'preparacao', label: 'Preparação' },
+  { id: 'avaliacao', label: 'Avaliação' },
+  { id: 'frequencia', label: 'Frequência' },
+  { id: 'experimentais', label: 'Experimentais' },
+  { id: 'ocorrencias', label: 'Ocorrências' },
+  { id: 'bi_business', label: 'BI & Business' },
+  { id: 'financeiro', label: 'Financeiro' },
+  { id: 'retencao', label: 'Retenção' },
+  { id: 'equipe', label: 'Equipe' },
+  { id: 'aprovacoes_pix', label: 'Aprovações Pix' },
+  { id: 'configuracoes', label: 'Configurações' },
+  { id: 'atendimento_ia', label: 'Atendimento IA' }
+];
 
 export default function AuthorizationsTab() {
   const [autorizacoes, setAutorizacoes] = useState<Autorizacao[]>([]);
@@ -23,7 +60,7 @@ export default function AuthorizationsTab() {
   
   const [activeTab, setActiveTab] = useState<'nivel' | 'usuario'>('nivel');
   
-  const niveis = ['Gestor Master', 'Gestor Administrativo', 'Gestor Financeiro', 'Franqueado', 'Professor'];
+  const niveis = ['Gestor Master', 'Gestor Administrativo', 'Gestor Operacional', 'Gestor de Unidade', 'Regente', 'Franqueado', 'Professor', 'Staff'];
   const [usuariosDb, setUsuariosDb] = useState<any[]>([]);
 
   useEffect(() => {
@@ -100,7 +137,7 @@ export default function AuthorizationsTab() {
     return <div className="p-8 text-center text-slate-500">Carregando permissões...</div>;
   }
 
-  const renderMatrix = (alvo_id: string, sistema: 'gestao_sfk' | 'painel_admin', modulos: string[]) => {
+  const renderMatrix = (alvo_id: string, sistema: 'gestao_sfk' | 'painel_admin', modulos: {id: string, label: string}[]) => {
     return (
       <div className="mt-4 border border-slate-200 rounded-xl overflow-hidden bg-white">
         <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 font-bold text-slate-700 text-sm uppercase">
@@ -117,18 +154,18 @@ export default function AuthorizationsTab() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {modulos.map(mod => {
-              const rule = autorizacoes.find(a => a.alvo_id === alvo_id && a.sistema === sistema && a.modulo === mod) || { pode_visualizar: false, pode_editar: false, pode_excluir: false };
+              const rule = autorizacoes.find(a => a.alvo_id === alvo_id && a.sistema === sistema && a.modulo === mod.id) || { pode_visualizar: false, pode_editar: false, pode_excluir: false };
               return (
-                <tr key={mod} className="hover:bg-slate-50">
-                  <td className="px-4 py-2 font-medium text-slate-700 capitalize">{mod}</td>
+                <tr key={mod.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-2 font-medium text-slate-700">{mod.label}</td>
                   <td className="px-4 py-2 text-center">
-                    <input type="checkbox" checked={rule.pode_visualizar} onChange={() => handleToggle(alvo_id, sistema, mod, 'pode_visualizar')} className="w-4 h-4 text-indigo-600 rounded" />
+                    <input type="checkbox" checked={rule.pode_visualizar} onChange={() => handleToggle(alvo_id, sistema, mod.id, 'pode_visualizar')} className="w-4 h-4 text-indigo-600 rounded" />
                   </td>
                   <td className="px-4 py-2 text-center">
-                    <input type="checkbox" checked={rule.pode_editar} onChange={() => handleToggle(alvo_id, sistema, mod, 'pode_editar')} className="w-4 h-4 text-indigo-600 rounded" />
+                    <input type="checkbox" checked={rule.pode_editar} onChange={() => handleToggle(alvo_id, sistema, mod.id, 'pode_editar')} className="w-4 h-4 text-indigo-600 rounded" />
                   </td>
                   <td className="px-4 py-2 text-center">
-                    <input type="checkbox" checked={rule.pode_excluir} onChange={() => handleToggle(alvo_id, sistema, mod, 'pode_excluir')} className="w-4 h-4 text-indigo-600 rounded" />
+                    <input type="checkbox" checked={rule.pode_excluir} onChange={() => handleToggle(alvo_id, sistema, mod.id, 'pode_excluir')} className="w-4 h-4 text-indigo-600 rounded" />
                   </td>
                 </tr>
               );

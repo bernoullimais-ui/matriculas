@@ -274,7 +274,7 @@ export default function UnifiedAdmin() {
           )}
 
           {/* CRM */}
-          {hasAccess('matriculas') && (
+          {(hasAccess('gestao_alunos_matriculas') || hasAccess('gestao_alunos_aprovacoes') || hasAccess('gestao_alunos_fila_espera') || hasAccess('gestao_alunos_fale_conosco')) && (
             <div className="pt-4 pb-1">
               <button onClick={() => toggleMenu('crm')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
                 <div className="flex items-center gap-2"><Users size={14} /> Gestão de Alunos</div>
@@ -282,17 +282,25 @@ export default function UnifiedAdmin() {
               </button>
               {menuOpen.crm && (
                 <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
-                  <button onClick={() => setTab('enrollments')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'enrollments' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Matrículas</button>
-                  <button onClick={() => setTab('tasks')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'tasks' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Aprovações</button>
-                  <button onClick={() => setTab('waitlist')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'waitlist' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Fila de Espera</button>
-                  <button onClick={() => setTab('leads')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'leads' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Fale Conosco</button>
+                  {hasAccess('gestao_alunos_matriculas') && (
+                    <button onClick={() => setTab('enrollments')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'enrollments' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Matrículas</button>
+                  )}
+                  {hasAccess('gestao_alunos_aprovacoes') && (
+                    <button onClick={() => setTab('tasks')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'tasks' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Aprovações</button>
+                  )}
+                  {hasAccess('gestao_alunos_fila_espera') && (
+                    <button onClick={() => setTab('waitlist')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'waitlist' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Fila de Espera</button>
+                  )}
+                  {hasAccess('gestao_alunos_fale_conosco') && (
+                    <button onClick={() => setTab('leads')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'leads' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Fale Conosco</button>
+                  )}
                 </div>
               )}
             </div>
           )}
 
           {/* Loja */}
-          {hasAccess('ecommerce') && (
+          {(hasAccess('loja_pedidos') || hasAccess('loja_produtos') || hasAccess('loja_categorias')) && (
             <div className="pt-2 pb-1">
               <button onClick={() => toggleMenu('loja')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
                 <div className="flex items-center gap-2"><ShoppingBag size={14} /> Loja</div>
@@ -300,16 +308,22 @@ export default function UnifiedAdmin() {
               </button>
               {menuOpen.loja && (
                 <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
-                  <button onClick={() => setTab('pedidos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'pedidos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Pedidos</button>
-                  <button onClick={() => setTab('produtos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'produtos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Produtos</button>
-                  <button onClick={() => setTab('categorias')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'categorias' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Categorias</button>
+                  {hasAccess('loja_pedidos') && (
+                    <button onClick={() => setTab('pedidos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'pedidos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Pedidos</button>
+                  )}
+                  {hasAccess('loja_produtos') && (
+                    <button onClick={() => setTab('produtos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'produtos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Produtos</button>
+                  )}
+                  {hasAccess('loja_categorias') && (
+                    <button onClick={() => setTab('categorias')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'categorias' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Categorias</button>
+                  )}
                 </div>
               )}
             </div>
           )}
 
           {/* Cursos e Eventos */}
-          {hasAccess('turmas') && (
+          {(hasAccess('cursos_eventos_eventos') || hasAccess('cursos_eventos_inscricoes')) && (
             <div className="pt-2 pb-1">
               <button onClick={() => toggleMenu('cursos')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
                 <div className="flex items-center gap-2"><Calendar size={14} /> Cursos / Eventos</div>
@@ -317,15 +331,19 @@ export default function UnifiedAdmin() {
               </button>
               {menuOpen.cursos && (
                 <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
-                  <button onClick={() => setTab('eventos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'eventos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Eventos</button>
-                  <button onClick={() => setTab('inscricoes')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'inscricoes' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Inscrições</button>
+                  {hasAccess('cursos_eventos_eventos') && (
+                    <button onClick={() => setTab('eventos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'eventos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Eventos</button>
+                  )}
+                  {hasAccess('cursos_eventos_inscricoes') && (
+                    <button onClick={() => setTab('inscricoes')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'inscricoes' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Inscrições</button>
+                  )}
                 </div>
               )}
             </div>
           )}
 
           {/* Comercial */}
-          {(userRole === 'master' || hasAccess('turmas')) && (
+          {(hasAccess('comercial_campanhas') || hasAccess('comercial_cupons')) && (
             <div className="pt-2 pb-1">
               <button onClick={() => toggleMenu('comercial')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
                 <div className="flex items-center gap-2"><Megaphone size={14} /> Comercial</div>
@@ -333,10 +351,10 @@ export default function UnifiedAdmin() {
               </button>
               {menuOpen.comercial && (
                 <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
-                  {userRole === 'master' && (
+                  {hasAccess('comercial_campanhas') && (
                     <button onClick={() => setTab('campanhas')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'campanhas' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Campanhas</button>
                   )}
-                  {hasAccess('turmas') && (
+                  {hasAccess('comercial_cupons') && (
                     <button onClick={() => setTab('cupons')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'cupons' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Cupons</button>
                   )}
                 </div>
@@ -345,7 +363,7 @@ export default function UnifiedAdmin() {
           )}
 
           {/* B2B */}
-          {hasAccess('b2b') && (
+          {(hasAccess('escolas_parceiras_regras_repasse') || hasAccess('escolas_parceiras_conciliacao')) && (
             <div className="pt-2 pb-1">
               <button onClick={() => toggleMenu('b2b')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
                 <div className="flex items-center gap-2"><Building2 size={14} /> Escolas Parceiras</div>
@@ -353,15 +371,19 @@ export default function UnifiedAdmin() {
               </button>
               {menuOpen.b2b && (
                 <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
-                  <button onClick={() => setTab('b2b_regras')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'b2b_regras' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Regras de Repasse</button>
-                  <button onClick={() => setTab('b2b_conciliacao')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'b2b_conciliacao' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Conciliação</button>
+                  {hasAccess('escolas_parceiras_regras_repasse') && (
+                    <button onClick={() => setTab('b2b_regras')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'b2b_regras' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Regras de Repasse</button>
+                  )}
+                  {hasAccess('escolas_parceiras_conciliacao') && (
+                    <button onClick={() => setTab('b2b_conciliacao')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'b2b_conciliacao' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Conciliação</button>
+                  )}
                 </div>
               )}
             </div>
           )}
 
           {/* RH */}
-          {hasAccess('usuarios') && (
+          {(hasAccess('recursos_humanos_contratos_equipe') || hasAccess('recursos_humanos_folha_pagamento')) && (
             <div className="pt-2 pb-1">
               <button onClick={() => toggleMenu('rh')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
                 <div className="flex items-center gap-2"><UserCog size={14} /> Recursos Humanos</div>
@@ -369,8 +391,12 @@ export default function UnifiedAdmin() {
               </button>
               {menuOpen.rh && (
                 <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
-                  <button onClick={() => setTab('rh_contratos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'rh_contratos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Contratos & Equipe</button>
-                  <button onClick={() => setTab('rh_folha')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'rh_folha' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Folha de Pagamento</button>
+                  {hasAccess('recursos_humanos_contratos_equipe') && (
+                    <button onClick={() => setTab('rh_contratos')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'rh_contratos' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Contratos & Equipe</button>
+                  )}
+                  {hasAccess('recursos_humanos_folha_pagamento') && (
+                    <button onClick={() => setTab('rh_folha')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'rh_folha' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Folha de Pagamento</button>
+                  )}
                 </div>
               )}
             </div>

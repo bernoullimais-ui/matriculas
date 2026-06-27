@@ -1232,12 +1232,44 @@ async function requireAdminAuth(req: any, res: any, next: any) {
 // API Routes
 app.post('/api/admin/login', async (req, res) => {
   try {
-    const email = (req.body?.email || '').trim();
+    const rawEmail = (req.body?.email || '').trim().toLowerCase();
     const password = (req.body?.password || '').trim();
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error || !data.session) {
+    const securePassword = password.length < 6 ? password.padEnd(6, '*') : password;
+    const fakeEmail = `${rawEmail.replace(/[^a-z0-9]/g, '')}@sfk-system.com`;
+
+    let authData = await supabase.auth.signInWithPassword({ email: fakeEmail, password: securePassword });
+    
+    if (authData.error || !authData.data.session) {
+      authData = await supabase.auth.signInWithPassword({ email: rawEmail, password: securePassword });
+    }
+
+    if (authData.error || !authData.data.session) {
+      // 3. Se falhou no Auth, tentar a Migração Silenciosa
+      const { data: matchedUser } = await supabase
+        .from('usuarios')
+        .select('*')
+        .ilike('login', rawEmail)
+        .eq('senha', password)
+        .maybeSingle();
+
+      if (matchedUser && matchedUser.ativo !== false) {
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email: fakeEmail,
+          password: securePassword,
+        });
+
+        if (!signUpError && signUpData.user) {
+          await supabase.from('usuarios').update({ auth_id: signUpData.user.id }).eq('login', matchedUser.login);
+          authData = { data: { session: signUpData.session, user: signUpData.user }, error: null } as any;
+        }
+      }
+    }
+
+    if (authData.error || !authData.data?.session) {
       return res.status(401).json({ error: 'E-mail ou senha inválidos.' });
     }
+
+    const { data, error } = authData;
 
     const userUuid = data.session.user.id;
     let resolvedRole = 'master';
@@ -1257,14 +1289,10 @@ app.post('/api/admin/login', async (req, res) => {
       const isMaster = nivelLower.includes('master');
       const isAdm = nivelLower.includes('administrativo');
 
-      if (!isMaster && !isAdm) {
-        return res.status(403).json({ error: 'Acesso negado. Apenas Gestor Master e Gestor Administrativo têm acesso.' });
-      }
-
       if (isMaster) {
         resolvedRole = 'master';
       } else {
-        resolvedRole = 'administrativo';
+        resolvedRole = 'custom';
       }
     } else {
       const metadataRole = data.session.user?.user_metadata?.role;
@@ -13863,7 +13891,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
             toPhone: telNorm.startsWith('55') ? telNorm : `55${telNorm}`,
             fromPhone: config.utalkFromPhone.replace(/\D/g, ''),
             organizationId: config.utalkOrganizationId,
-            message: `*Sofia, Assistente Virtual da Sport for Kids*\n\n${resposta}`
+            message: `*${config.nomeAgente}, Assistente Virtual da Sport for Kids*\n\n${resposta}`
           })
         });
       }
