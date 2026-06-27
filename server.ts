@@ -14443,14 +14443,40 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   // Lista operadores ativos para transferência de atendimento
   app.get('/api/admin/sofia/operadores', async (req, res) => {
     try {
-      const { data, error } = await supabase
+      // 1. Busca os níveis autorizados a visualizar 'atendimento_ia' no gestao_sfk
+      const { data: auths, error: authError } = await supabase
+        .from('autorizacoes')
+        .select('alvo_id')
+        .eq('sistema', 'gestao_sfk')
+        .eq('modulo', 'atendimento_ia')
+        .eq('pode_visualizar', true);
+
+      if (authError) throw authError;
+
+      const allowedRoles = (auths || []).map(a => a.alvo_id);
+
+      // 2. Busca todos os usuários ativos
+      const { data: users, error: userError } = await supabase
         .from('usuarios')
         .select('id, nome, login, nivel, unidade')
         .eq('ativo', true)
         .order('nome', { ascending: true });
 
-      if (error) throw error;
-      res.json(data);
+      if (userError) throw userError;
+
+      // 3. Filtra os usuários cuja permissão/nivel confere com as regras
+      const filtered = (users || []).filter(u => {
+        const nivel = u.nivel || '';
+        const nivelLower = nivel.toLowerCase();
+        
+        // Sempre permite se o nível tiver "master"
+        if (nivelLower.includes('master')) return true;
+        
+        // Caso contrário, verifica se o nível está explicitamente permitido nas autorizações
+        return allowedRoles.includes(nivel);
+      });
+
+      res.json(filtered);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
