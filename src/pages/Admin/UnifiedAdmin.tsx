@@ -235,7 +235,18 @@ export default function UnifiedAdmin() {
     const rule = autorizacoes.find(a => a.sistema === 'painel_admin' && a.modulo === modulo);
     if (rule) return rule.pode_visualizar;
     // Fallback: master can see everything, others can't
-    return userRole === 'master';
+    return userRole.toLowerCase().includes('master');
+  };
+
+  // Global helper for permissions (edit/delete/view) in sub-components
+  (window as any).checkAdminPermission = (modulo: string, action: 'visualizar' | 'editar' | 'excluir') => {
+    if (userRole.toLowerCase().includes('master')) return true;
+    const rule = autorizacoes.find(a => a.sistema === 'painel_admin' && a.modulo === modulo);
+    if (!rule) return false;
+    if (action === 'visualizar') return !!rule.pode_visualizar;
+    if (action === 'editar') return !!rule.pode_editar;
+    if (action === 'excluir') return !!rule.pode_excluir;
+    return false;
   };
 
   return (

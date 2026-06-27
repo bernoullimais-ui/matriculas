@@ -145,6 +145,8 @@ function MetricCard({ label, value, sub, icon, color }: { label: string; value: 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function CampanhasTab() {
+  const canEdit = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('comercial_campanhas', 'editar') : true;
+  const canDelete = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('comercial_campanhas', 'excluir') : true;
   const [subView, setSubView] = useState<SubView>('list');
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(false);
@@ -408,12 +410,14 @@ export default function CampanhasTab() {
           <h2 className="text-xl font-black text-slate-800 tracking-tight">Campanhas</h2>
           <p className="text-sm text-slate-500 font-medium mt-1">Gerencie campanhas de e-mail e landing pages promocionais.</p>
         </div>
-        <button
-          onClick={() => { setSelectedCampaign(null); setSubView('wizard'); }}
-          className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-100 transition-all"
-        >
-          <Plus size={16} /> Nova Campanha
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => { setSelectedCampaign(null); setSubView('wizard'); }}
+            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-100 transition-all"
+          >
+            <Plus size={16} /> Nova Campanha
+          </button>
+        )}
       </div>
 
       {/* Filters */}
@@ -514,20 +518,24 @@ export default function CampanhasTab() {
                   >
                     <Eye size={13} /> Prévia
                   </button>
-                  <button
-                    onClick={() => { setSelectedCampaign(campaign); setSubView('wizard'); }}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-bold transition-colors"
-                  >
-                    <Edit3 size={13} /> Editar
-                  </button>
-                  <button
-                    onClick={() => handleDuplicate(campaign)}
-                    title="Duplicar campanha"
-                    className="p-2 bg-slate-50 hover:bg-violet-50 text-slate-400 hover:text-violet-600 rounded-xl transition-colors"
-                  >
-                    <Copy size={13} />
-                  </button>
-                  {campaign.status !== 'arquivada' && campaign.status !== 'ativa' && (
+                  {canEdit && (
+                    <button
+                      onClick={() => { setSelectedCampaign(campaign); setSubView('wizard'); }}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-bold transition-colors"
+                    >
+                      <Edit3 size={13} /> Editar
+                    </button>
+                  )}
+                  {canEdit && (
+                    <button
+                      onClick={() => handleDuplicate(campaign)}
+                      title="Duplicar campanha"
+                      className="p-2 bg-slate-50 hover:bg-violet-50 text-slate-400 hover:text-violet-600 rounded-xl transition-colors"
+                    >
+                      <Copy size={13} />
+                    </button>
+                  )}
+                  {canEdit && campaign.status !== 'arquivada' && campaign.status !== 'ativa' && (
                     <button
                       onClick={() => handleSend(campaign.id)}
                       className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors"
@@ -535,7 +543,7 @@ export default function CampanhasTab() {
                       <Send size={13} /> Disparar
                     </button>
                   )}
-                  {campaign.status !== 'arquivada' && (
+                  {canEdit && campaign.status !== 'arquivada' && (
                     <button
                       onClick={() => handleArchive(campaign.id)}
                       title="Arquivar"
@@ -544,13 +552,15 @@ export default function CampanhasTab() {
                       <Archive size={13} />
                     </button>
                   )}
-                  <button
-                    onClick={() => setDeleteModal({ open: true, campaign })}
-                    title="Excluir permanentemente"
-                    className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-xl transition-colors"
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                  {canDelete && (
+                    <button
+                      onClick={() => setDeleteModal({ open: true, campaign })}
+                      title="Excluir permanentemente"
+                      className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-xl transition-colors"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
                 </div>
               </div>
             );

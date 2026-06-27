@@ -61,6 +61,8 @@ const getFilteredTransferTurmas = (enrollment: any, targetUnidade: string, optio
 
 export default function EnrollmentsTab() {
   const { enrollments, options, loadData } = useAdminStore();
+  const canEdit = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('gestao_alunos_matriculas', 'editar') : true;
+  const canDelete = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('gestao_alunos_matriculas', 'excluir') : true;
   const [enrollmentSearch, setEnrollmentSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('todos');
   const [loadingAction, setLoadingAction] = useState(false);
@@ -506,7 +508,7 @@ export default function EnrollmentsTab() {
 
                                 {/* AÇÕES */}
                                 <td className="p-4 text-right space-x-1 whitespace-nowrap">
-                                  {sessionStorage.getItem('admin_role') === 'master' && (
+                                  {canEdit && (
                                     <>
                                       <button 
                                         disabled={matriculaStatus !== 'ativo' && matriculaStatus !== 'pendente'}

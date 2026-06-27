@@ -58,6 +58,8 @@ function getCombinations(variantes: { tipo: string; opcoes: string[] }[]): strin
 
 export function ProdutosTab() {
   const { produtos, setProdutos, categorias, loading, setLoading, loadData } = useAdminStore();
+  const canEdit = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('loja_produtos', 'editar') : true;
+  const canDelete = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('loja_produtos', 'excluir') : true;
   
 
   const [entradaVarianteKey, setEntradaVarianteKey] = useState<string>('default');
@@ -987,19 +989,25 @@ export function ProdutosTab() {
             </button>
           </div>
 
-          {lojaProdutosSubTab === 'catalogo' && (
+          {lojaProdutosSubTab === 'catalogo' && canEdit && (
             <button
               onClick={() => {
                 setSelectedId(null);
+                setSelectedProduto(null);
                 setProdutoForm({
-                  nome: '', slug: '', descricao: '', categoria_id: '',
-                  imagens: [], preco: 0, estoque_por_variante: {}, is_destaque: false,
-                  is_kit: false, kit_itens: [], variantes: []
+                  nome: '',
+                  slug: '',
+                  descricao: '',
+                  preco: 0,
+                  preco_promocional: null,
+                  categoria_id: categorias[0]?.id || '',
+                  destaque: false,
+                  status: 'ativo',
+                  is_kit: false,
+                  kit_itens: []
                 });
-                setImagensInputText('');
-                setVariantTypeInput('');
-                setVariantOptionsInput('');
-                setKitItens([]);
+                setVariantes([]);
+                setVariacaoPrecoEstoque([]);
                 setIsEditing(true);
               }}
               className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-all shadow-sm flex items-center gap-2"
@@ -1066,20 +1074,24 @@ export function ProdutosTab() {
                       </td>
                       <td className="p-4 text-center">
                         <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => handleEditProduto(produto)}
-                            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                            title="Editar"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteProduto(produto.id)}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                            title="Excluir"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {canEdit && (
+                            <button
+                              onClick={() => handleEditProduto(produto)}
+                              className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                              title="Editar"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              onClick={() => handleDeleteProduto(produto.id)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                              title="Excluir"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

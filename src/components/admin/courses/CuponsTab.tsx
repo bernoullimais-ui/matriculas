@@ -8,6 +8,8 @@ import { formatCurrency } from '../../../utils/formatters';
 
 export function CuponsTab() {
   const { cupons, cuponsDeMatriculas, eventos, produtos, options, loadData } = useAdminStore();
+  const canEdit = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('comercial_cupons', 'editar') : true;
+  const canDelete = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('comercial_cupons', 'excluir') : true;
   
   const [cuponsSubTab, setCuponsSubTab] = useState<'cursos'|'produtos'|'eventos'|'lotes'>('cursos');
   const [editingCupom, setEditingCupom] = useState<any | null>(null);
@@ -354,15 +356,15 @@ export function CuponsTab() {
                 </div>
               </td>
               <td className="px-4 py-3 text-right space-x-2">
-                {sessionStorage.getItem('admin_role') === 'master' && (
-                  <>
-                    <button onClick={() => openEditModal(c, isCurso)} className="text-slate-400 hover:text-indigo-600 p-1.5 bg-white rounded shadow-sm border border-slate-200 transition-colors">
-                      <Edit2 size={16} />
-                    </button>
-                    <button onClick={() => handleDeleteCupom(c.id)} className="text-slate-400 hover:text-rose-600 p-1.5 bg-white rounded shadow-sm border border-slate-200 transition-colors">
-                      <Trash2 size={16} />
-                    </button>
-                  </>
+                {canEdit && (
+                  <button onClick={() => openEditModal(c, isCurso)} className="text-slate-400 hover:text-indigo-600 p-1.5 bg-white rounded shadow-sm border border-slate-200 transition-colors">
+                    <Edit2 size={16} />
+                  </button>
+                )}
+                {canDelete && (
+                  <button onClick={() => handleDeleteCupom(c.id)} className="text-slate-400 hover:text-rose-600 p-1.5 bg-white rounded shadow-sm border border-slate-200 transition-colors">
+                    <Trash2 size={16} />
+                  </button>
                 )}
               </td>
             </tr>
@@ -663,7 +665,7 @@ export function CuponsTab() {
                       <button onClick={() => openInspectModal(l)} className="text-indigo-600 hover:text-indigo-800 p-1.5 bg-indigo-50 rounded shadow-sm border border-indigo-100 transition-colors font-bold text-xs">
                         Visualizar Códigos
                       </button>
-                      {sessionStorage.getItem('admin_role') === 'master' && (
+                      {canDelete && (
                         <button onClick={() => handleDeleteLote(l.id)} className="text-slate-400 hover:text-rose-600 p-1.5 bg-white rounded shadow-sm border border-slate-200 transition-colors">
                           <Trash2 size={16} />
                         </button>

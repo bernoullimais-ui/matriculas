@@ -35,6 +35,8 @@ interface Evento {
 
 export function EventosTab() {
   const { eventos, setEventos, options, loadData } = useAdminStore();
+  const canEdit = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('cursos_eventos_eventos', 'editar') : true;
+  const canDelete = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('cursos_eventos_eventos', 'excluir') : true;
   
   const [isEditing, setIsEditing] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -567,22 +569,24 @@ export function EventosTab() {
       {/* MAIN CONTENT */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-black text-slate-800 tracking-tight">Cursos e Eventos</h2>
-        <button
-          onClick={() => {
-            setSelectedId(null);
-            setEventoForm({
-              titulo: '', slug: '', descricao: '', data_inicio: '', data_fim: '', prazo_inscricao: '',
-              vagas_total: null, taxa_inscricao: 0, gratuito: false, status: 'ativo', local: '',
-              unidade_nome: '', categorias_inscricao: [], apenas_alunos: false,
-              tipo_preco: 'fixo', opcoes_precos: [], campos_personalizados: [], tipo: 'evento'
-            });
-            setIsEditing(true);
-          }}
-          className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-all shadow-sm flex items-center gap-2"
-        >
-          <Plus className="w-5 h-5" />
-          Novo Evento/Curso
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => {
+              setSelectedId(null);
+              setEventoForm({
+                titulo: '', slug: '', descricao: '', data_inicio: '', data_fim: '', prazo_inscricao: '',
+                vagas_total: null, taxa_inscricao: 0, gratuito: false, status: 'ativo', local: '',
+                unidade_nome: '', categorias_inscricao: [], apenas_alunos: false,
+                tipo_preco: 'fixo', opcoes_precos: [], campos_personalizados: [], tipo: 'evento'
+              });
+              setIsEditing(true);
+            }}
+            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-all shadow-sm flex items-center gap-2"
+          >
+            <Plus className="w-5 h-5" />
+            Novo Evento/Curso
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -628,20 +632,24 @@ export function EventosTab() {
                   </td>
                   <td className="p-4 text-center">
                     <div className="flex items-center justify-center gap-2">
-                      <button
-                        onClick={() => handleEditEvento(evento)}
-                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                        title="Editar"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteEvento(evento.id)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                        title="Excluir"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {canEdit && (
+                        <button
+                          onClick={() => handleEditEvento(evento)}
+                          className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Editar"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          onClick={() => handleDeleteEvento(evento.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          title="Excluir"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

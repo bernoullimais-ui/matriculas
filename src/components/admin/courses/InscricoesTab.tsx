@@ -11,6 +11,8 @@ import { formatCurrency, formatDateTime } from '../../../utils/formatters';
 
 export function InscricoesTab() {
   const { inscricoes, setInscricoes, eventos, loadData } = useAdminStore();
+  const canEdit = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('cursos_eventos_inscricoes', 'editar') : true;
+  const canDelete = (window as any).checkAdminPermission ? (window as any).checkAdminPermission('cursos_eventos_inscricoes', 'excluir') : true;
   
   const [showInscricaoDetails, setShowInscricaoDetails] = useState<any | null>(null);
   const [showInscricaoEdit, setShowInscricaoEdit] = useState<any | null>(null);
@@ -317,20 +319,24 @@ export function InscricoesTab() {
                                 >
                                   <Info size={16} />
                                 </button>
-                                <button
-                                  onClick={() => setShowInscricaoEdit(ins)}
-                                  className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                                  title="Editar"
-                                >
-                                  <Edit2 size={16} />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteInscricao(ins.id)}
-                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                                  title="Excluir"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
+                                {canEdit && (
+                                  <button
+                                    onClick={() => setShowInscricaoEdit(ins)}
+                                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                    title="Editar"
+                                  >
+                                    <Edit2 size={16} />
+                                  </button>
+                                )}
+                                {canDelete && (
+                                  <button
+                                    onClick={() => handleDeleteInscricao(ins.id)}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                    title="Excluir"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
