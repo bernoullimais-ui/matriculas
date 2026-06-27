@@ -13825,6 +13825,27 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       return res.status(200).json({ ok: true, skipped: 'own_message' });
     }
 
+    // Deduplicação de concorrência e retries do webhook
+    const messageId = body?.id 
+      || body?.MessageId 
+      || body?.Payload?.Id 
+      || body?.Payload?.MessageId 
+      || body?.Payload?.Content?.Id 
+      || body?.Payload?.Content?.LastMessage?.Id;
+
+    const dedupeKey = messageId ? `msg-${messageId}` : `hash-${telNorm}-${mensagem.trim()}`;
+    const { data: lockAcquired, error: lockError } = await supabase.rpc('try_acquire_webhook_lock', {
+      lock_id: dedupeKey,
+      interval_seconds: 30
+    });
+
+    if (lockError) {
+      console.error('[Sofia Webhook] Erro ao verificar lock:', lockError);
+    } else if (lockAcquired === false) {
+      console.warn(`[Sofia Webhook] Mensagem duplicada/concorrência ignorada. Key: ${dedupeKey}`);
+      return res.status(200).json({ ok: true, skipped: 'concurrency_deduplicated' });
+    }
+
     // Rate limiting
     if (!checkRateLimit(telNorm)) {
       console.warn(`[Sofia] Rate limit excedido para ${telNorm}`);
