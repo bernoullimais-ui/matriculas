@@ -922,8 +922,7 @@ export async function escalarParaHumano(
       .from('conversas_whatsapp')
       .update({
         status: 'escalado',
-        escalado_at: new Date().toISOString(),
-        historico: ctx.supabase // Will be updated by the agent
+        escalado_at: new Date().toISOString()
       })
       .eq('id', conversaId);
 
