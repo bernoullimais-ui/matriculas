@@ -13932,29 +13932,89 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     }
   });
 
+  // Helper to get allowed units for logged-in admin user. Returns null if Master/Global (no restriction).
+  async function getAdminAllowedUnits(user: any): Promise<string[] | null> {
+    if (!user?.id) return [];
+    const { data: dbUser } = await supabase
+      .from('usuarios')
+      .select('nivel, unidade')
+      .eq('auth_id', user.id)
+      .maybeSingle();
+
+    if (!dbUser) return [];
+
+    const nivelLower = (dbUser.nivel || '').toLowerCase();
+    const unidadeLower = (dbUser.unidade || '').toLowerCase();
+    
+    const isMaster = nivelLower.includes('master') || 
+                     nivelLower.includes('start') || 
+                     unidadeLower.includes('todas') || 
+                     unidadeLower.includes('gestao global');
+
+    if (isMaster) return null;
+
+    return (dbUser.unidade || '').split(',').map((u: string) => u.trim()).filter(Boolean);
+  }
+
   // ─── GET /api/admin/sofia/conversas ─────────────────────────────────────────
   // Lista conversas para o painel de monitoramento (com filtros)
   app.get('/api/admin/sofia/conversas', async (req, res) => {
     try {
       const { status, identidade, limite = '50', pagina = '0' } = req.query;
-      
-      let query = supabase
-        .from('conversas_whatsapp')
-        .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids, historico')
-        .order('ultima_mensagem_at', { ascending: false })
-        .limit(parseInt(limite as string))
-        .range(
-          parseInt(pagina as string) * parseInt(limite as string),
-          (parseInt(pagina as string) + 1) * parseInt(limite as string) - 1
-        );
+      const allowedUnits = await getAdminAllowedUnits((req as any).user);
 
-      if (status) query = query.eq('status', status as string);
-      if (identidade) query = query.eq('identidade_nome', identidade as string);
+      let conversas = [];
+      let total = 0;
 
-      const { data, error, count } = await query;
-      if (error) throw error;
+      if (allowedUnits === null) {
+        // Master/Global: vê tudo
+        let query = supabase
+          .from('conversas_whatsapp')
+          .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids, historico', { count: 'exact' })
+          .order('ultima_mensagem_at', { ascending: false })
+          .limit(parseInt(limite as string))
+          .range(
+            parseInt(pagina as string) * parseInt(limite as string),
+            (parseInt(pagina as string) + 1) * parseInt(limite as string) - 1
+          );
 
-      res.json({ conversas: data || [], total: count });
+        if (status) query = query.eq('status', status as string);
+        if (identidade) query = query.eq('identidade_nome', identidade as string);
+
+        const { data, error, count } = await query;
+        if (error) throw error;
+        conversas = data || [];
+        total = count || 0;
+      } else {
+        // Restrito por unidade
+        if (allowedUnits.length === 0) {
+          return res.json({ conversas: [], total: 0 });
+        }
+
+        const offset = parseInt(pagina as string) * parseInt(limite as string);
+        const limit = parseInt(limite as string);
+
+        const { data, error } = await supabase.rpc('get_conversas_by_unidades', {
+          p_allowed_units: allowedUnits,
+          p_status: status || null,
+          p_identidade: identidade || null,
+          p_limit: limit,
+          p_offset: offset
+        });
+        if (error) throw error;
+
+        const { data: countData, error: countError } = await supabase.rpc('get_conversas_count_by_unidades', {
+          p_allowed_units: allowedUnits,
+          p_status: status || null,
+          p_identidade: identidade || null
+        });
+        if (countError) throw countError;
+
+        conversas = data || [];
+        total = parseInt(countData || '0');
+      }
+
+      res.json({ conversas, total });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -13965,6 +14025,22 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   app.get('/api/admin/sofia/conversas/:id', async (req, res) => {
     try {
       const { id } = req.params;
+      const allowedUnits = await getAdminAllowedUnits((req as any).user);
+
+      if (allowedUnits !== null) {
+        if (allowedUnits.length === 0) {
+          return res.status(403).json({ error: 'Acesso negado.' });
+        }
+        const { data: hasAccess, error: accessError } = await supabase.rpc('check_conversa_acesso', {
+          p_conversa_id: id,
+          p_allowed_units: allowedUnits
+        });
+        if (accessError) throw accessError;
+        if (!hasAccess) {
+          return res.status(403).json({ error: 'Acesso negado a esta conversa por restrição de unidade.' });
+        }
+      }
+
       const { data, error } = await supabase
         .from('conversas_whatsapp')
         .select('*')
@@ -14048,6 +14124,22 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         .single();
 
       if (convError || !conversa) throw new Error('Conversa não encontrada');
+
+      // Validar acesso por unidade se o atendente for restrito
+      const allowedUnits = await getAdminAllowedUnits((req as any).user);
+      if (allowedUnits !== null) {
+        if (allowedUnits.length === 0) {
+          return res.status(403).json({ error: 'Acesso negado.' });
+        }
+        const { data: hasAccess, error: accessError } = await supabase.rpc('check_conversa_acesso', {
+          p_conversa_id: id,
+          p_allowed_units: allowedUnits
+        });
+        if (accessError) throw accessError;
+        if (!hasAccess) {
+          return res.status(403).json({ error: 'Acesso negado a esta conversa por restrição de unidade.' });
+        }
+      }
 
       // Busca config da identidade
       const { data: identidade } = await supabase
@@ -14200,6 +14292,22 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   app.post('/api/admin/sofia/conversas/:id/resolver', async (req, res) => {
     try {
       const { id } = req.params;
+
+      const allowedUnits = await getAdminAllowedUnits((req as any).user);
+      if (allowedUnits !== null) {
+        if (allowedUnits.length === 0) {
+          return res.status(403).json({ error: 'Acesso negado.' });
+        }
+        const { data: hasAccess, error: accessError } = await supabase.rpc('check_conversa_acesso', {
+          p_conversa_id: id,
+          p_allowed_units: allowedUnits
+        });
+        if (accessError) throw accessError;
+        if (!hasAccess) {
+          return res.status(403).json({ error: 'Acesso negado a esta conversa por restrição de unidade.' });
+        }
+      }
+
       const { resolverConversa } = await getSofiaServices();
       await resolverConversa(supabase, id);
       res.json({ ok: true, status: 'ativo' });
@@ -14213,6 +14321,22 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   app.post('/api/admin/sofia/conversas/:id/encerrar', async (req, res) => {
     try {
       const { id } = req.params;
+
+      const allowedUnits = await getAdminAllowedUnits((req as any).user);
+      if (allowedUnits !== null) {
+        if (allowedUnits.length === 0) {
+          return res.status(403).json({ error: 'Acesso negado.' });
+        }
+        const { data: hasAccess, error: accessError } = await supabase.rpc('check_conversa_acesso', {
+          p_conversa_id: id,
+          p_allowed_units: allowedUnits
+        });
+        if (accessError) throw accessError;
+        if (!hasAccess) {
+          return res.status(403).json({ error: 'Acesso negado a esta conversa por restrição de unidade.' });
+        }
+      }
+
       const { encerrarConversa } = await getSofiaServices();
       await encerrarConversa(supabase, id);
       res.json({ ok: true, status: 'encerrado' });
@@ -14227,29 +14351,49 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     try {
       const { identidade, periodo = '7' } = req.query;
       const diasAtras = new Date(Date.now() - parseInt(periodo as string) * 24 * 60 * 60 * 1000).toISOString();
+      const allowedUnits = await getAdminAllowedUnits((req as any).user);
 
-      let query = supabase
-        .from('conversas_whatsapp')
-        .select('id, status, total_mensagens, identidade_nome, created_at, escalado_at')
-        .gte('created_at', diasAtras);
+      let conversas = [];
 
-      if (identidade) query = query.eq('identidade_nome', identidade as string);
+      if (allowedUnits === null) {
+        // Master/Global: vê tudo
+        let query = supabase
+          .from('conversas_whatsapp')
+          .select('id, status, total_mensagens, identidade_nome, created_at, escalado_at')
+          .gte('created_at', diasAtras);
 
-      const { data: conversas, error } = await query;
-      if (error) throw error;
+        if (identidade) query = query.eq('identidade_nome', identidade as string);
 
-      const total = conversas?.length || 0;
-      const ativas = conversas?.filter(c => c.status === 'ativo').length || 0;
-      const escaladas = conversas?.filter(c => c.status === 'escalado').length || 0;
-      const encerradas = conversas?.filter(c => c.status === 'encerrado').length || 0;
+        const { data, error } = await query;
+        if (error) throw error;
+        conversas = data || [];
+      } else {
+        // Restrito por unidade
+        if (allowedUnits.length === 0) {
+          conversas = [];
+        } else {
+          const { data, error } = await supabase.rpc('get_conversas_metricas_by_unidades', {
+            p_allowed_units: allowedUnits,
+            p_dias_atras: diasAtras,
+            p_identidade: identidade || null
+          });
+          if (error) throw error;
+          conversas = data || [];
+        }
+      }
+
+      const total = conversas.length;
+      const ativas = conversas.filter(c => c.status === 'ativo').length;
+      const escaladas = conversas.filter(c => c.status === 'escalado').length;
+      const encerradas = conversas.filter(c => c.status === 'encerrado').length;
       const taxaEscalamento = total > 0 ? Math.round((escaladas / total) * 100) : 0;
       const mediaMsg = total > 0
-        ? Math.round((conversas?.reduce((s, c) => s + (c.total_mensagens || 0), 0) || 0) / total)
+        ? Math.round(conversas.reduce((s, c) => s + (c.total_mensagens || 0), 0) / total)
         : 0;
 
       // Distribuição por dia
       const porDia: Record<string, number> = {};
-      conversas?.forEach(c => {
+      conversas.forEach(c => {
         const dia = c.created_at?.split('T')[0] || '';
         porDia[dia] = (porDia[dia] || 0) + 1;
       });
