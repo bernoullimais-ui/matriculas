@@ -13900,7 +13900,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       // Envia resposta se não escalado (ou se tem resposta de escalamento)
       if (resposta) {
-        await fetch(UTALK_URL, {
+        console.log(`[Sofia Webhook] Enviando resposta para UTalk. URL: ${UTALK_URL}, To: ${telNorm}`);
+        const utalkRes = await fetch(UTALK_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -13915,6 +13916,13 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
             message: `*${config.nomeAgente}, Assistente Virtual da Sport for Kids*\n\n${resposta}`
           })
         });
+
+        if (!utalkRes.ok) {
+          const errText = await utalkRes.text().catch(() => '');
+          console.error(`[Sofia Webhook] Erro ao enviar resposta para o UTalk. Status: ${utalkRes.status}, Body: ${errText}`);
+        } else {
+          console.log(`[Sofia Webhook] Resposta enviada com sucesso para o UTalk. Telefone: ${telNorm}`);
+        }
       }
 
       return res.status(200).json({ ok: true, processed: true });
