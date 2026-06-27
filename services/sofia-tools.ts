@@ -626,7 +626,7 @@ export async function buscarEventos(ctx: SofiaToolContext): Promise<string> {
 
     const { data: eventos, error } = await ctx.supabase
       .from('eventos')
-      .select('id, titulo, descricao, data_inicio, data_fim, local, valor_inscricao, slug')
+      .select('id, titulo, descricao, data_inicio, data_fim, local, taxa_inscricao, slug')
       .gte('data_inicio', hoje)
       .order('data_inicio')
       .limit(10);
@@ -650,7 +650,7 @@ export async function buscarEventos(ctx: SofiaToolContext): Promise<string> {
         data_inicio: formatDate(e.data_inicio),
         data_fim: e.data_fim ? formatDate(e.data_fim) : null,
         local: e.local,
-        valor_inscricao: e.valor_inscricao ? formatCurrency(e.valor_inscricao * 100) : 'Gratuito'
+        valor_inscricao: e.taxa_inscricao ? formatCurrency(Number(e.taxa_inscricao) * 100) : 'Gratuito'
       }))
     });
   } catch (e: any) {
