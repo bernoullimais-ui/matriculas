@@ -13971,7 +13971,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   // Lista conversas para o painel de monitoramento (com filtros)
   app.get('/api/admin/sofia/conversas', async (req, res) => {
     try {
-      const { status, identidade, limite = '50', pagina = '0' } = req.query;
+      const { status, identidade, etiqueta, limite = '50', pagina = '0' } = req.query;
 
       const dbUser = await supabase
         .from('usuarios')
@@ -14003,7 +14003,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         // Master/Global: vê tudo
         let query = supabase
           .from('conversas_whatsapp')
-          .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids, historico, atendente_id', { count: 'exact' })
+          .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids, historico, atendente_id, etiquetas', { count: 'exact' })
           .order('ultima_mensagem_at', { ascending: false })
           .limit(parseInt(limite as string))
           .range(
@@ -14013,6 +14013,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
         if (status) query = query.eq('status', status as string);
         if (identidade) query = query.eq('identidade_nome', identidade as string);
+        if (etiqueta) query = query.contains('etiquetas', [etiqueta as string]);
 
         const { data, error, count } = await query;
         if (error) throw error;
@@ -14033,7 +14034,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
           p_identidade: identidade || null,
           p_limit: limit,
           p_offset: offset,
-          p_user_id: operatorId
+          p_user_id: operatorId,
+          p_etiqueta: (etiqueta as string) || null
         });
         if (error) throw error;
 
@@ -14041,7 +14043,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
           p_allowed_units: allowedUnits,
           p_status: status || null,
           p_identidade: identidade || null,
-          p_user_id: operatorId
+          p_user_id: operatorId,
+          p_etiqueta: (etiqueta as string) || null
         });
         if (countError) throw countError;
 
@@ -14104,6 +14107,31 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         .from('conversas_whatsapp')
         .select('*')
         .eq('id', id)
+        .single();
+
+      if (error) throw error;
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── POST /api/admin/sofia/conversas/:id/etiquetas ─────────────────────────────
+  // Atualiza as etiquetas de uma conversa
+  app.post('/api/admin/sofia/conversas/:id/etiquetas', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { etiquetas } = req.body;
+
+      if (!Array.isArray(etiquetas)) {
+        return res.status(400).json({ error: 'Etiquetas deve ser um array de strings' });
+      }
+
+      const { data, error } = await supabase
+        .from('conversas_whatsapp')
+        .update({ etiquetas })
+        .eq('id', id)
+        .select('*')
         .single();
 
       if (error) throw error;
