@@ -400,6 +400,38 @@ export async function processarMensagem(
     };
   }
 
+  // 4.5. Silenciamento temporário caso a conversa tenha sido iniciada por um atendente humano
+  const primeiroItemNaoSistema = conversa.historico.find(m => (m as any).role !== 'system');
+  const isOperatorInitiated = conversa.historico.some(
+    m => (m as any).role === 'system' && (m as any).content?.includes('painel')
+  ) || (
+    primeiroItemNaoSistema?.role === 'model' && 
+    primeiroItemNaoSistema.parts?.[0]?.text?.includes('[Atendente -')
+  );
+
+  if (isOperatorInitiated) {
+    const operatorMessages = conversa.historico.filter(
+      m => m.role === 'model' && m.parts?.[0]?.text?.includes('[Atendente -')
+    );
+    
+    const lastOperatorMsg = operatorMessages[operatorMessages.length - 1];
+    const lastOperatorTime = lastOperatorMsg
+      ? new Date(lastOperatorMsg.timestamp || Date.now()).getTime()
+      : new Date(conversa.created_at || Date.now()).getTime();
+      
+    const timeSinceLastOperator = Date.now() - lastOperatorTime;
+    const oneHour = 60 * 60 * 1000;
+    
+    if (timeSinceLastOperator < oneHour) {
+      console.log(`[Sofia] Conversa iniciada por atendente. Último retorno/criação há ${Math.round(timeSinceLastOperator / 60000)} minutos. Silenciando IA.`);
+      return {
+        resposta: '', // Silencia a IA
+        escalado: false,
+        conversaId: conversa.id
+      };
+    }
+  }
+
   // 5. Contexto para as ferramentas
   const toolCtx: SofiaToolContext = {
     supabase,
