@@ -1232,7 +1232,18 @@ async function requireAdminAuth(req: any, res: any, next: any) {
 // API Routes
 app.post('/api/admin/login', async (req, res) => {
   try {
-    const rawEmail = (req.body?.email || '').trim().toLowerCase();
+    const inputEmail = (req.body?.email || '').trim().toLowerCase();
+    const prefix = inputEmail.includes('@') ? inputEmail.split('@')[0] : inputEmail;
+    
+    // Busca o usuário correspondente no banco pelo login original ou prefixo
+    const { data: matchedDbUser } = await supabase
+      .from('usuarios')
+      .select('login')
+      .or(`login.ilike.${inputEmail},login.ilike.${prefix}`)
+      .limit(1)
+      .maybeSingle();
+
+    const rawEmail = matchedDbUser ? matchedDbUser.login.toLowerCase() : prefix;
     const password = (req.body?.password || '').trim();
     const securePassword = password.length < 6 ? password.padEnd(6, '*') : password;
     const fakeEmail = `${rawEmail.replace(/[^a-z0-9]/g, '')}@sfk-system.com`;
