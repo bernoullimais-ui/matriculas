@@ -200,32 +200,25 @@ export default function UnidadeLanding() {
           const data = await res.json();
           setAllSeries(data.series || []);
           setTodasUnidades(data.unidades || []);
+          const normalizeString = (str: string) => 
+            String(str || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, '');
+
+          const targetSlugNorm = normalizeString(unidadeSlug || '');
+
           const foundUnit = (data.unidades || []).find(
-            (u: any) => u.slug === unidadeSlug
+            (u: any) => 
+              normalizeString(u.slug) === targetSlugNorm || 
+              normalizeString(u.nome) === targetSlugNorm
           );
 
           if (foundUnit) {
             setUnidade(foundUnit);
-            localStorage.setItem('last_unit_slug', foundUnit.slug);
+            localStorage.setItem('last_unit_slug', foundUnit.slug || unidadeSlug || '');
             // Filter classes for this unit
             const unitClasses = (data.turmas || []).filter(
               (t: any) => (t.unidade_nome === foundUnit.nome || (t.unidades_selecionadas && t.unidades_selecionadas.includes(foundUnit.nome))) && (t.status || 'ativo') === 'ativo'
             );
             setTurmas(unitClasses);
-          } else {
-            // fallback if slug not found, try by name decode
-            const decodedName = decodeURIComponent(unidadeSlug || '');
-            const foundByName = (data.unidades || []).find(
-              (u: any) => u.nome.toLowerCase() === decodedName.toLowerCase()
-            );
-            if (foundByName) {
-              setUnidade(foundByName);
-              localStorage.setItem('last_unit_slug', foundByName.slug || decodedName);
-              const unitClasses = (data.turmas || []).filter(
-                (t: any) => (t.unidade_nome === foundByName.nome || (t.unidades_selecionadas && t.unidades_selecionadas.includes(foundByName.nome))) && (t.status || 'ativo') === 'ativo'
-              );
-              setTurmas(unitClasses);
-            }
           }
         }
       } catch (err) {
