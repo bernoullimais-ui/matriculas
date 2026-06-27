@@ -14141,6 +14141,69 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     }
   });
 
+  // ─── GET /api/admin/sofia/etiquetas ──────────────────────────────────────────
+  // Lista todas as etiquetas configuradas para o chat da Sofia
+  app.get('/api/admin/sofia/etiquetas', async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from('sofia_etiquetas')
+        .select('*')
+        .order('nome', { ascending: true });
+      if (error) throw error;
+      res.json(data || []);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── POST /api/admin/sofia/etiquetas ─────────────────────────────────────────
+  // Cria ou edita uma etiqueta
+  app.post('/api/admin/sofia/etiquetas', async (req, res) => {
+    try {
+      const { id, nome, cor } = req.body;
+      if (!nome || !cor) {
+        return res.status(400).json({ error: 'Nome e cor são obrigatórios' });
+      }
+
+      if (id) {
+        const { data, error } = await supabase
+          .from('sofia_etiquetas')
+          .update({ nome, cor })
+          .eq('id', id)
+          .select('*')
+          .single();
+        if (error) throw error;
+        res.json(data);
+      } else {
+        const { data, error } = await supabase
+          .from('sofia_etiquetas')
+          .insert({ nome, cor })
+          .select('*')
+          .single();
+        if (error) throw error;
+        res.json(data);
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── DELETE /api/admin/sofia/etiquetas/:id ────────────────────────────────────
+  // Exclui uma etiqueta
+  app.delete('/api/admin/sofia/etiquetas/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { error } = await supabase
+        .from('sofia_etiquetas')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── POST /api/admin/sofia/conversas/nova ──────────────────────────────────
   // Inicia uma nova sessão de conversa para envio ativo
   app.post('/api/admin/sofia/conversas/nova', async (req, res) => {
