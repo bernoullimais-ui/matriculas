@@ -89,6 +89,10 @@ export const SOFIA_TOOL_DECLARATIONS = [
         modalidade: {
           type: Type.STRING,
           description: 'Modalidade esportiva para filtrar (ex: natação, judô, ballet) - opcional'
+        },
+        ano_escolar: {
+          type: Type.STRING,
+          description: 'Ano escolar ou série do aluno para filtrar turmas permitidas (ex: 2º ano do Ensino Fundamental, Grupo 4 Educação Infantil) - opcional'
         }
       },
       required: []
@@ -527,12 +531,13 @@ export async function buscarPagamentos(ctx: SofiaToolContext, alunoId: string): 
 export async function buscarTurmasDisponiveis(
   ctx: SofiaToolContext,
   unidade?: string,
-  modalidade?: string
+  modalidade?: string,
+  ano_escolar?: string
 ): Promise<string> {
   try {
     let query = ctx.supabase
       .from('turmas')
-      .select('id, nome, unidade_nome, dias_horarios, professor, local_aula, capacidade, valor_mensalidade, idade_minima, idade_maxima, ativa')
+      .select('id, nome, unidade_nome, dias_horarios, professor, local_aula, capacidade, valor_mensalidade, idade_minima, idade_maxima, ativa, series_permitidas')
       .eq('ativa', true)
       .order('nome');
 
@@ -544,17 +549,57 @@ export async function buscarTurmasDisponiveis(
       query = query.ilike('nome', `%${modalidade}%`);
     }
 
-    const { data: turmas, error } = await query.limit(20);
+    // Aumentamos o limite para 50 para poder fazer filtragem de ano escolar na memória de forma segura
+    const { data: turmas, error } = await query.limit(50);
     if (error) throw error;
 
     if (!turmas || turmas.length === 0) {
       return JSON.stringify({ encontrado: false, mensagem: 'Nenhuma turma disponível encontrada com os filtros informados.' });
     }
 
+    let filteredTurmas = turmas;
+    if (ano_escolar) {
+      const searchNorm = ano_escolar.toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/ ensino /g, " ")
+        .replace(/do /g, "")
+        .replace(/da /g, "")
+        .replace(/º/g, "o")
+        .replace(/ª/g, "a")
+        .trim();
+
+      filteredTurmas = turmas.filter(t => {
+        // Se a turma não tiver restrições de séries permitidas, ela é aberta para todos
+        if (!t.series_permitidas || !Array.isArray(t.series_permitidas) || t.series_permitidas.length === 0) {
+          return true;
+        }
+
+        return t.series_permitidas.some((s: string) => {
+          const sNorm = s.toLowerCase()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+            .replace(/ ensino /g, " ")
+            .replace(/do /g, "")
+            .replace(/da /g, "")
+            .replace(/º/g, "o")
+            .replace(/ª/g, "a")
+            .trim();
+
+          return sNorm.includes(searchNorm) || searchNorm.includes(sNorm);
+        });
+      });
+    }
+
+    if (filteredTurmas.length === 0) {
+      return JSON.stringify({ 
+        encontrado: false, 
+        mensagem: `Nenhuma turma encontrada que permita o ano escolar: ${ano_escolar}.` 
+      });
+    }
+
     return JSON.stringify({
       encontrado: true,
-      total: turmas.length,
-      turmas: turmas.map(t => ({
+      total: filteredTurmas.length,
+      turmas: filteredTurmas.map(t => ({
         id: t.id,
         nome: t.nome,
         unidade: t.unidade_nome,
@@ -564,7 +609,8 @@ export async function buscarTurmasDisponiveis(
         valor_mensalidade: t.valor_mensalidade ? `R$ ${t.valor_mensalidade.toFixed(2).replace('.', ',')}` : null,
         faixa_etaria: t.idade_minima || t.idade_maxima
           ? `${t.idade_minima || '?'} a ${t.idade_maxima || '?'} anos`
-          : null
+          : null,
+        series_permitidas: t.series_permitidas
       }))
     });
   } catch (e: any) {
@@ -919,7 +965,7 @@ export async function executarFerramenta(
       return buscarPagamentos(ctx, args.aluno_id);
 
     case 'buscar_turmas_disponiveis':
-      return buscarTurmasDisponiveis(ctx, args.unidade, args.modalidade);
+      return buscarTurmasDisponiveis(ctx, args.unidade, args.modalidade, args.ano_escolar);
 
     case 'buscar_eventos':
       return buscarEventos(ctx);
