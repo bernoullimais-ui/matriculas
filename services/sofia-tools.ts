@@ -308,7 +308,7 @@ export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<
     // Busca por whatsapp_1 ou whatsapp_2 em qualquer variante do número
     const { data: alunos, error } = await ctx.supabase
       .from('alunos')
-      .select('id, nome_completo, unidade, unidade_origem_id, status_matricula, responsavel_1, whatsapp_1, responsavel_2, whatsapp_2, email, data_nascimento')
+      .select('id, nome_completo, unidade, unidade_origem_id, status_matricula, responsavel_1, whatsapp_1, responsavel_2, whatsapp_2, email, data_nascimento, serie_ano')
       .or(
         telVariants.map(t => `whatsapp_1.ilike.${t},whatsapp_2.ilike.${t}`).join(',')
       )
@@ -368,15 +368,31 @@ export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<
     return JSON.stringify({
       encontrado: true,
       total: alunos.length,
-      alunos: alunos.map(a => ({
-        id: a.id,
-        nome: a.nome_completo,
-        unidade: a.unidade,
-        status_matricula: a.status_matricula,
-        responsavel1: a.responsavel_1,
-        responsavel2: a.responsavel_2,
-        email: a.email
-      }))
+      alunos: alunos.map(a => {
+        let idade = null;
+        if (a.data_nascimento) {
+          const birthDate = new Date(a.data_nascimento);
+          const today = new Date();
+          let age = today.getFullYear() - birthDate.getFullYear();
+          const m = today.getMonth() - birthDate.getMonth();
+          if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+            age--;
+          }
+          idade = age;
+        }
+        return {
+          id: a.id,
+          nome: a.nome_completo,
+          unidade: a.unidade || (a.unidade_origem_id ? unitMap[a.unidade_origem_id] : null),
+          status_matricula: a.status_matricula,
+          responsavel1: a.responsavel_1,
+          responsavel2: a.responsavel_2,
+          email: a.email,
+          data_nascimento: a.data_nascimento,
+          idade: idade,
+          serie_ano: a.serie_ano
+        };
+      })
     });
   } catch (e: any) {
     return JSON.stringify({ erro: e.message || 'Erro ao buscar alunos' });
