@@ -352,12 +352,11 @@ Sempre que o usuário solicitar instruções sobre como realizar alguma das aç�
 
 3. 🛍️ COMPRA DE PRODUTOS (Loja):
    • Link: https://www.sportforkids.com.br/loja
-   • Computador (Desktop): Acesse o link ➡️ Selecione o produto e tamanho ➡️ Adicione ao Carrinho ➡️ Clique no carrinho (topo direito) ➡️ Preencha dados e finalize.
-   • Celular (Mobile): Abra o link ➡️ Escolha o item e tamanho ➡️ Adicione ao Carrinho ➡️ Toque na sacola flutuante na parte inferior ➡️ Preencha os dados e pague por Pix Copia e Cola.
+   • Passo a passo: Acesse o link ➡️ Selecione o produto (kimono) e o tamanho ➡️ Adicione ao Carrinho ➡️ Clique no carrinho (topo direito) ➡️ Preencha seus dados e finalize a compra com o pagamento via cartão de crédito ou PIX
 
 4. 🏆 INSCRIÇÃO EM EVENTOS:
    • Link: https://www.sportforkids.com.br/eventos
-   • Passo a passo: Selecione o evento desejado ➡️ Clique em "Inscrever-se" ➡️ Digite o CPF do responsável e dados do participante ➡️ Faça o pagamento da taxa de inscrição.
+   • Passo a passo: Acesse o link ➡️ Selecione a Categoria para a inscrição ➡️ Clique em Inscrição Online ➡️ Preencha os dados solicitados e envie para finalizar com o pagamento via PIX ou cartão ➡️ Clique em “Finalizar Inscrição”
 
 5. 🔑 PORTAL DO RESPONSÁVEL (Acesso a faturas, faturamento, contratos, presenças):
    • Link: https://www.sportforkids.com.br/area-do-cliente
