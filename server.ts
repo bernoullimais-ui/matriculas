@@ -14750,7 +14750,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   app.patch('/api/admin/sofia/config/:identidade', async (req, res) => {
     try {
       const { identidade } = req.params;
-      const { nome_agente_ia, ia_ativa } = req.body;
+      const { nome_agente_ia, ia_ativa, utalk_token, utalk_from_phone, utalk_organization_id } = req.body;
       
       const updates: any = {};
       if (nome_agente_ia !== undefined) {
@@ -14762,6 +14762,15 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       }
       if (req.body.base_conhecimento !== undefined) {
         updates.base_conhecimento = req.body.base_conhecimento;
+      }
+      if (utalk_token !== undefined) {
+        updates.utalk_token = utalk_token === null ? null : utalk_token.trim();
+      }
+      if (utalk_from_phone !== undefined) {
+        updates.utalk_from_phone = utalk_from_phone === null ? null : utalk_from_phone.trim();
+      }
+      if (utalk_organization_id !== undefined) {
+        updates.utalk_organization_id = utalk_organization_id === null ? null : utalk_organization_id.trim();
       }
 
       const { error } = await supabase
