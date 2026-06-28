@@ -676,12 +676,18 @@ export async function processarMensagem(
 
       // Se escalado, para o loop
       if (escalado) {
-        const { active: isComercial, textoExibicao } = obterHorarioComercial(config.baseConhecimento);
-        respostaFinal = `Entendido! Estou encaminhando seu atendimento para um de nossos especialistas. 👥\n\n` +
-          `Em breve, alguém da nossa equipe entrará em contato pelo WhatsApp. ` +
-          (isComercial
-            ? 'Aguarde, estamos no horário de atendimento! 🕐'
-            : `Como estamos fora do nosso horário de atendimento (${textoExibicao}), entraremos em contato no próximo dia útil. 📅`);
+        // Se o modelo gerou texto junto com a chamada de função, prioriza esse texto
+        const geminiText = textParts.map((p: any) => p.text).join('\n').trim();
+        if (geminiText) {
+          respostaFinal = geminiText;
+        } else {
+          const { active: isComercial, textoExibicao } = obterHorarioComercial(config.baseConhecimento);
+          respostaFinal = `Entendido! Estou encaminhando seu atendimento para um de nossos especialistas. 👥\n\n` +
+            `Em breve, alguém da nossa equipe entrará em contato pelo WhatsApp. ` +
+            (isComercial
+              ? 'Aguarde, estamos no horário de atendimento! 🕐'
+              : `Como estamos fora do nosso horário de atendimento (${textoExibicao}), entraremos em contato no próximo dia útil. 📅`);
+        }
         break;
       }
     }
@@ -694,6 +700,26 @@ export async function processarMensagem(
   } catch (e: any) {
     console.error('[Sofia] Erro ao processar com Gemini:', e);
     respostaFinal = `Desculpe, ocorreu um erro técnico. Tente novamente ou fale diretamente com nossa equipe. 🙏`;
+  }
+
+  // Fail-safe: se a resposta final contiver indicativos claros de transferência ou escalamento,
+  // e ainda não estiver marcada como escalada, forçamos o status para escalado.
+  if (!escalado && respostaFinal) {
+    const lowerResponse = respostaFinal.toLowerCase();
+    const indicatesEscalation = 
+      (lowerResponse.includes('equipe humana') && (lowerResponse.includes('fila') || lowerResponse.includes('prioridade') || lowerResponse.includes('registrado'))) ||
+      lowerResponse.includes('transferir seu atendimento') ||
+      lowerResponse.includes('encaminhando seu atendimento') ||
+      lowerResponse.includes('consultor entrará em contato') ||
+      lowerResponse.includes('especialista entrará em contato') ||
+      lowerResponse.includes('atendente entrará em contato') ||
+      (lowerResponse.includes('equipe') && lowerResponse.includes('entrará em contato') && lowerResponse.includes('aguarda'));
+      
+    if (indicatesEscalation) {
+      console.log(`[Sofia Fail-safe] Forçando escalamento detectado pelo texto da resposta para telefone ${telefone}`);
+      await notificarEscalamento(supabase, conversa, 'Detecção automática via texto da resposta: ' + respostaFinal.substring(0, 100), config);
+      escalado = true;
+    }
   }
 
   // 6. Salva histórico atualizado
