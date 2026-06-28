@@ -69,16 +69,61 @@ function normalizeTelefone(tel: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: Verifica horário comercial
+// Helper: Obtém horário comercial dinâmico da base de conhecimento
 // ─────────────────────────────────────────────────────────────────────────────
 
-function isHorarioComercial(): boolean {
-  const agora = new Date();
+function obterHorarioComercial(baseConhecimento?: string): { active: boolean, textoExibicao: string } {
+  let inicio = 8;
+  let fim = 18;
+  let dias = [1, 2, 3, 4, 5, 6]; // seg-sáb (1..6)
+  let textoExibicao = '8h às 18h, de segunda a sábado';
+
+  if (baseConhecimento) {
+    try {
+      const parsed = JSON.parse(baseConhecimento);
+      let horarioStr = '';
+      if (parsed.fluxo_de_transbordo_horario) {
+        horarioStr = parsed.fluxo_de_transbordo_horario;
+      } else if (parsed.fluxo_de_transbordo) {
+        horarioStr = parsed.fluxo_de_transbordo;
+      }
+
+      if (horarioStr) {
+        const strLower = horarioStr.toLowerCase();
+        let labelDia = 'segunda a sábado';
+        if (strLower.includes('segunda a sexta') || strLower.includes('seg a sex') || strLower.includes('segunda à sexta')) {
+          dias = [1, 2, 3, 4, 5]; // seg-sex
+          labelDia = 'segunda a sexta-feira';
+        } else if (strLower.includes('segunda a sábado') || strLower.includes('seg a sab') || strLower.includes('segunda à sábado')) {
+          dias = [1, 2, 3, 4, 5, 6]; // seg-sáb
+          labelDia = 'segunda a sábado';
+        }
+
+        const hourMatches = [...horarioStr.matchAll(/(\d{1,2})(?:h|:00|:30|\s)/g)];
+        if (hourMatches.length >= 2) {
+          const h1 = parseInt(hourMatches[0][1], 10);
+          const h2 = parseInt(hourMatches[1][1], 10);
+          if (h1 >= 0 && h1 <= 24 && h2 >= 0 && h2 <= 24 && h1 < h2) {
+            inicio = h1;
+            fim = h2;
+          }
+        }
+        
+        textoExibicao = `${inicio}h às ${fim}h, de ${labelDia}`;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // Obter hora local em São Paulo (UTC-3)
+  const agora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
   const hora = agora.getHours();
-  const diaSemana = agora.getDay(); // 0=Dom, 6=Sab
-  return diaSemana >= 1 && diaSemana <= 6 &&
-         hora >= HORARIO_COMERCIAL_INICIO &&
-         hora < HORARIO_COMERCIAL_FIM;
+  const diaSemana = agora.getDay(); // 0=Dom, 1=Seg, ..., 6=Sáb
+
+  const active = dias.includes(diaSemana) && hora >= inicio && hora < fim;
+
+  return { active, textoExibicao };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,13 +176,13 @@ async function enviarMensagemUTalk(
 
 function gerarSystemPrompt(nomeAgente: string, alunosContext?: string, baseConhecimento?: string): string {
   const agora = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-  const horarioComercial = isHorarioComercial();
+  const { active: horarioComercial, textoExibicao } = obterHorarioComercial(baseConhecimento);
 
   let prompt = `Você é ${nomeAgente}, assistente virtual da Sport for Kids.
 Seu papel é atender responsáveis de alunos com empatia, clareza e agilidade pelo WhatsApp.
 
 DATA E HORA ATUAL: ${agora}
-HORÁRIO COMERCIAL (8h-18h, seg-sáb): ${horarioComercial ? 'SIM (equipe disponível)' : 'NÃO (fora do horário comercial)'}
+HORÁRIO DE ATENDIMENTO DA EQUIPE HUMANA (${textoExibicao}): ${horarioComercial ? 'SIM (equipe disponível)' : 'NÃO (fora do horário de atendimento)'}
 
 IDENTIDADE:
 - Você é um assistente virtual — não finjas ser humana, mas seja calorosa e próxima
@@ -605,11 +650,12 @@ export async function processarMensagem(
 
       // Se escalado, para o loop
       if (escalado) {
+        const { active: isComercial, textoExibicao } = obterHorarioComercial(config.baseConhecimento);
         respostaFinal = `Entendido! Estou encaminhando seu atendimento para um de nossos especialistas. 👥\n\n` +
           `Em breve, alguém da nossa equipe entrará em contato pelo WhatsApp. ` +
-          (isHorarioComercial()
+          (isComercial
             ? 'Aguarde, estamos no horário de atendimento! 🕐'
-            : 'Como estamos fora do horário comercial (8h-18h), entraremos em contato no próximo dia útil. 📅');
+            : `Como estamos fora do nosso horário de atendimento (${textoExibicao}), entraremos em contato no próximo dia útil. 📅`);
         break;
       }
     }
