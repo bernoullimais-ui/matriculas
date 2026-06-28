@@ -13824,23 +13824,47 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     const fromPhone = utalkChannel || body?.fromPhone || body?.channelPhone || body?.channel?.phone || body?.toPhone || '';
 
     // Extração de anexo/mídia (imagem, vídeo, áudio, documento) enviado pelo cliente no formato UTalk
-    const incomingMediaUrl = body?.Payload?.Content?.LastMessage?.MediaUrl 
-      || body?.Payload?.Content?.LastMessage?.File
-      || body?.Payload?.Content?.LastMessage?.Url
-      || body?.Payload?.Content?.MediaUrl
-      || body?.Payload?.Content?.File
-      || body?.Payload?.Content?.Url
-      || body?.mediaUrl
-      || body?.file
-      || body?.media;
+    let incomingMediaUrl = '';
+    let incomingMediaName = '';
 
-    const incomingMediaName = body?.Payload?.Content?.LastMessage?.MediaName
-      || body?.Payload?.Content?.LastMessage?.FileName
+    const rawFile = body?.Payload?.Content?.LastMessage?.File
+      || body?.Payload?.Content?.File
+      || body?.file;
+
+    if (rawFile) {
+      if (typeof rawFile === 'object') {
+        incomingMediaUrl = rawFile.Url || rawFile.url || '';
+        incomingMediaName = rawFile.Name || rawFile.name || '';
+      } else if (typeof rawFile === 'string') {
+        incomingMediaUrl = rawFile;
+      }
+    }
+
+    if (!incomingMediaUrl) {
+      const candidateUrl = body?.Payload?.Content?.LastMessage?.MediaUrl
+        || body?.Payload?.Content?.LastMessage?.Url
+        || body?.Payload?.Content?.MediaUrl
+        || body?.Payload?.Content?.Url
+        || body?.mediaUrl
+        || body?.media;
+
+      if (typeof candidateUrl === 'string') {
+        incomingMediaUrl = candidateUrl;
+      }
+    }
+
+    const candidateName = body?.Payload?.Content?.LastMessage?.MediaName
       || body?.Payload?.Content?.MediaName
-      || body?.Payload?.Content?.FileName
       || body?.mediaName
-      || body?.fileName
-      || (incomingMediaUrl ? incomingMediaUrl.split('/').pop()?.split('?')[0] : undefined);
+      || body?.fileName;
+
+    if (typeof candidateName === 'string') {
+      incomingMediaName = candidateName;
+    }
+
+    if (incomingMediaUrl && !incomingMediaName) {
+      incomingMediaName = incomingMediaUrl.split('/').pop()?.split('?')[0] || 'anexo';
+    }
     
     const incomingMsgText = (typeof mensagem === 'string') ? mensagem.trim() : '';
     if (!telefone || (!incomingMsgText && !incomingMediaUrl)) {
