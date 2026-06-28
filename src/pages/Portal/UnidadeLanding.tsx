@@ -102,8 +102,15 @@ export default function UnidadeLanding() {
         setPendingAction('experimental');
         setIsLoginModalOpen(true);
       }
-    } else if (action === 'enroll' || action === 'enrollment' || action === 'matricula') {
+    } else if (action === 'enroll' || action === 'enrollment' || action === 'matricula' || action === 'portal') {
       if (parsedGuardian) {
+        if (action === 'portal') {
+          setModalInitialStep('portal');
+          setModalInitialTab('dashboard');
+        } else {
+          setModalInitialStep(undefined);
+          setModalInitialTab(undefined);
+        }
         setIsEnrollmentModalOpen(true);
         // Clean query params
         const url = new URL(window.location.href);
@@ -111,7 +118,7 @@ export default function UnidadeLanding() {
         url.searchParams.delete('acao');
         window.history.replaceState({}, '', url.pathname + url.search);
       } else {
-        setPendingAction('matricula');
+        setPendingAction(action === 'portal' ? 'portal' : 'matricula');
         setIsLoginModalOpen(true);
       }
     }
