@@ -29,9 +29,27 @@ export default function PortalLogin() {
         if (data.token) sessionStorage.setItem('guardian_token', data.token);
         const guardianInfo = data.guardian || data;
         sessionStorage.setItem('guardian_data', JSON.stringify(guardianInfo));
+        localStorage.setItem('guardian', JSON.stringify(guardianInfo));
         
+        const alunos = guardianInfo.alunos || [];
+        let firstUnit = '';
+        if (alunos && Array.isArray(alunos)) {
+          for (const aluno of alunos) {
+            if (aluno.unidade) {
+              firstUnit = aluno.unidade;
+              break;
+            }
+          }
+        }
+
         toast.success('Bem-vindo à Área do Cliente!');
-        navigate('/area-do-cliente/painel');
+        
+        if (firstUnit) {
+          const slug = firstUnit.toLowerCase().replace(/\s+/g, '-');
+          window.location.href = `/portal/${slug}?action=portal`;
+        } else {
+          window.location.href = `/portal?action=portal`;
+        }
       } else {
         toast.error(data.error || 'Credenciais inválidas');
       }

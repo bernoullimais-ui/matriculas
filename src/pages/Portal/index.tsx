@@ -500,9 +500,16 @@ export default function PortalLandingPage() {
         url.searchParams.delete('acao');
         window.history.replaceState({}, '', url.pathname + url.search);
       }
-    } else if (action === 'enroll' || action === 'enrollment' || action === 'matricula') {
+    } else if (action === 'enroll' || action === 'enrollment' || action === 'matricula' || action === 'portal') {
       const stored = localStorage.getItem('guardian');
       if (stored) {
+        if (action === 'portal') {
+          setModalInitialStep('portal');
+          setModalInitialTab('dashboard');
+        } else {
+          setModalInitialStep(undefined);
+          setModalInitialTab(undefined);
+        }
         setIsEnrollmentModalOpen(true);
         // Clean query params
         const url = new URL(window.location.href);

@@ -505,7 +505,9 @@ export async function processarMensagem(
   ai: GoogleGenAI,
   telefone: string,
   mensagemTexto: string,
-  config: SofiaConfig
+  config: SofiaConfig,
+  mediaUrl?: string,
+  mediaName?: string
 ): Promise<{ resposta: string; escalado: boolean; conversaId: string }> {
   
   const telNorm = normalizeTelefone(telefone);
@@ -523,9 +525,16 @@ export async function processarMensagem(
     // Busca a última mensagem do usuário no histórico
     const ultimaUserMsg = [...conversa.historico].reverse().find(m => m.role === 'user');
     const ultimaUserMsgText = ultimaUserMsg?.parts?.map((p: any) => p.text || '').join('').trim();
+    const ultimaUserMediaPart = ultimaUserMsg?.parts?.find((p: any) => p.mediaUrl);
+    const ultimaUserMediaUrl = ultimaUserMediaPart ? (ultimaUserMediaPart as any).mediaUrl : '';
     
-    // Evita loop por retry de webhook: se for mesma mensagem de usuário em < 5 minutos
-    if (ultimaUserMsg && ultimaUserMsgText === mensagemTexto.trim() && tempoDesdeUltima < 300000) {
+    // Evita loop por retry de webhook: se for mesma mensagem de usuário e mesmo anexo em < 5 minutos
+    if (
+      ultimaUserMsg && 
+      ultimaUserMsgText === mensagemTexto.trim() && 
+      ultimaUserMediaUrl === (mediaUrl || '') &&
+      tempoDesdeUltima < 300000
+    ) {
       console.log(`[Sofia] Mensagem duplicada ignorada (retry/spam): ${telNorm}`);
       return { resposta: '', escalado: conversa.status === 'escalado', conversaId: conversa.id };
     }
@@ -537,11 +546,23 @@ export async function processarMensagem(
     }
   }
 
+  // Prepara as partes da mensagem do usuário
+  const userParts: any[] = [];
+  if (mensagemTexto.trim()) {
+    userParts.push({ text: mensagemTexto });
+  }
+  if (mediaUrl) {
+    userParts.push({
+      mediaUrl: mediaUrl,
+      mediaName: mediaName || 'Arquivo Anexo'
+    });
+  }
+
   // 2. Se a IA estiver desativada, apenas salva a mensagem no painel e ignora
   if (config.iaAtiva === false) {
     const historico: SofiaMessage[] = [
       ...conversa.historico,
-      { role: 'user', parts: [{ text: mensagemTexto }], timestamp: new Date().toISOString() }
+      { role: 'user', parts: userParts, timestamp: new Date().toISOString() }
     ];
     await salvarHistorico(supabase, conversa.id, historico);
     return {
@@ -554,7 +575,7 @@ export async function processarMensagem(
   // 3. Adiciona mensagem do usuário ao histórico E SALVA IMEDIATAMENTE (p/ evitar webhook retries)
   const historico: SofiaMessage[] = [
     ...conversa.historico,
-    { role: 'user', parts: [{ text: mensagemTexto }], timestamp: new Date().toISOString() }
+    { role: 'user', parts: userParts, timestamp: new Date().toISOString() }
   ];
   await salvarHistorico(supabase, conversa.id, historico);
 

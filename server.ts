@@ -13822,9 +13822,29 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     const telefone = utalkContact || body?.phone || body?.from || body?.sender || body?.contact?.phone || body?.toPhone;
     const mensagem = utalkText || body?.message?.text || body?.text || body?.content || body?.message || body?.body;
     const fromPhone = utalkChannel || body?.fromPhone || body?.channelPhone || body?.channel?.phone || body?.toPhone || '';
+
+    // Extração de anexo/mídia (imagem, vídeo, áudio, documento) enviado pelo cliente no formato UTalk
+    const incomingMediaUrl = body?.Payload?.Content?.LastMessage?.MediaUrl 
+      || body?.Payload?.Content?.LastMessage?.File
+      || body?.Payload?.Content?.LastMessage?.Url
+      || body?.Payload?.Content?.MediaUrl
+      || body?.Payload?.Content?.File
+      || body?.Payload?.Content?.Url
+      || body?.mediaUrl
+      || body?.file
+      || body?.media;
+
+    const incomingMediaName = body?.Payload?.Content?.LastMessage?.MediaName
+      || body?.Payload?.Content?.LastMessage?.FileName
+      || body?.Payload?.Content?.MediaName
+      || body?.Payload?.Content?.FileName
+      || body?.mediaName
+      || body?.fileName
+      || (incomingMediaUrl ? incomingMediaUrl.split('/').pop()?.split('?')[0] : undefined);
     
-    if (!telefone || !mensagem || typeof mensagem !== 'string' || !mensagem.trim()) {
-      console.log('[Sofia Webhook] Payload ignorado (sem telefone/mensagem):', JSON.stringify(body));
+    const incomingMsgText = (typeof mensagem === 'string') ? mensagem.trim() : '';
+    if (!telefone || (!incomingMsgText && !incomingMediaUrl)) {
+      console.log('[Sofia Webhook] Payload ignorado (sem telefone/mensagem/media):', JSON.stringify(body));
       return res.status(200).json({ ok: true, skipped: true });
     }
 
@@ -13843,7 +13863,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       || body?.Payload?.Content?.Id 
       || body?.Payload?.Content?.LastMessage?.Id;
 
-    const dedupeKey = messageId ? `msg-${messageId}` : `hash-${telNorm}-${mensagem.trim()}`;
+    const dedupeKey = messageId ? `msg-${messageId}` : `hash-${telNorm}-${incomingMsgText}-${incomingMediaUrl || ''}`;
     const { data: lockAcquired, error: lockError } = await supabase.rpc('try_acquire_webhook_lock', {
       lock_id: dedupeKey,
       interval_seconds: 15
@@ -13904,8 +13924,10 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         supabase,
         ai,
         telNorm,
-        mensagem,
-        config
+        mensagem || '',
+        config,
+        incomingMediaUrl,
+        incomingMediaName
       );
 
       // Envia resposta se não escalado (ou se tem resposta de escalamento)
