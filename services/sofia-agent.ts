@@ -262,8 +262,38 @@ IDENTIDADE:
     }
   }
 
+  let hasVinc = false;
   if (alunosContext) {
-    prompt += `\nINFORMAÇÃO OBTIDA AUTOMATICAMENTE DO BANCO DE DADOS PELO TELEFONE DO USUÁRIO:\n${alunosContext}\n\nSE ENCONTROU O RESPONSÁVEL, CUMPRIMENTE-O PELO NOME IMEDIATAMENTE (Você NÃO precisa pedir o nome dele, pois o sistema já identificou!).\n`;
+    prompt += `\nINFORMAÇÃO OBTIDA AUTOMATICAMENTE DO BANCO DE DADOS PELO TELEFONE DO USUÁRIO:\n${alunosContext}\n`;
+    try {
+      const parsed = JSON.parse(alunosContext);
+      if (parsed.encontrado && parsed.alunos && parsed.alunos.length > 0) {
+        hasVinc = true;
+        const first = parsed.alunos[0];
+        const responsavelNome = first.responsavel1 || first.responsavel2 || 'Responsável';
+        const nomesAlunos = parsed.alunos.map((a: any) => a.nome.split(' ')[0]).join(', ');
+        prompt += `
+[VÍNCULO CADASTRAL ENCONTRADO]
+O telefone pertence ao responsável: **${responsavelNome}**
+Filhos/dependentes cadastrados: **${nomesAlunos}**
+
+REGRA CRÍTICA DE SAUDAÇÃO E IDENTIFICAÇÃO:
+- O responsável e os filhos já foram identificados pelo número de WhatsApp acima.
+- Você DEVE iniciar cumprimentando o responsável pelo nome: "${responsavelNome}" e apresentar/citar os seus filhos.
+- NUNCA pergunte quem está falando ou se ele é responsável por algum aluno, pois isso já está identificado.
+- Vá direto ao ponto de forma calorosa!
+`;
+      }
+    } catch (e) {}
+  }
+
+  if (!hasVinc) {
+    prompt += `
+[VÍNCULO CADASTRAL NÃO ENCONTRADO]
+- Nenhum aluno foi encontrado no banco de dados para este número de WhatsApp.
+- Trate o contato com cortesia como um novo visitante (Lead).
+- Apresente-se (como ${nomeAgente}) e pergunte de forma simpática o nome dele e se ele é responsável por algum aluno ou se deseja conhecer as turmas.
+`;
   }
 
   prompt += `
@@ -282,9 +312,8 @@ FORA DO HORÁRIO COMERCIAL:
 - Para solicitações que dependem de ação humana, registre e informe prazo
 
 FLUXO DE IDENTIFICAÇÃO:
-- Ao iniciar, chame buscar_alunos_do_responsavel imediatamente
-- Se encontrar o responsável, cumprimente pelo nome e apresente os filhos
-- Se não encontrar, ofereça atendimento genérico (turmas, experimentais, nova matrícula)
+- Se o responsável foi identificado no bloco [VÍNCULO CADASTRAL ENCONTRADO], cumprimente-o pelo nome e apresente os filhos.
+- Se não foi identificado, pergunte o nome de forma simpática e ofereça atendimento genérico (turmas, experimentais, nova matrícula).
 
 CONFIRMAÇÃO OBRIGATÓRIA (antes de executar ações):
 - Cancelamento: "Posso confirmar a solicitação de cancelamento da matrícula de [ALUNO] na turma [TURMA]? Responda *SIM* para confirmar."
