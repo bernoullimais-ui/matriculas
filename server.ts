@@ -13823,6 +13823,16 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
    * O UTalk não suporta headers customizados, então usar: /webhook/whatsapp?token=SEU_TOKEN
    */
   app.post('/webhook/whatsapp', async (req, res) => {
+    // DEBUG: Salva o payload recebido do webhook na tabela processed_webhooks para inspeção
+    try {
+      await supabase.from('processed_webhooks').insert({
+        id: `DBG-${Date.now()}-${Math.random().toString(36).substring(7)}: ${JSON.stringify(req.body || {})}`,
+        created_at: new Date().toISOString()
+      });
+    } catch (dbErr) {
+      console.error('[Sofia Webhook Debug] Erro ao salvar payload de debug:', dbErr);
+    }
+
     // Validação do token — aceita via query param (?token=) ou header
     const token = req.query.token as string
       || req.headers['x-webhook-token'] as string
