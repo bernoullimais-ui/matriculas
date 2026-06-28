@@ -13798,6 +13798,24 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     return true;
   }
 
+  function extractUrl(val: any): string {
+    if (!val) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val === 'object') {
+      return val.Url || val.url || val.file || val.mediaUrl || val.media || '';
+    }
+    return '';
+  }
+
+  function extractName(val: any): string {
+    if (!val) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val === 'object') {
+      return val.Name || val.name || val.fileName || val.mediaName || '';
+    }
+    return '';
+  }
+
   /**
    * POST /webhook/whatsapp
    * Recebe mensagens do UTalk e processa com a Sofia.
@@ -13853,35 +13871,31 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       || body?.Payload?.Content?.File
       || body?.file;
 
-    if (rawFile) {
-      if (typeof rawFile === 'object') {
-        incomingMediaUrl = rawFile.Url || rawFile.url || '';
-        incomingMediaName = rawFile.Name || rawFile.name || '';
-      } else if (typeof rawFile === 'string') {
-        incomingMediaUrl = rawFile;
-      }
-    }
+    const rawMediaUrl = body?.Payload?.Content?.LastMessage?.MediaUrl
+      || body?.Payload?.Content?.LastMessage?.Url
+      || body?.Payload?.Content?.MediaUrl
+      || body?.Payload?.Content?.Url
+      || body?.mediaUrl
+      || body?.media;
 
-    if (!incomingMediaUrl) {
-      const candidateUrl = body?.Payload?.Content?.LastMessage?.MediaUrl
-        || body?.Payload?.Content?.LastMessage?.Url
-        || body?.Payload?.Content?.MediaUrl
-        || body?.Payload?.Content?.Url
-        || body?.mediaUrl
-        || body?.media;
-
-      if (typeof candidateUrl === 'string') {
-        incomingMediaUrl = candidateUrl;
-      }
-    }
-
-    const candidateName = body?.Payload?.Content?.LastMessage?.MediaName
+    const rawMediaName = body?.Payload?.Content?.LastMessage?.MediaName
+      || body?.Payload?.Content?.LastMessage?.FileName
       || body?.Payload?.Content?.MediaName
+      || body?.Payload?.Content?.FileName
       || body?.mediaName
       || body?.fileName;
 
-    if (typeof candidateName === 'string') {
-      incomingMediaName = candidateName;
+    if (rawFile) {
+      incomingMediaUrl = extractUrl(rawFile);
+      incomingMediaName = extractName(rawFile);
+    }
+
+    if (!incomingMediaUrl && rawMediaUrl) {
+      incomingMediaUrl = extractUrl(rawMediaUrl);
+    }
+
+    if (!incomingMediaName && rawMediaName) {
+      incomingMediaName = extractName(rawMediaName);
     }
 
     if (incomingMediaUrl && !incomingMediaName) {
