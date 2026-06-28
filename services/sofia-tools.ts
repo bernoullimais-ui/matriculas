@@ -308,7 +308,7 @@ export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<
     // Busca por whatsapp_1 ou whatsapp_2 em qualquer variante do número
     const { data: alunos, error } = await ctx.supabase
       .from('alunos')
-      .select('id, nome_completo, unidade, status_matricula, responsavel_1, whatsapp_1, responsavel_2, whatsapp_2, email, data_nascimento')
+      .select('id, nome_completo, unidade, unidade_origem_id, status_matricula, responsavel_1, whatsapp_1, responsavel_2, whatsapp_2, email, data_nascimento')
       .or(
         telVariants.map(t => `whatsapp_1.ilike.${t},whatsapp_2.ilike.${t}`).join(',')
       )
@@ -321,6 +321,21 @@ export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<
         encontrado: false,
         mensagem: 'Nenhum aluno encontrado para este número de telefone. O responsável pode ser um visitante ou o número não está cadastrado.'
       });
+    }
+
+    // Resolvendo nomes das unidades caso a coluna unidade esteja nula/vazia
+    const unitIds = [...new Set(alunos.map(a => a.unidade_origem_id).filter(Boolean))];
+    const unitMap: Record<string, string> = {};
+    if (unitIds.length > 0) {
+      const { data: units } = await ctx.supabase
+        .from('unidades')
+        .select('id, nome')
+        .in('id', unitIds);
+      if (units) {
+        units.forEach((u: any) => {
+          unitMap[u.id] = u.nome;
+        });
+      }
     }
 
     // Atualiza o nome do responsável na sessão da conversa, incluindo dependentes e unidade
@@ -337,7 +352,7 @@ export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<
         : (alunos[0].responsavel_1 || alunos[0].responsavel_2 || 'Responsável');
 
       const nomesAlunos = alunos.map(a => a.nome_completo.split(' ')[0]).join(', ');
-      const unidades = [...new Set(alunos.map(a => a.unidade).filter(Boolean))].join(', ');
+      const unidades = [...new Set(alunos.map(a => a.unidade || (a.unidade_origem_id ? unitMap[a.unidade_origem_id] : null)).filter(Boolean))].join(', ');
       
       const tituloResponsavel = `${responsavelNome} (${nomesAlunos} - ${unidades})`;
       
