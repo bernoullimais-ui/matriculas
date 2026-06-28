@@ -151,21 +151,63 @@ IDENTIDADE:
       try {
         const parsed = JSON.parse(trimmed);
         prompt += `\nBASE DE CONHECIMENTO (Informações e Regras da Unidade):\n`;
+        
+        // 1. Comportamento
         let comportamentoStr = '';
         if (parsed.comportamento_nome) comportamentoStr += `Nome do Assistente: ${parsed.comportamento_nome}\n`;
         if (parsed.comportamento_tom) comportamentoStr += `Tom de Voz: ${parsed.comportamento_tom}\n`;
         if (parsed.comportamento_persona) comportamentoStr += `Persona: ${parsed.comportamento_persona}\n`;
         if (parsed.comportamento_regras) comportamentoStr += `Diretrizes de Formatação: ${parsed.comportamento_regras}\n`;
         if (!comportamentoStr.trim() && parsed.comportamento) comportamentoStr = parsed.comportamento;
-
         if (comportamentoStr.trim()) prompt += `\n[COMPORTAMENTO, PERSONA E TOM DE VOZ]\n${comportamentoStr.trim()}\n`;
+        
+        // 2. Regras de Negócio
         if (parsed.regras_de_negocio) prompt += `\n[REGRAS DE NEGÓCIO E LIMITES OPERACIONAIS]\n${parsed.regras_de_negocio}\n`;
-        if (parsed.tabelas_banco) prompt += `\n[TABELAS DE BANCO DE DADOS RELACIONADAS]\n${parsed.tabelas_banco}\n`;
-        if (parsed.websites) prompt += `\n[WEBSITES E LINKS DE REFERÊNCIA]\n${parsed.websites}\n`;
-        if (parsed.documentos) prompt += `\n[DOCUMENTOS, MANUAIS E TERMOS]\n${parsed.documentos}\n`;
-        if (parsed.perguntas_respostas) prompt += `\n[PERGUNTAS E RESPOSTAS (FAQ)]\n${parsed.perguntas_respostas}\n`;
+        
+        // 3. Tabelas de Banco
+        if (Array.isArray(parsed.tabelas_banco) && parsed.tabelas_banco.length > 0) {
+          prompt += `\n[TABELAS DE BANCO DE DADOS DISPONÍVEIS PARA CONSULTA]\n`;
+          parsed.tabelas_banco.forEach((t: any) => {
+            prompt += `- Tabela: ${t.nome || ''}\n  Colunas: ${t.colunas || ''}\n  Filtro padrão: ${t.filtro || 'nenhum'}\n  Uso recomendado: ${t.descricao || ''}\n\n`;
+          });
+        }
+        
+        // 4. Websites
+        if (Array.isArray(parsed.websites) && parsed.websites.length > 0) {
+          prompt += `\n[WEBSITES E LINKS PARA INDICAÇÃO]\n`;
+          parsed.websites.forEach((w: any) => {
+            prompt += `- Link: ${w.url || ''} (${w.descricao || ''})\n`;
+          });
+          prompt += `\n`;
+        }
+        
+        // 5. Documentos
+        if (Array.isArray(parsed.documentos) && parsed.documentos.length > 0) {
+          prompt += `\n[DOCUMENTOS E MANUAIS INSTITUCIONAIS]\n`;
+          parsed.documentos.forEach((d: any) => {
+            prompt += `--- DOCUMENTO: ${d.nome || 'Sem Nome'} ---\n${d.conteudo || ''}\n\n`;
+          });
+        }
+        
+        // 6. FAQ
+        if (Array.isArray(parsed.perguntas_respostas) && parsed.perguntas_respostas.length > 0) {
+          prompt += `\n[PERGUNTAS E RESPOSTAS FREQUENTES (FAQ)]\n`;
+          parsed.perguntas_respostas.forEach((faq: any) => {
+            prompt += `P: ${faq.pergunta || ''}\nR: ${faq.resposta || ''}\n\n`;
+          });
+        }
+        
+        // 7. Script de Vendas
         if (parsed.script_de_vendas_e_objecoes) prompt += `\n[SCRIPT DE VENDAS E CONTORNO DE OBJEÇÕES]\n${parsed.script_de_vendas_e_objecoes}\n`;
-        if (parsed.fluxo_de_transbordo) prompt += `\n[REGRAS E FLUXO DE TRANSBORDO PARA HUMANO]\n${parsed.fluxo_de_transbordo}\n`;
+        
+        // 8. Transbordo
+        let transbordoStr = '';
+        if (parsed.fluxo_de_transbordo_condicoes) transbordoStr += `Quando transferir: ${parsed.fluxo_de_transbordo_condicoes}\n`;
+        if (parsed.fluxo_de_transbordo_mensagem) transbordoStr += `Mensagem de despedida humana: ${parsed.fluxo_de_transbordo_mensagem}\n`;
+        if (parsed.fluxo_de_transbordo_horario) transbordoStr += `Horários da equipe humana: ${parsed.fluxo_de_transbordo_horario}\n`;
+        if (!transbordoStr.trim() && parsed.fluxo_de_transbordo) transbordoStr = parsed.fluxo_de_transbordo;
+        if (transbordoStr.trim()) prompt += `\n[REGRAS E FLUXO DE TRANSBORDO PARA HUMANO]\n${transbordoStr.trim()}\n`;
+
         prompt += `\n`;
       } catch (e) {
         prompt += `\nBASE DE CONHECIMENTO (Informações e Regras da Unidade):\n${baseConhecimento}\n\n`;
