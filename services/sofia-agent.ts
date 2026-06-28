@@ -151,11 +151,14 @@ IDENTIDADE:
       try {
         const parsed = JSON.parse(trimmed);
         prompt += `\nBASE DE CONHECIMENTO (Informações e Regras da Unidade):\n`;
-        if (parsed.comportamento) prompt += `\n[COMPORTAMENTO E INSTRUÇÕES]\n${parsed.comportamento}\n`;
+        if (parsed.comportamento) prompt += `\n[COMPORTAMENTO, PERSONA E TOM DE VOZ]\n${parsed.comportamento}\n`;
+        if (parsed.regras_de_negocio) prompt += `\n[REGRAS DE NEGÓCIO E LIMITES OPERACIONAIS]\n${parsed.regras_de_negocio}\n`;
         if (parsed.tabelas_banco) prompt += `\n[TABELAS DE BANCO DE DADOS RELACIONADAS]\n${parsed.tabelas_banco}\n`;
-        if (parsed.websites) prompt += `\n[WEBSITES DE REFERÊNCIA]\n${parsed.websites}\n`;
-        if (parsed.documentos) prompt += `\n[DOCUMENTOS E REGRAS DE NEGÓCIO]\n${parsed.documentos}\n`;
+        if (parsed.websites) prompt += `\n[WEBSITES E LINKS DE REFERÊNCIA]\n${parsed.websites}\n`;
+        if (parsed.documentos) prompt += `\n[DOCUMENTOS, MANUAIS E TERMOS]\n${parsed.documentos}\n`;
         if (parsed.perguntas_respostas) prompt += `\n[PERGUNTAS E RESPOSTAS (FAQ)]\n${parsed.perguntas_respostas}\n`;
+        if (parsed.script_de_vendas_e_objecoes) prompt += `\n[SCRIPT DE VENDAS E CONTORNO DE OBJEÇÕES]\n${parsed.script_de_vendas_e_objecoes}\n`;
+        if (parsed.fluxo_de_transbordo) prompt += `\n[REGRAS E FLUXO DE TRANSBORDO PARA HUMANO]\n${parsed.fluxo_de_transbordo}\n`;
         prompt += `\n`;
       } catch (e) {
         prompt += `\nBASE DE CONHECIMENTO (Informações e Regras da Unidade):\n${baseConhecimento}\n\n`;
