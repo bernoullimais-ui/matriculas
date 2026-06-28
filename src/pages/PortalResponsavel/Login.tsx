@@ -27,7 +27,8 @@ export default function PortalLogin() {
       if (response.ok) {
         // Assume API returns a token or sets a cookie
         if (data.token) sessionStorage.setItem('guardian_token', data.token);
-        if (data.guardian) sessionStorage.setItem('guardian_data', JSON.stringify(data.guardian));
+        const guardianInfo = data.guardian || data;
+        sessionStorage.setItem('guardian_data', JSON.stringify(guardianInfo));
         
         toast.success('Bem-vindo à Área do Cliente!');
         navigate('/area-do-cliente/painel');
