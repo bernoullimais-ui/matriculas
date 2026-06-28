@@ -338,24 +338,30 @@ export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<
       }
     }
 
+    const matchesPhone = (dbPhone: string | null | undefined) => {
+      if (!dbPhone) return false;
+      const cleanDb = dbPhone.replace(/\D/g, '');
+      const cleanDbSem55 = cleanDb.startsWith('55') ? cleanDb.substring(2) : cleanDb;
+      const cleanDbSem9 = (cleanDbSem55.length === 11 && cleanDbSem55[2] === '9')
+        ? cleanDbSem55.substring(0, 2) + cleanDbSem55.substring(3)
+        : cleanDbSem55;
+      return cleanDbSem55 === telSem55 || cleanDbSem9 === telSem9;
+    };
+
+    const isResp1 = alunos.some(a => matchesPhone(a.whatsapp_1));
+    const isResp2 = alunos.some(a => matchesPhone(a.whatsapp_2));
+
+    const responsavelNome = (isResp2 && !isResp1)
+      ? (alunos[0].responsavel_2 || alunos[0].responsavel_1 || 'Responsável')
+      : (alunos[0].responsavel_1 || alunos[0].responsavel_2 || 'Responsável');
+
+    const nomesAlunos = alunos.map(a => a.nome_completo.split(' ')[0]).join(', ');
+    const unidades = [...new Set(alunos.map(a => a.unidade || (a.unidade_origem_id ? unitMap[a.unidade_origem_id] : null)).filter(Boolean))].join(', ');
+    
+    const tituloResponsavel = `${responsavelNome} (${nomesAlunos} - ${unidades})`;
+
     // Atualiza o nome do responsável na sessão da conversa, incluindo dependentes e unidade
     if (ctx.conversaId) {
-      // Find which responsavel matches the phone
-      const isResp2 = alunos.some(a => {
-        if (!a.whatsapp_2) return false;
-        const w2 = a.whatsapp_2.replace(/\D/g, '');
-        return w2.includes(telSem9) || telSem9.includes(w2);
-      });
-
-      const responsavelNome = isResp2
-        ? (alunos[0].responsavel_2 || alunos[0].responsavel_1 || 'Responsável')
-        : (alunos[0].responsavel_1 || alunos[0].responsavel_2 || 'Responsável');
-
-      const nomesAlunos = alunos.map(a => a.nome_completo.split(' ')[0]).join(', ');
-      const unidades = [...new Set(alunos.map(a => a.unidade || (a.unidade_origem_id ? unitMap[a.unidade_origem_id] : null)).filter(Boolean))].join(', ');
-      
-      const tituloResponsavel = `${responsavelNome} (${nomesAlunos} - ${unidades})`;
-      
       await ctx.supabase
         .from('conversas_whatsapp')
         .update({
@@ -368,6 +374,7 @@ export async function buscarAlunosDoResponsavel(ctx: SofiaToolContext): Promise<
     return JSON.stringify({
       encontrado: true,
       total: alunos.length,
+      responsavel_nome_detectado: responsavelNome,
       alunos: alunos.map(a => {
         let idade = null;
         if (a.data_nascimento) {

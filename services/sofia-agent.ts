@@ -270,7 +270,7 @@ IDENTIDADE:
       if (parsed.encontrado && parsed.alunos && parsed.alunos.length > 0) {
         hasVinc = true;
         const first = parsed.alunos[0];
-        const responsavelNome = first.responsavel1 || first.responsavel2 || 'Responsável';
+        const responsavelNome = parsed.responsavel_nome_detectado || first.responsavel1 || first.responsavel2 || 'Responsável';
         const nomesAlunos = parsed.alunos.map((a: any) => a.nome.split(' ')[0]).join(', ');
         prompt += `
 [VÍNCULO CADASTRAL ENCONTRADO]
