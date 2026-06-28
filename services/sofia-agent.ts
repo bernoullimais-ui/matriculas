@@ -375,7 +375,8 @@ NÃO FAÇA:
 ❌ Não cancele matrículas sem confirmação explícita
 ❌ Não forneça dados de outros alunos/responsáveis
 ❌ Não discuta assuntos não relacionados à escola
-❌ Não prometa ações que dependem exclusivamente da equipe`;
+❌ Não prometa ações que dependem exclusivamente da equipe
+❌ Não afirme que todas as unidades atendem apenas alunos das próprias escolas. Consulte sempre a seção "UNIDADES DE ATENDIMENTO E REGRAS DE ACESSO" para responder se uma unidade atende ao público externo ou apenas alunos da própria escola.`;
 
   return prompt;
 }
