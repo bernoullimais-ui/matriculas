@@ -408,6 +408,23 @@ async function carregarOuCriarSessao(
     return sessaoExistente as ConversaWhatsapp;
   }
 
+  // Cria nova sessão, herdando etiquetas da última sessão existente se houver
+  let etiquetasHerdadas: string[] = [];
+  try {
+    const { data: ultimaSessao } = await supabase
+      .from('conversas_whatsapp')
+      .select('etiquetas')
+      .eq('telefone', telNorm)
+      .order('created_at', { ascending: false })
+      .limit(1);
+      
+    if (ultimaSessao && ultimaSessao.length > 0 && Array.isArray(ultimaSessao[0].etiquetas)) {
+      etiquetasHerdadas = ultimaSessao[0].etiquetas;
+    }
+  } catch (err) {
+    console.error('[Sofia] Erro ao buscar última sessão para herdar etiquetas:', err);
+  }
+
   // Cria nova sessão
   const { data: novaSessao, error } = await supabase
     .from('conversas_whatsapp')
@@ -416,7 +433,8 @@ async function carregarOuCriarSessao(
       identidade_nome: identidadeNome,
       historico: [],
       status: 'ativo',
-      total_mensagens: 0
+      total_mensagens: 0,
+      etiquetas: etiquetasHerdadas
     })
     .select('*')
     .single();
