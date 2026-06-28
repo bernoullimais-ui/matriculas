@@ -8963,10 +8963,22 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
                     data_matricula: new Date().toISOString()
                   }).eq('id', matricula.id);
 
-                  if (responsavel) {
+                   if (responsavel) {
                     const studentName = matricula.alunos?.nome_completo || 'seu filho(a)';
                     const msg = `Olá ${responsavel.nome_completo}! O pagamento via PIX para a matrícula de ${studentName} foi confirmado com sucesso. Muito obrigado!`;
-                    await sendWhatsAppMessage(responsavel.telefone || '11999999999', responsavel.nome_completo, msg, matricula.unidade).catch(e => console.error("Erro whats webhook exceção pix", e));
+                    await sendWhatsAppMessage(responsavel.telefone || '11999999999', responsavel.nome_completo, msg, matricula.unidade)
+                      .then(async () => {
+                        const { error: updErr } = await supabase
+                          .from('matriculas')
+                          .update({ boas_vindas_enviada: true })
+                          .eq('id', matricula.id);
+                        if (updErr) {
+                          console.error(`[Webhook Pagar.me Exceção PIX] Erro ao marcar boas-vindas como enviada para matrícula ${matricula.id}:`, updErr.message);
+                        } else {
+                          console.log(`[Webhook Pagar.me Exceção PIX] Matrícula ${matricula.id} marcada com boas_vindas_enviada = true`);
+                        }
+                      })
+                      .catch(e => console.error("Erro whats webhook exceção pix", e));
                   }
                 }
               }
@@ -9374,7 +9386,17 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
                       guardian.nome_completo,
                       whatsappMsg,
                       matricula.unidade
-                    ).catch(e => console.error("Erro ao enviar WhatsApp de confirmação:", e));
+                    ).then(async () => {
+                      const { error: updErr } = await supabase
+                        .from('matriculas')
+                        .update({ boas_vindas_enviada: true })
+                        .eq('id', paymentData.matricula_id);
+                      if (updErr) {
+                        console.error(`[Webhook Pagar.me] Erro ao marcar boas-vindas como enviada para matrícula ${paymentData.matricula_id}:`, updErr.message);
+                      } else {
+                        console.log(`[Webhook Pagar.me] Matrícula ${paymentData.matricula_id} marcada com boas_vindas_enviada = true`);
+                      }
+                    }).catch(e => console.error("Erro ao enviar WhatsApp de confirmação:", e));
                   }
 
                   // Send Email with PDF
