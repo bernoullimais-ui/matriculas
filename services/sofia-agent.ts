@@ -151,7 +151,14 @@ IDENTIDADE:
       try {
         const parsed = JSON.parse(trimmed);
         prompt += `\nBASE DE CONHECIMENTO (Informações e Regras da Unidade):\n`;
-        if (parsed.comportamento) prompt += `\n[COMPORTAMENTO, PERSONA E TOM DE VOZ]\n${parsed.comportamento}\n`;
+        let comportamentoStr = '';
+        if (parsed.comportamento_nome) comportamentoStr += `Nome do Assistente: ${parsed.comportamento_nome}\n`;
+        if (parsed.comportamento_tom) comportamentoStr += `Tom de Voz: ${parsed.comportamento_tom}\n`;
+        if (parsed.comportamento_persona) comportamentoStr += `Persona: ${parsed.comportamento_persona}\n`;
+        if (parsed.comportamento_regras) comportamentoStr += `Diretrizes de Formatação: ${parsed.comportamento_regras}\n`;
+        if (!comportamentoStr.trim() && parsed.comportamento) comportamentoStr = parsed.comportamento;
+
+        if (comportamentoStr.trim()) prompt += `\n[COMPORTAMENTO, PERSONA E TOM DE VOZ]\n${comportamentoStr.trim()}\n`;
         if (parsed.regras_de_negocio) prompt += `\n[REGRAS DE NEGÓCIO E LIMITES OPERACIONAIS]\n${parsed.regras_de_negocio}\n`;
         if (parsed.tabelas_banco) prompt += `\n[TABELAS DE BANCO DE DADOS RELACIONADAS]\n${parsed.tabelas_banco}\n`;
         if (parsed.websites) prompt += `\n[WEBSITES E LINKS DE REFERÊNCIA]\n${parsed.websites}\n`;
