@@ -11,6 +11,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as fs from "fs";
 import { GoogleGenAI } from "@google/genai";
+import { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa } from "./services/sofia-agent.js";
 
 // Handle __dirname and __filename for both ESM and CJS environments
 const currentDirname = process.cwd();
@@ -13750,10 +13751,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   // SOFIA — AGENTE IA WHATSAPP
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // Importação lazy dos serviços da Sofia (evita ciclo na inicialização)
+  // Importação estática dos serviços da Sofia (otimização de cold starts)
   async function getSofiaServices() {
-    const { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa } = 
-      await import('./services/sofia-agent.js');
     return { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa };
   }
 
@@ -13847,7 +13846,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     const dedupeKey = messageId ? `msg-${messageId}` : `hash-${telNorm}-${mensagem.trim()}`;
     const { data: lockAcquired, error: lockError } = await supabase.rpc('try_acquire_webhook_lock', {
       lock_id: dedupeKey,
-      interval_seconds: 30
+      interval_seconds: 15
     });
 
     if (lockError) {
