@@ -174,7 +174,12 @@ async function enviarMensagemUTalk(
 // Gera System Prompt dinâmico
 // ─────────────────────────────────────────────────────────────────────────────
 
-function gerarSystemPrompt(nomeAgente: string, alunosContext?: string, baseConhecimento?: string): string {
+function gerarSystemPrompt(
+  nomeAgente: string, 
+  alunosContext?: string, 
+  baseConhecimento?: string,
+  unidadesContext?: string
+): string {
   const agora = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const { active: horarioComercial, textoExibicao } = obterHorarioComercial(baseConhecimento);
 
@@ -260,6 +265,10 @@ IDENTIDADE:
     } else {
       prompt += `\nBASE DE CONHECIMENTO (Informações e Regras da Unidade):\n${baseConhecimento}\n\n`;
     }
+  }
+
+  if (unidadesContext) {
+    prompt += `\nUNIDADES DE ATENDIMENTO E REGRAS DE ACESSO (Quem atende público externo vs apenas alunos da própria escola):\n${unidadesContext}\n\n`;
   }
 
   let hasVinc = false;
@@ -589,6 +598,23 @@ export async function processarMensagem(
     console.error('[Sofia] Erro ao buscar alunos para o prompt:', e);
   }
 
+  // 6.5. Busca informações de acesso das unidades (público externo vs restrito)
+  let unidadesContextStr: string | undefined;
+  try {
+    const { data: dbUnidades } = await supabase
+      .from('unidades')
+      .select('nome, access_type')
+      .eq('ativo', true);
+      
+    if (dbUnidades && dbUnidades.length > 0) {
+      unidadesContextStr = dbUnidades
+        .map(u => `- ${u.nome}: ${u.access_type || 'Restrito a alunos'}`)
+        .join('\n');
+    }
+  } catch (e) {
+    console.error('[Sofia] Erro ao buscar unidades para o prompt:', e);
+  }
+
   // 6. Chama o Gemini com Function Calling
   let respostaFinal = '';
   let escalado = false;
@@ -608,7 +634,7 @@ export async function processarMensagem(
           parts: m.parts
         })),
         config: {
-          systemInstruction: gerarSystemPrompt(config.nomeAgente, alunosContextStr, config.baseConhecimento),
+          systemInstruction: gerarSystemPrompt(config.nomeAgente, alunosContextStr, config.baseConhecimento, unidadesContextStr),
           temperature: 0.4,
           tools: [{
             functionDeclarations: SOFIA_TOOL_DECLARATIONS
