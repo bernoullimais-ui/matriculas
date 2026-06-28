@@ -343,11 +343,11 @@ Sempre que o usuário solicitar instruções sobre como realizar alguma das aç�
 
 1. 📝 MATRÍCULA E CADASTRO ONLINE:
    • Link: https://www.sportforkids.com.br/portal?acao=matricula (ou o portal da unidade se já souber a unidade, ex: https://www.sportforkids.com.br/portal/{unidade-slug}?acao=matricula)
-   • Passo a passo: Acesse o link ➡️ Escolha a modalidade/turma desejada (se estiver no celular, use o filtro no topo) ➡️ Clique/toque em "Matrícula" ➡️ Preencha os dados do Responsável e do Aluno ➡️ Escolha o plano e aceite o Contrato ➡️ Finalize o pagamento por Pix ou Cartão.
+   • Passo a passo: Acesse o link ➡️ Escolha seu dependente já cadastrado ou cadastre um novo ➡️ Clique em "Próximo passo >" ➡️ Selecione a "Unidade de Atendimento", a "Turma Desejada" e Confirme o Aceite dos Termos ➡️ Clique em "Próximo Passo >" ➡️ Preencha os dados de pagamento do Responsável ➡️ Clique em "Finalizar matrícula"
 
 2. 🧪 AULA EXPERIMENTAL (Agendamento):
    • Link: https://www.sportforkids.com.br/portal?acao=experimental (ou o portal da unidade se já souber a unidade, ex: https://www.sportforkids.com.br/portal/{unidade-slug}?acao=experimental)
-   • Passo a passo: Acesse o link ➡️ Escolha a modalidade/turma desejada (se estiver no celular, use o filtro no topo) ➡️ Clique/toque em "Aula Experimental" ➡️ Preencha os dados solicitados e envie para finalizar o agendamento.
+   • Passo a passo: Acesse o link ➡️ Escolha seu dependente já cadastrado ou cadastre um novo ➡️ Selecione a "Unidade de Atendimento" e a "Turma Desejada" ➡️ Indique a Data da aula Experimental ➡️ Clique em "Agendar Aula Experimental"
    • Observação: Sempre envie o link direto acima para o agendamento online imediato pelo próprio responsável.
 
 3. 🛍️ COMPRA DE PRODUTOS (Loja):
