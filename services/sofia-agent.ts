@@ -352,7 +352,7 @@ Sempre que o usuário solicitar instruções sobre como realizar alguma das aç�
 
 3. 🛍️ COMPRA DE PRODUTOS (Loja):
    • Link: https://www.sportforkids.com.br/loja
-   • Passo a passo: Acesse o link ➡️ Selecione o produto (kimono) e o tamanho ➡️ Adicione ao Carrinho ➡️ Clique no carrinho (topo direito) ➡️ Preencha seus dados e finalize a compra com o pagamento via cartão de crédito ou PIX
+   • Passo a passo: Acesse o link ➡️ Selecione o produto e o tamanho ➡️ Adicione ao Carrinho ➡️ Clique no carrinho (topo direito) ➡️ Preencha seus dados e finalize a compra com o pagamento via cartão de crédito ou PIX
 
 4. 🏆 INSCRIÇÃO EM EVENTOS:
    • Link: https://www.sportforkids.com.br/eventos
