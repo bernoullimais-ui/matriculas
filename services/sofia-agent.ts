@@ -146,7 +146,23 @@ IDENTIDADE:
 `;
 
   if (baseConhecimento) {
-    prompt += `\nBASE DE CONHECIMENTO (Informações e Regras da Unidade):\n${baseConhecimento}\n\n`;
+    const trimmed = baseConhecimento.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        prompt += `\nBASE DE CONHECIMENTO (Informações e Regras da Unidade):\n`;
+        if (parsed.comportamento) prompt += `\n[COMPORTAMENTO E INSTRUÇÕES]\n${parsed.comportamento}\n`;
+        if (parsed.tabelas_banco) prompt += `\n[TABELAS DE BANCO DE DADOS RELACIONADAS]\n${parsed.tabelas_banco}\n`;
+        if (parsed.websites) prompt += `\n[WEBSITES DE REFERÊNCIA]\n${parsed.websites}\n`;
+        if (parsed.documentos) prompt += `\n[DOCUMENTOS E REGRAS DE NEGÓCIO]\n${parsed.documentos}\n`;
+        if (parsed.perguntas_respostas) prompt += `\n[PERGUNTAS E RESPOSTAS (FAQ)]\n${parsed.perguntas_respostas}\n`;
+        prompt += `\n`;
+      } catch (e) {
+        prompt += `\nBASE DE CONHECIMENTO (Informações e Regras da Unidade):\n${baseConhecimento}\n\n`;
+      }
+    } else {
+      prompt += `\nBASE DE CONHECIMENTO (Informações e Regras da Unidade):\n${baseConhecimento}\n\n`;
+    }
   }
 
   if (alunosContext) {
