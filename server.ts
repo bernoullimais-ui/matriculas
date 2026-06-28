@@ -14488,6 +14488,42 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     }
   });
 
+  // ─── POST /api/admin/sofia/conversas/:id/pausar ───────────────────────────────
+  // Admin pausa o atendimento da IA (muda para atendimento humano / escalado)
+  app.post('/api/admin/sofia/conversas/:id/pausar', async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const allowedUnits = await getAdminAllowedUnits((req as any).user);
+      if (allowedUnits !== null) {
+        if (allowedUnits.length === 0) {
+          return res.status(403).json({ error: 'Acesso negado.' });
+        }
+        const { data: hasAccess, error: accessError } = await supabase.rpc('check_conversa_acesso', {
+          p_conversa_id: id,
+          p_allowed_units: allowedUnits
+        });
+        if (accessError) throw accessError;
+        if (!hasAccess) {
+          return res.status(403).json({ error: 'Acesso negado a esta conversa por restrição de unidade.' });
+        }
+      }
+
+      const { error: updateError } = await supabase
+        .from('conversas_whatsapp')
+        .update({
+          status: 'escalado',
+          escalado_at: new Date().toISOString()
+        })
+        .eq('id', id);
+
+      if (updateError) throw updateError;
+      res.json({ ok: true, status: 'escalado' });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── POST /api/admin/sofia/conversas/:id/encerrar ────────────────────────────
   // Encerra uma conversa definitivamente
   app.post('/api/admin/sofia/conversas/:id/encerrar', async (req, res) => {
