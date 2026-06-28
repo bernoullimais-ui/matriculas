@@ -509,16 +509,13 @@ export async function processarMensagem(
     conversaId: conversa.id
   };
 
-  // 6. Se é a PRIMEIRA mensagem da conversa, busca alunos antecipadamente para injetar no prompt
+  // 6. Busca alunos antecipadamente para injetar no prompt
   let alunosContextStr: string | undefined;
-  if (isPrimeiraMensagem) {
-    // Para evitar importar a função e ter dependência circular, podemos chamar o executarFerramenta diretamente
-    try {
-      const res = await executarFerramenta('buscar_alunos_do_responsavel', {}, toolCtx, conversa.id);
-      alunosContextStr = typeof res === 'string' ? res : JSON.stringify(res);
-    } catch (e) {
-      console.error('[Sofia] Erro ao buscar alunos no início da conversa:', e);
-    }
+  try {
+    const res = await executarFerramenta('buscar_alunos_do_responsavel', {}, toolCtx, conversa.id);
+    alunosContextStr = typeof res === 'string' ? res : JSON.stringify(res);
+  } catch (e) {
+    console.error('[Sofia] Erro ao buscar alunos para o prompt:', e);
   }
 
   // 6. Chama o Gemini com Function Calling
