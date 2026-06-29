@@ -199,6 +199,32 @@ export default function EnrollmentsTab() {
     }
   };
 
+  const handleMigrateToPagarme = async (matriculaId: string) => {
+    if (!window.confirm('Deseja iniciar o processo de migração desta assinatura Wix para o Pagar.me? O cliente receberá o link de checkout via WhatsApp.')) {
+      return;
+    }
+    setLoadingAction(true);
+    try {
+      const res = await fetch(`/api/admin/enrollment/${matriculaId}/initiate-wix-migration`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${sessionStorage.getItem('admin_token') || ''}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(data.message || 'Convite de migração enviado com sucesso!');
+      } else {
+        toast.error(data.error || 'Erro ao iniciar migração.');
+      }
+    } catch (err: any) {
+      toast.error('Erro de conexão ao iniciar migração.');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
   const executeTransferEnrollment = async () => {
     if (!transferModal.enrollmentId) return;
     setLoadingAction(true);
@@ -541,6 +567,15 @@ export default function EnrollmentsTab() {
                                       >
                                         <Edit size={16} />
                                       </button>
+                                      {e.matricula.hasWixPayments && matriculaStatus === 'ativo' && (
+                                        <button 
+                                          onClick={() => handleMigrateToPagarme(e.matricula.id)}
+                                          className="p-1 text-purple-500 hover:text-purple-600 hover:bg-purple-50 rounded transition-colors"
+                                          title="Migrar Pagamento para Pagar.me"
+                                        >
+                                          <RefreshCw size={16} />
+                                        </button>
+                                      )}
                                     </>
                                   )}
                                   <button 

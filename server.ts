@@ -317,6 +317,45 @@ async function sendWhatsAppMessage(toPhone: string, contactName: string, message
   }
 }
 
+async function cancelWixOrder(wixOrderId: string) {
+  const apiKey = process.env.WIX_API_KEY;
+  const accountId = process.env.WIX_ACCOUNT_ID;
+  const siteIds = [];
+  if (process.env.WIX_SITE_ID) siteIds.push(process.env.WIX_SITE_ID);
+  else siteIds.push('b4fb0ff7-7e69-4f24-8cd5-5551ce7720b1');
+  if (process.env.WIX_SITE_ID_2) siteIds.push(process.env.WIX_SITE_ID_2);
+
+  if (!apiKey || !accountId) {
+    console.error("[Wix Cancel] Erro: Variáveis WIX_API_KEY ou WIX_ACCOUNT_ID ausentes.");
+    return false;
+  }
+
+  let cancelled = false;
+  for (const siteId of siteIds) {
+    try {
+      console.log(`[Wix Cancel] Tentando cancelar pedido ${wixOrderId} no site ${siteId}...`);
+      await axios.post(`https://www.wixapis.com/pricing-plans/v2/orders/${wixOrderId}/cancel`, {
+        effectiveAt: "IMMEDIATELY"
+      }, {
+        headers: {
+          'Authorization': apiKey,
+          'wix-account-id': accountId,
+          'wix-site-id': siteId,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log(`[Wix Cancel] Pedido ${wixOrderId} cancelado com sucesso no Wix (Site ${siteId}).`);
+      cancelled = true;
+      break;
+    } catch (err: any) {
+      console.warn(`[Wix Cancel] Falha ao cancelar pedido no site ${siteId}:`, err.response?.data || err.message);
+    }
+  }
+  return cancelled;
+}
+
+
 const recentNotifications = new Map<string, number>();
 
 async function sendPaymentFailureNotification(guardianId: string, studentName: string, className: string, reason: string, unidadeName?: string, matriculaId?: string) {
@@ -6496,6 +6535,35 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
         }
       }
 
+      // 2.9 Cancelar assinatura no Wix (se existir)
+      try {
+        const { data: wixPayments } = await supabase
+          .from('pagamentos_wix')
+          .select('id_pedido, id_provedor_pagamento')
+          .eq('matricula_id', enrollmentId)
+          .limit(10);
+
+        let wixOrderId = null;
+        if (wixPayments && wixPayments.length > 0) {
+          const withOrderId = wixPayments.find(w => w.id_pedido);
+          if (withOrderId) {
+            wixOrderId = withOrderId.id_pedido;
+          } else {
+            const withProv = wixPayments.find(w => w.id_provedor_pagamento);
+            if (withProv && withProv.id_provedor_pagamento) {
+              wixOrderId = withProv.id_provedor_pagamento.split('-cycle-')[0];
+            }
+          }
+        }
+
+        if (wixOrderId) {
+          console.log(`[Cancelamento] Encontrada assinatura Wix ${wixOrderId} para a matrícula ${enrollmentId}. Iniciando cancelamento...`);
+          await cancelWixOrder(wixOrderId);
+        }
+      } catch (wixErr: any) {
+        console.error(`[Cancelamento] Erro no fluxo de cancelamento Wix:`, wixErr.message);
+      }
+
       // 3. Cancelar assinatura no Pagar.me (se existir)
       const { data: allPayments } = await supabase
         .from('pagamentos')
@@ -6621,6 +6689,59 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/admin/enrollment/:id/initiate-wix-migration
+  // Rota administrativa para disparar a solicitação de migração do Wix para o Pagar.me
+  app.post('/api/admin/enrollment/:id/initiate-wix-migration', requireAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const { data: matricula, error: matError } = await supabase
+        .from('matriculas')
+        .select('*, alunos(*)')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (matError || !matricula) {
+        return res.status(404).json({ error: 'Matrícula não encontrada' });
+      }
+
+      const aluno = Array.isArray(matricula.alunos) ? matricula.alunos[0] : matricula.alunos;
+      if (!aluno || !aluno.responsavel_id) {
+        return res.status(400).json({ error: 'Estudante ou responsável não vinculado a esta matrícula' });
+      }
+
+      const { data: guardian } = await supabase
+        .from('responsaveis')
+        .select('*')
+        .eq('id', aluno.responsavel_id)
+        .maybeSingle();
+
+      if (!guardian || !guardian.telefone) {
+        return res.status(400).json({ error: 'Responsável não possui telefone celular cadastrado' });
+      }
+
+      // Prepara e envia a mensagem de migração
+      const guardianName = (guardian.nome_completo || '').trim();
+      const studentName = aluno.nome_completo || 'seu filho(a)';
+      const checkoutUrl = `${process.env.APP_URL || 'https://matriculas.sportforkids.com.br'}/pagar/${id}`;
+      
+      const msg = `Olá, *${guardianName}*! Para garantir a continuidade das aulas de *${studentName}* na modalidade de cobrança recorrente, solicitamos a atualização cadastral do seu cartão de crédito em nosso novo sistema.
+
+Por favor, clique no link seguro abaixo para cadastrar o seu cartão e regularizar a mensalidade:
+
+${checkoutUrl}
+
+Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposição. 🏆`;
+
+      await sendWhatsAppMessage(guardian.telefone, guardian.nome_completo, msg, matricula.unidade);
+
+      res.json({ success: true, message: 'Mensagem de migração enviada com sucesso!' });
+    } catch (e: any) {
+      console.error('[Migration Wix] Erro ao iniciar migração:', e);
+      res.status(500).json({ error: e.message });
     }
   });
 
@@ -6926,18 +7047,21 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
         { data: responsaveis, error: rError },
         { data: alunos, error: aError },
         { data: matriculas, error: mError },
-        { data: pagamentos, error: pError }
+        { data: pagamentos, error: pError },
+        { data: pagamentosWix, error: pwError }
       ] = await Promise.all([
         fetchAll('responsaveis', 'id, nome_completo, email, telefone, cpf'),
         fetchAll('alunos', 'id, nome_completo, serie_ano, responsavel_id, data_nascimento'),
         fetchAll('matriculas', 'id, aluno_id, turma, unidade, status, data_cancelamento, data_matricula, plano'),
-        fetchAll('pagamentos', 'id, responsavel_id, matricula_id, status, metodo_pagamento, data_vencimento, valor, pagarme, data_pagamento')
+        fetchAll('pagamentos', 'id, responsavel_id, matricula_id, status, metodo_pagamento, data_vencimento, valor, pagarme, data_pagamento'),
+        fetchAll('pagamentos_wix', 'id, matricula_id')
       ]);
 
       if (rError) throw rError;
       if (aError) throw aError;
       if (mError) throw mError;
       if (pError) throw pError;
+      if (pwError) throw pwError;
 
       // Join the data in memory to match the expected frontend structure
       const result = (responsaveis || []).map(r => {
@@ -6946,6 +7070,10 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
           .map(a => ({
             ...a,
             matriculas: (matriculas || []).filter(m => String(m.aluno_id).trim() === String(a.id).trim())
+              .map(m => ({
+                ...m,
+                hasWixPayments: (pagamentosWix || []).some(w => String(w.matricula_id).trim() === String(m.id).trim())
+              }))
           }));
         
         const rPagamentos = (pagamentos || []).filter(p => p.responsavel_id === r.id);
@@ -13339,8 +13467,53 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         .maybeSingle();
 
       if (!matricula) throw new Error("Matrícula não encontrada");
-      if (matricula.status === 'ativo' || matricula.status === 'Ativo') {
-        throw new Error("Esta matrícula já está ativa e paga.");
+
+      // Permitimos checkout manual de matrículas ativas para viabilizar troca de cartão e migração de gateway
+
+      // 1. Cancelar assinatura antiga do Pagar.me (se existir)
+      if (matricula.pagarme_subscription_id) {
+        try {
+          const secretKey = getPagarmeSecretKey();
+          const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+          await axios.delete(`https://api.pagar.me/core/v5/subscriptions/${matricula.pagarme_subscription_id}`, {
+            headers: {
+              'Authorization': `Basic ${authHeader}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          console.log(`[Checkout Manual] Assinatura Pagar.me antiga ${matricula.pagarme_subscription_id} cancelada com sucesso.`);
+        } catch (err: any) {
+          console.warn(`[Checkout Manual] Erro ao cancelar assinatura antiga Pagar.me:`, err.response?.data || err.message);
+        }
+      }
+
+      // 2. Cancelar assinatura antiga do Wix (se existir)
+      try {
+        const { data: wixPayments } = await supabase
+          .from('pagamentos_wix')
+          .select('id_pedido, id_provedor_pagamento')
+          .eq('matricula_id', matriculaId)
+          .limit(10);
+
+        let wixOrderId = null;
+        if (wixPayments && wixPayments.length > 0) {
+          const withOrderId = wixPayments.find(w => w.id_pedido);
+          if (withOrderId) {
+            wixOrderId = withOrderId.id_pedido;
+          } else {
+            const withProv = wixPayments.find(w => w.id_provedor_pagamento);
+            if (withProv && withProv.id_provedor_pagamento) {
+              wixOrderId = withProv.id_provedor_pagamento.split('-cycle-')[0];
+            }
+          }
+        }
+
+        if (wixOrderId) {
+          console.log(`[Checkout Manual] Encontrada assinatura Wix ${wixOrderId} para a matrícula ${matriculaId}. Cancelando no Wix...`);
+          await cancelWixOrder(wixOrderId);
+        }
+      } catch (wixErr: any) {
+        console.error(`[Checkout Manual] Erro no fluxo de cancelamento Wix:`, wixErr.message);
       }
 
       const aluno = Array.isArray(matricula.alunos) ? matricula.alunos[0] : matricula.alunos;
@@ -13404,7 +13577,9 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       await supabase.from('matriculas').update({ 
         pagarme_subscription_id: subscription.id,
-        plano: matricula.plano || 'Mensal'
+        plano: matricula.plano || 'Mensal',
+        status: 'ativo',
+        data_matricula: matricula.data_matricula || new Date().toISOString()
       }).eq('id', matriculaId);
 
       // Register coupon usage if a coupon was used

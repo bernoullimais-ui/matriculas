@@ -386,6 +386,88 @@ NÃO FAÇA:
 // Gerenciamento de Sessão
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Helper to resolve student and responsible information for a phone number
+async function resolverEstudantesEResponsavelParaTelefone(
+  supabase: SupabaseClient,
+  telNorm: string,
+  identidadeNome: string
+): Promise<{ responsavel_nome: string | null; aluno_ids: string[] }> {
+  try {
+    const telSem55 = telNorm.startsWith('55') ? telNorm.substring(2) : telNorm;
+    const telSem9 = (telSem55.length === 11 && telSem55[2] === '9') 
+      ? telSem55.substring(0, 2) + telSem55.substring(3) 
+      : telSem55;
+
+    const createWildcard = (t: string) => '*' + t.split('').join('*') + '*';
+    
+    const telVariants = [
+      createWildcard(telSem55),
+      createWildcard('55' + telSem55),
+      ...(telSem55 !== telSem9 ? [
+        createWildcard(telSem9),
+        createWildcard('55' + telSem9)
+      ] : [])
+    ];
+
+    const orQuery = telVariants.map(t => `whatsapp_1.ilike.${t},whatsapp_2.ilike.${t}`).join(',');
+
+    const { data: alunos, error } = await supabase
+      .from('alunos')
+      .select('id, nome_completo, unidade, unidade_origem_id, responsavel_1, whatsapp_1, responsavel_2, whatsapp_2')
+      .or(orQuery)
+      .limit(10);
+
+    if (error || !alunos || alunos.length === 0) {
+      return { responsavel_nome: null, aluno_ids: [] };
+    }
+
+    // Resolve units
+    const unitIds = [...new Set(alunos.map(a => a.unidade_origem_id).filter(Boolean))];
+    const unitMap: Record<string, string> = {};
+    if (unitIds.length > 0) {
+      const { data: units } = await supabase
+        .from('unidades')
+        .select('id, nome')
+        .in('id', unitIds);
+      if (units) {
+        units.forEach((u: any) => {
+          unitMap[u.id] = u.nome;
+        });
+      }
+    }
+
+    const matchesPhone = (dbPhone: string | null | undefined) => {
+      if (!dbPhone) return false;
+      const cleanDb = dbPhone.replace(/\D/g, '');
+      const cleanDbSem55 = cleanDb.startsWith('55') ? cleanDb.substring(2) : cleanDb;
+      const cleanDbSem9 = (cleanDbSem55.length === 11 && cleanDbSem55[2] === '9')
+        ? cleanDbSem55.substring(0, 2) + cleanDbSem55.substring(3)
+        : cleanDbSem55;
+      return cleanDbSem55 === telSem55 || cleanDbSem9 === telSem9;
+    };
+
+    const isResp1 = alunos.some(a => matchesPhone(a.whatsapp_1));
+    const isResp2 = alunos.some(a => matchesPhone(a.whatsapp_2));
+
+    const responsavelNome = (isResp2 && !isResp1)
+      ? (alunos[0].responsavel_2 || alunos[0].responsavel_1 || 'Responsável')
+      : (alunos[0].responsavel_1 || alunos[0].responsavel_2 || 'Responsável');
+
+    const nomesAlunos = alunos.map(a => a.nome_completo.split(' ')[0]).join(', ');
+    const unidades = [...new Set(alunos.map(a => a.unidade || (a.unidade_origem_id ? unitMap[a.unidade_origem_id] : null)).filter(Boolean))].join(', ');
+    
+    const tituloResponsavel = `${responsavelNome} (${nomesAlunos} - ${unidades})`;
+
+    return {
+      responsavel_nome: tituloResponsavel,
+      aluno_ids: alunos.map(a => a.id)
+    };
+  } catch (e) {
+    console.error('[Sofia] Erro ao resolver estudantes/responsável para o telefone:', e);
+    return { responsavel_nome: null, aluno_ids: [] };
+  }
+}
+
 async function carregarOuCriarSessao(
   supabase: SupabaseClient,
   telefone: string,
@@ -406,6 +488,28 @@ async function carregarOuCriarSessao(
     .single();
 
   if (sessaoExistente) {
+    // Se a sessão existente não tiver o nome do responsável ou aluno_ids, tenta resolver e atualizar
+    if (!sessaoExistente.responsavel_nome || !sessaoExistente.aluno_ids || sessaoExistente.aluno_ids.length === 0) {
+      try {
+        const resolved = await resolverEstudantesEResponsavelParaTelefone(supabase, telNorm, identidadeNome);
+        if (resolved.responsavel_nome) {
+          const { data: updatedSessao } = await supabase
+            .from('conversas_whatsapp')
+            .update({
+              responsavel_nome: resolved.responsavel_nome,
+              aluno_ids: resolved.aluno_ids
+            })
+            .eq('id', sessaoExistente.id)
+            .select('*')
+            .single();
+          if (updatedSessao) {
+            return updatedSessao as ConversaWhatsapp;
+          }
+        }
+      } catch (e) {
+        console.error('[Sofia] Erro ao associar responsável na sessão existente:', e);
+      }
+    }
     return sessaoExistente as ConversaWhatsapp;
   }
 
@@ -426,6 +530,14 @@ async function carregarOuCriarSessao(
     console.error('[Sofia] Erro ao buscar última sessão para herdar etiquetas:', err);
   }
 
+  // Resolve aluno_ids e responsavel_nome antes de criar
+  let resolvedInfo = { responsavel_nome: null, aluno_ids: [] };
+  try {
+    resolvedInfo = await resolverEstudantesEResponsavelParaTelefone(supabase, telNorm, identidadeNome);
+  } catch (err) {
+    console.error('[Sofia] Erro ao resolver estudantes/responsável para novo telefone:', err);
+  }
+
   // Cria nova sessão
   const { data: novaSessao, error } = await supabase
     .from('conversas_whatsapp')
@@ -435,7 +547,9 @@ async function carregarOuCriarSessao(
       historico: [],
       status: 'ativo',
       total_mensagens: 0,
-      etiquetas: etiquetasHerdadas
+      etiquetas: etiquetasHerdadas,
+      responsavel_nome: resolvedInfo.responsavel_nome,
+      aluno_ids: resolvedInfo.aluno_ids
     })
     .select('*')
     .single();
