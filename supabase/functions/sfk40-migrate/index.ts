@@ -44,7 +44,7 @@ const steps = [
       ('Colégio Bunny',        'bunny',           'externa'),
       ('Colégio Oficina',      'oficina',         'externa'),
       ('AKA Dojo',             'aka-dojo',        'externa'),
-      ('FLUIR Pit',            'fluir-pit',       'externa')
+      ('FLUIR Pituba',         'fluir_pituba',    'externa')
     ON CONFLICT (slug) DO NOTHING`,
   },
   {

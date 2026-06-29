@@ -2935,14 +2935,14 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
       if (error) throw error;
       const map: Record<string, { views: number; sessions: Set<string> }> = {};
       (data || []).forEach((r: any) => {
-        const dia = r.created_at.split('T')[0];
+        const dia = r.created_at.substring(0, 10);
         if (!map[dia]) map[dia] = { views: 0, sessions: new Set() };
         map[dia].views++;
         map[dia].sessions.add(r.session_id);
       });
       const result = [];
       for (let i = dias - 1; i >= 0; i--) {
-        const d = new Date(Date.now() - i * 86400000).toISOString().split('T')[0];
+        const d = new Date(Date.now() - i * 86400000).toISOString().substring(0, 10);
         result.push({ dia: d, views: map[d]?.views || 0, visitantes: map[d]?.sessions.size || 0 });
       }
       res.json(result);
@@ -14088,10 +14088,84 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     // UTalk pode enviar diferentes formatos — suportamos os principais
     const body = req.body;
 
+    const utalkContact = body?.Payload?.Contact?.PhoneNumber || body?.Payload?.Content?.Contact?.PhoneNumber;
+    const utalkText = body?.Payload?.Content?.LastMessage?.Content || body?.Payload?.Content?.Text || body?.Payload?.Content?.Body;
+    const utalkChannel = body?.Payload?.Channel?.PhoneNumber || body?.Payload?.Content?.Channel?.PhoneNumber;
+    
+    const telefone = utalkContact || body?.phone || body?.from || body?.sender || body?.contact?.phone || body?.toPhone;
+    const mensagem = utalkText || body?.message?.text || body?.text || body?.content || body?.message || body?.body;
+    const fromPhone = utalkChannel || body?.fromPhone || body?.channelPhone || body?.channel?.phone || body?.toPhone || '';
+
+    const fromNorm = fromPhone.replace(/\D/g, '');
+    const telNorm = telefone ? String(telefone).replace(/\D/g, '') : '';
+
+    // Extração de reações e messageId
+    const reactions = body?.Payload?.Content?.LastMessage?.reactions 
+      || body?.Payload?.Content?.LastMessage?.Reactions 
+      || body?.Payload?.LastMessage?.reactions 
+      || body?.Payload?.LastMessage?.Reactions 
+      || body?.reactions;
+
+    const messageId = body?.Payload?.Content?.LastMessage?.Id
+      || body?.Payload?.MessageId 
+      || body?.MessageId 
+      || body?.id 
+      || body?.Payload?.Id 
+      || body?.Payload?.Content?.Id;
+
+    // Se houver reações associadas a uma mensagem, atualiza o histórico
+    if (messageId && reactions && Array.isArray(reactions) && telNorm) {
+      try {
+        const { data: conversa } = await supabase
+          .from('conversas_whatsapp')
+          .select('id, historico')
+          .eq('telefone', telNorm)
+          .neq('status', 'encerrado')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (conversa && conversa.historico) {
+          let alterou = false;
+          const novoHistorico = conversa.historico.map((msg: any) => {
+            if (msg.id === messageId) {
+              msg.reactions = reactions;
+              alterou = true;
+            }
+            return msg;
+          });
+
+          if (alterou) {
+            await supabase
+              .from('conversas_whatsapp')
+              .update({ historico: novoHistorico })
+              .eq('id', conversa.id);
+            console.log(`[Sofia Webhook] Reações atualizadas para mensagem ${messageId} na conversa ${conversa.id}`);
+          }
+        }
+      } catch (err) {
+        console.error('[Sofia Webhook] Erro ao atualizar reações no histórico:', err);
+      }
+    }
+
+    const isReactionEvent = String(body?.Payload?.Content?.LastMessage?.MessageType || body?.messageType || '').toLowerCase() === 'reaction'
+      || body?.event === 'message_reaction'
+      || body?.type === 'reaction';
+
+    if (isReactionEvent) {
+      return res.status(200).json({ ok: true, processed: 'reaction_updated' });
+    }
+
     // Ignora mensagens ENVIADAS (direction: 'out' ou 'outbound') — só processa RECEBIDAS
     const direction = String(body?.direction || body?.type || body?.messageType || body?.Payload?.Direction || '').toLowerCase();
     if (direction === 'out' || direction === 'outbound' || direction === 'sent') {
       return res.status(200).json({ ok: true, skipped: 'outgoing_message' });
+    }
+
+    // Ignora se o Source não for 'contact' (se a mensagem foi enviada por um atendente/membro, bot, sistema, etc.)
+    const source = String(body?.Payload?.LastMessage?.Source || body?.Payload?.Content?.LastMessage?.Source || body?.Payload?.Source || body?.Payload?.Content?.Source || '').toLowerCase();
+    if (source && source !== 'contact') {
+      return res.status(200).json({ ok: true, skipped: `message_from_source_${source}` });
     }
     
     // Ignora ecos de mensagens enviadas pelos atendentes (padrão *[Nome]* ou *[Nome]*:)
@@ -14105,18 +14179,6 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     if (evento === 'new_conversation' || evento === 'conversation_created') {
       return res.status(200).json({ ok: true, skipped: 'new_conversation_event' });
     }
-    
-    // Extrai dados da mensagem recebida (formato UTalk)
-    const utalkContact = body?.Payload?.Contact?.PhoneNumber || body?.Payload?.Content?.Contact?.PhoneNumber;
-    const utalkText = body?.Payload?.Content?.LastMessage?.Content || body?.Payload?.Content?.Text || body?.Payload?.Content?.Body;
-    const utalkChannel = body?.Payload?.Channel?.PhoneNumber || body?.Payload?.Content?.Channel?.PhoneNumber;
-    
-    const telefone = utalkContact || body?.phone || body?.from || body?.sender || body?.contact?.phone || body?.toPhone;
-    const mensagem = utalkText || body?.message?.text || body?.text || body?.content || body?.message || body?.body;
-    const fromPhone = utalkChannel || body?.fromPhone || body?.channelPhone || body?.channel?.phone || body?.toPhone || '';
-
-    const fromNorm = fromPhone.replace(/\D/g, '');
-    const telNorm = telefone.replace(/\D/g, '');
 
     // Busca a identidade correspondente pelo canal ou padrão para pegar o utalk_token
     let identity: any = null;
@@ -14167,13 +14229,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       incomingMediaName = extractName(rawMediaName);
     }
 
-    // Prioriza o ID da mensagem real sobre o ID do Chat
-    const messageId = body?.Payload?.Content?.LastMessage?.Id
-      || body?.Payload?.MessageId 
-      || body?.MessageId 
-      || body?.id 
-      || body?.Payload?.Id 
-      || body?.Payload?.Content?.Id;
+    // messageId já foi extraído no início do webhook
 
     const messageType = String(body?.Payload?.Content?.LastMessage?.MessageType || body?.messageType || '').toLowerCase();
     const isMediaMsg = ['image', 'video', 'audio', 'document', 'file', 'sticker'].includes(messageType);
@@ -14290,7 +14346,9 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         mensagem || '',
         config,
         incomingMediaUrl,
-        incomingMediaName
+        incomingMediaName,
+        messageId,
+        reactions
       );
 
       // Envia resposta se não escalado (ou se tem resposta de escalamento)
@@ -14814,6 +14872,15 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         throw new Error(`UTalk error: ${errText}`);
       }
 
+      // Tenta obter o ID da mensagem enviada retornado pelo UTalk
+      let sentMessageId = '';
+      try {
+        const resData = await utalkRes.json();
+        sentMessageId = resData?.id || resData?.MessageId || resData?.messageId || '';
+      } catch (e) {
+        console.warn('[Sofia Responder] Não foi possível analisar o JSON de retorno do UTalk:', e);
+      }
+
       // Adiciona mensagem ao histórico como mensagem do "model" (atendente)
       const partData: any = { text: `[Atendente - ${attendantName}]\n${mensagem || ''}` };
       if (finalMediaUrl) {
@@ -14824,9 +14891,11 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       const historicoAtualizado = [
         ...(conversa.historico || []),
         {
+          id: sentMessageId || `sent-${Date.now()}`,
           role: 'model',
           parts: [partData],
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          reactions: []
         }
       ];
 
@@ -14840,6 +14909,123 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       res.json({ ok: true });
     } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── POST /api/admin/sofia/conversas/:id/mensagens/:messageId/reagir ───────────
+  // Admin envia/remove uma reação para uma mensagem
+  app.post('/api/admin/sofia/conversas/:id/mensagens/:messageId/reagir', async (req, res) => {
+    try {
+      const { id, messageId } = req.params;
+      const { emoji } = req.body;
+
+      // Validação de acesso por unidade
+      const { data: conversa, error: convError } = await supabase
+        .from('conversas_whatsapp')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (convError || !conversa) {
+        return res.status(404).json({ error: 'Conversa não encontrada.' });
+      }
+
+      const dbUser = await supabase
+        .from('usuarios')
+        .select('id, nivel, unidade')
+        .eq('auth_id', (req as any).user.id)
+        .maybeSingle()
+        .then(r => r.data);
+
+      let allowedUnits: string[] | null = [];
+      if (dbUser) {
+        const nivelLower = (dbUser.nivel || '').toLowerCase();
+        const unidadeLower = (dbUser.unidade || '').toLowerCase();
+        const isMaster = nivelLower.includes('master') || 
+                         nivelLower.includes('start') || 
+                         unidadeLower.includes('todas') || 
+                         unidadeLower.includes('gestao global');
+        if (isMaster) {
+          allowedUnits = null;
+        } else {
+          allowedUnits = (dbUser.unidade || '').split(',').map((u: string) => u.trim()).filter(Boolean);
+        }
+      }
+
+      const operatorId = dbUser?.id || null;
+
+      if (allowedUnits !== null) {
+        if (allowedUnits.length === 0 && !operatorId) {
+          return res.status(403).json({ error: 'Acesso negado.' });
+        }
+        const { data: hasAccess, error: accessError } = await supabase.rpc('check_conversa_acesso', {
+          p_conversa_id: id,
+          p_allowed_units: allowedUnits,
+          p_user_id: operatorId
+        });
+        if (accessError) throw accessError;
+        if (!hasAccess) {
+          return res.status(403).json({ error: 'Acesso negado a esta conversa por restrição de unidade.' });
+        }
+      }
+
+      // Busca config da identidade para pegar token
+      const { data: identidade } = await supabase
+        .from('identidades')
+        .select('utalk_token, utalk_organization_id')
+        .eq('nome', conversa.identidade_nome)
+        .single();
+
+      if (!identidade?.utalk_token) {
+        return res.status(400).json({ error: 'UTalk não configurado para esta unidade' });
+      }
+
+      // Envia reação ao UTalk
+      const utalkReactionUrl = 'https://app-utalk.umbler.com/api/v1/messages/reactions/';
+      const utalkRes = await fetch(utalkReactionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${identidade.utalk_token}`
+        },
+        body: JSON.stringify({
+          organizationId: identidade.utalk_organization_id || '',
+          messageId: messageId,
+          emoji: emoji || null
+        })
+      });
+
+      if (!utalkRes.ok) {
+        const errText = await utalkRes.text();
+        throw new Error(`Erro UTalk ao reagir: ${errText}`);
+      }
+
+      // Atualiza o histórico localmente para refletir o estado de imediato
+      const novoHistorico = (conversa.historico || []).map((msg: any) => {
+        if (msg.id === messageId) {
+          const reacoesAtuais = msg.reactions || [];
+          let novasReacoes = reacoesAtuais.filter((r: any) => r.source !== 'User');
+          if (emoji) {
+            novasReacoes.push({
+              emoji,
+              source: 'User',
+              eventAtUTC: new Date().toISOString()
+            });
+          }
+          msg.reactions = novasReacoes;
+        }
+        return msg;
+      });
+
+      await supabase
+        .from('conversas_whatsapp')
+        .update({ historico: novoHistorico })
+        .eq('id', id);
+
+      res.json({ ok: true });
+    } catch (e: any) {
+      console.error('[Sofia Reagir] Erro:', e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -15128,7 +15314,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       // Distribuição por dia
       const porDia: Record<string, number> = {};
       conversas.forEach(c => {
-        const dia = c.created_at?.split('T')[0] || '';
+        const dia = c.created_at ? c.created_at.substring(0, 10) : '';
         porDia[dia] = (porDia[dia] || 0) + 1;
       });
 

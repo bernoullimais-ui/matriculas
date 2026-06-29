@@ -19,9 +19,11 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface SofiaMessage {
+  id?: string;
   role: 'user' | 'model';
   parts: any[];  // Suporta text parts, function calls e function responses
   timestamp?: string; // Horário exato da mensagem
+  reactions?: any[];
 }
 
 export interface ConversaWhatsapp {
@@ -622,7 +624,9 @@ export async function processarMensagem(
   mensagemTexto: string,
   config: SofiaConfig,
   mediaUrl?: string,
-  mediaName?: string
+  mediaName?: string,
+  messageId?: string,
+  reactions?: any[]
 ): Promise<{ resposta: string; escalado: boolean; conversaId: string }> {
   
   const telNorm = normalizeTelefone(telefone);
@@ -680,7 +684,13 @@ export async function processarMensagem(
   if (config.iaAtiva === false) {
     const historico: SofiaMessage[] = [
       ...conversa.historico,
-      { role: 'user', parts: userParts, timestamp: new Date().toISOString() }
+      { 
+        id: messageId,
+        role: 'user', 
+        parts: userParts, 
+        timestamp: new Date().toISOString(),
+        reactions: reactions || []
+      }
     ];
     await salvarHistorico(supabase, conversa.id, historico);
     return {
@@ -693,7 +703,13 @@ export async function processarMensagem(
   // 3. Adiciona mensagem do usuário ao histórico E SALVA IMEDIATAMENTE (p/ evitar webhook retries)
   const historico: SofiaMessage[] = [
     ...conversa.historico,
-    { role: 'user', parts: userParts, timestamp: new Date().toISOString() }
+    { 
+      id: messageId,
+      role: 'user', 
+      parts: userParts, 
+      timestamp: new Date().toISOString(),
+      reactions: reactions || []
+    }
   ];
   await salvarHistorico(supabase, conversa.id, historico);
 
