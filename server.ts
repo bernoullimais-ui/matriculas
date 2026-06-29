@@ -11,7 +11,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as fs from "fs";
 import { GoogleGenAI } from "@google/genai";
-import { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa } from "./services/sofia-agent.js";
+import { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa, pausarConversa } from "./services/sofia-agent.js";
 
 // Handle __dirname and __filename for both ESM and CJS environments
 const currentDirname = process.cwd();
@@ -14027,7 +14027,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
   // Importação estática dos serviços da Sofia (otimização de cold starts)
   async function getSofiaServices() {
-    return { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa };
+    return { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa, pausarConversa };
   }
 
   const UTALK_URL = process.env.UTALK_URL || 'https://app-utalk.umbler.com/api/v1/messages/simplified/';
