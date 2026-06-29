@@ -234,6 +234,83 @@ async function sendWhatsAppMessage(toPhone: string, contactName: string, message
     }
 
     console.log(`WhatsApp message sent successfully to ${toPhone} via Edge Function`);
+
+    // Registra a mensagem enviada no histórico da conversas_whatsapp para aparecer no painel
+    try {
+      let identidadeName = 'Sport for Kids';
+      if (unidadeName) {
+        const { data: mappingData } = await supabase
+          .from('unidades_mapping')
+          .select('identidade')
+          .eq('nome', unidadeName.trim())
+          .maybeSingle();
+        
+        identidadeName = mappingData?.identidade;
+        
+        if (!identidadeName) {
+          const { data: fallbackMapping } = await supabase
+            .from('unidades_mapping')
+            .select('identidade')
+            .eq('nome_unidade', unidadeName.trim())
+            .maybeSingle();
+          identidadeName = fallbackMapping?.identidade || 'Sport for Kids';
+        }
+      }
+
+      const telNorm = toPhone.replace(/\D/g, '');
+      const { data: existingConvs } = await supabase
+        .from('conversas_whatsapp')
+        .select('*')
+        .eq('telefone', telNorm)
+        .eq('identidade_nome', identidadeName)
+        .neq('status', 'encerrado')
+        .order('ultima_mensagem_at', { ascending: false })
+        .limit(1);
+
+      const partData = { text: `[Sistema]\n${message}` };
+      const timestamp = new Date().toISOString();
+
+      if (existingConvs && existingConvs.length > 0) {
+        const conv = existingConvs[0];
+        const historicoAtualizado = [
+          ...(conv.historico || []),
+          {
+            role: 'model',
+            parts: [partData],
+            timestamp
+          }
+        ];
+
+        await supabase
+          .from('conversas_whatsapp')
+          .update({
+            historico: historicoAtualizado,
+            ultima_mensagem_at: timestamp
+          })
+          .eq('id', conv.id);
+      } else {
+        const historicoInicial = [
+          {
+            role: 'model',
+            parts: [partData],
+            timestamp
+          }
+        ];
+
+        await supabase
+          .from('conversas_whatsapp')
+          .insert({
+            telefone: telNorm,
+            identidade_nome: identidadeName,
+            status: 'ativo',
+            total_mensagens: 1,
+            historico: historicoInicial,
+            responsavel_nome: contactName || ''
+          });
+      }
+    } catch (histErr) {
+      console.error("Erro ao registrar histórico de envio de WhatsApp:", histErr);
+    }
   } catch (error) {
     console.error("Error sending WhatsApp message via Edge Function:", error);
     throw error;
