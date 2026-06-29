@@ -14160,11 +14160,12 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
                   });
                 }
                 msg.reactions = novasReacoes;
-              } else if (Array.isArray(reactions)) {
-                // Se veio como array no LastMessage, sobrescreve tudo
+                alterou = true;
+              } else if (Array.isArray(reactions) && reactions.length > 0) {
+                // Se veio como array no LastMessage com elementos, sobrescreve tudo
                 msg.reactions = reactions;
+                alterou = true;
               }
-              alterou = true;
             }
             return msg;
           });
