@@ -14100,21 +14100,39 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     const telNorm = telefone ? String(telefone).replace(/\D/g, '') : '';
 
     // Extração de reações e messageId
-    const reactions = body?.Payload?.Content?.LastMessage?.reactions 
+    const lmr = body?.Payload?.Content?.LastMessageReaction 
+      || body?.Payload?.LastMessageReaction 
+      || body?.Payload?.Content?.lastMessageReaction 
+      || body?.Payload?.lastMessageReaction;
+
+    let reactions = body?.Payload?.Content?.LastMessage?.reactions 
       || body?.Payload?.Content?.LastMessage?.Reactions 
       || body?.Payload?.LastMessage?.reactions 
       || body?.Payload?.LastMessage?.Reactions 
       || body?.reactions;
 
-    const messageId = body?.Payload?.Content?.LastMessage?.Id
+    let messageId = body?.Payload?.Content?.LastMessage?.Id
       || body?.Payload?.MessageId 
       || body?.MessageId 
       || body?.id 
       || body?.Payload?.Id 
       || body?.Payload?.Content?.Id;
 
+    if (lmr) {
+      messageId = lmr.messageId || lmr.MessageId || messageId;
+      if (lmr.emoji) {
+        reactions = [{
+          emoji: lmr.emoji,
+          source: lmr.source || 'Contact',
+          eventAtUTC: lmr.eventAtUTC || new Date().toISOString()
+        }];
+      } else {
+        reactions = []; // Indica que a reação foi removida
+      }
+    }
+
     // Se houver reações associadas a uma mensagem, atualiza o histórico
-    if (messageId && reactions && Array.isArray(reactions) && telNorm) {
+    if (messageId && telNorm) {
       try {
         const { data: conversa } = await supabase
           .from('conversas_whatsapp')
@@ -14129,7 +14147,23 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
           let alterou = false;
           const novoHistorico = conversa.historico.map((msg: any) => {
             if (msg.id === messageId) {
-              msg.reactions = reactions;
+              const reacoesAtuais = msg.reactions || [];
+              if (lmr) {
+                // Se veio do lmr, atualiza especificamente a reação daquela fonte (Contact)
+                const sourceToFilter = lmr.source || 'Contact';
+                let novasReacoes = reacoesAtuais.filter((r: any) => r.source !== sourceToFilter);
+                if (lmr.emoji) {
+                  novasReacoes.push({
+                    emoji: lmr.emoji,
+                    source: sourceToFilter,
+                    eventAtUTC: lmr.eventAtUTC || new Date().toISOString()
+                  });
+                }
+                msg.reactions = novasReacoes;
+              } else if (Array.isArray(reactions)) {
+                // Se veio como array no LastMessage, sobrescreve tudo
+                msg.reactions = reactions;
+              }
               alterou = true;
             }
             return msg;
@@ -14148,7 +14182,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       }
     }
 
-    const isReactionEvent = String(body?.Payload?.Content?.LastMessage?.MessageType || body?.messageType || '').toLowerCase() === 'reaction'
+    const isReactionEvent = !!lmr 
+      || String(body?.Payload?.Content?.LastMessage?.MessageType || body?.messageType || '').toLowerCase() === 'reaction'
       || body?.event === 'message_reaction'
       || body?.type === 'reaction';
 
