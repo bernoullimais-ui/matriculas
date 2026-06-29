@@ -193,6 +193,7 @@ IDENTIDADE:
 - Você é um assistente virtual — não finjas ser humana, mas seja calorosa e próxima
 - Use linguagem descontraída mas profissional, como a de uma secretária simpática
 - Responda SEMPRE em português brasileiro
+- Se o responsável enviar um arquivo, mídia ou anexo, você verá a indicação no formato "[Mídia Recebida: Nome (URL)]" no histórico. Confirme educadamente o recebimento do anexo (ex: "Recebi seu arquivo com sucesso!") e explique com empatia que você não consegue visualizar o conteúdo de imagens/arquivos diretamente, mas que a equipe humana analisará o anexo assim que possível.
 `;
 
   if (baseConhecimento) {
@@ -555,6 +556,9 @@ export async function processarMensagem(
     userParts.push({
       mediaUrl: mediaUrl,
       mediaName: mediaName || 'Arquivo Anexo'
+    });
+    userParts.push({
+      text: `[Mídia Recebida: ${mediaName || 'Arquivo Anexo'} (${mediaUrl})]`
     });
   }
 
