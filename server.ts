@@ -15116,15 +15116,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         }
       }
 
-      const { error: updateError } = await supabase
-        .from('conversas_whatsapp')
-        .update({
-          status: 'escalado',
-          escalado_at: new Date().toISOString()
-        })
-        .eq('id', id);
-
-      if (updateError) throw updateError;
+      const { pausarConversa } = await getSofiaServices();
+      await pausarConversa(supabase, id);
       res.json({ ok: true, status: 'escalado' });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

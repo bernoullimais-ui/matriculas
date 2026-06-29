@@ -998,22 +998,119 @@ export async function buscarConfigSofia(
 // Marcar conversa como resolvida (Admin action)
 // ─────────────────────────────────────────────────────────────────────────────
 
+function obterTelefoneNormalizadoParaGrupo(phone: string): string {
+  if (!phone || typeof phone !== 'string') return '';
+  let clean = phone.replace(/\D/g, '');
+  if (clean.startsWith('55') && clean.length > 10) {
+    clean = clean.substring(2);
+  }
+  if (clean.length === 11 && clean[2] === '9') {
+    clean = clean.substring(0, 2) + clean.substring(3);
+  }
+  return clean;
+}
+
 export async function resolverConversa(
   supabase: SupabaseClient,
   conversaId: string
 ): Promise<void> {
-  await supabase
+  const { data: conversa } = await supabase
     .from('conversas_whatsapp')
-    .update({ status: 'ativo', escalado_at: null })
-    .eq('id', conversaId);
+    .select('telefone')
+    .eq('id', conversaId)
+    .single();
+
+  if (conversa) {
+    const { data: todas } = await supabase
+      .from('conversas_whatsapp')
+      .select('id, telefone');
+    
+    if (todas) {
+      const targetNorm = obterTelefoneNormalizadoParaGrupo(conversa.telefone);
+      const sessoesParaAtualizar = todas.filter(t => obterTelefoneNormalizadoParaGrupo(t.telefone) === targetNorm);
+      const ids = sessoesParaAtualizar.map(s => s.id);
+      
+      await supabase
+        .from('conversas_whatsapp')
+        .update({ status: 'ativo', escalado_at: null })
+        .in('id', ids);
+    }
+  } else {
+    await supabase
+      .from('conversas_whatsapp')
+      .update({ status: 'ativo', escalado_at: null })
+      .eq('id', conversaId);
+  }
 }
 
 export async function encerrarConversa(
   supabase: SupabaseClient,
   conversaId: string
 ): Promise<void> {
-  await supabase
+  const { data: conversa } = await supabase
     .from('conversas_whatsapp')
-    .update({ status: 'encerrado', encerrado_at: new Date().toISOString() })
-    .eq('id', conversaId);
+    .select('telefone')
+    .eq('id', conversaId)
+    .single();
+
+  if (conversa) {
+    const { data: todas } = await supabase
+      .from('conversas_whatsapp')
+      .select('id, telefone');
+    
+    if (todas) {
+      const targetNorm = obterTelefoneNormalizadoParaGrupo(conversa.telefone);
+      const sessoesParaAtualizar = todas.filter(t => obterTelefoneNormalizadoParaGrupo(t.telefone) === targetNorm);
+      const ids = sessoesParaAtualizar.map(s => s.id);
+      
+      await supabase
+        .from('conversas_whatsapp')
+        .update({ status: 'encerrado', encerrado_at: new Date().toISOString() })
+        .in('id', ids);
+    }
+  } else {
+    await supabase
+      .from('conversas_whatsapp')
+      .update({ status: 'encerrado', encerrado_at: new Date().toISOString() })
+      .eq('id', conversaId);
+  }
+}
+
+export async function pausarConversa(
+  supabase: SupabaseClient,
+  conversaId: string
+): Promise<void> {
+  const { data: conversa } = await supabase
+    .from('conversas_whatsapp')
+    .select('telefone')
+    .eq('id', conversaId)
+    .single();
+
+  if (conversa) {
+    const { data: todas } = await supabase
+      .from('conversas_whatsapp')
+      .select('id, telefone');
+    
+    if (todas) {
+      const targetNorm = obterTelefoneNormalizadoParaGrupo(conversa.telefone);
+      const sessoesParaAtualizar = todas.filter(t => obterTelefoneNormalizadoParaGrupo(t.telefone) === targetNorm);
+      const ids = sessoesParaAtualizar.map(s => s.id);
+      
+      await supabase
+        .from('conversas_whatsapp')
+        .update({
+          status: 'escalado',
+          escalado_at: new Date().toISOString()
+        })
+        .in('id', ids);
+    }
+  } else {
+    await supabase
+      .from('conversas_whatsapp')
+      .update({
+        status: 'escalado',
+        escalado_at: new Date().toISOString()
+      })
+      .eq('id', conversaId);
+  }
 }
