@@ -13873,6 +13873,23 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     const mensagem = utalkText || body?.message?.text || body?.text || body?.content || body?.message || body?.body;
     const fromPhone = utalkChannel || body?.fromPhone || body?.channelPhone || body?.channel?.phone || body?.toPhone || '';
 
+    const fromNorm = fromPhone.replace(/\D/g, '');
+    const telNorm = telefone.replace(/\D/g, '');
+
+    // Busca a identidade correspondente pelo canal ou padrão para pegar o utalk_token
+    let identity: any = null;
+    try {
+      const { data: idents } = await supabase.from('identidades').select('*');
+      if (idents && idents.length > 0) {
+        identity = idents.find(i => 
+          (i.utalk_organization_id && body?.Payload?.Content?.Organization?.Id === i.utalk_organization_id)
+          || (i.utalk_from_phone && fromNorm === i.utalk_from_phone.replace(/\D/g, ''))
+        ) || idents[0];
+      }
+    } catch (dbErr) {
+      console.error('[Sofia Webhook] Erro ao buscar identidades no início:', dbErr);
+    }
+
     // Extração de anexo/mídia (imagem, vídeo, áudio, documento) enviado pelo cliente no formato UTalk
     let incomingMediaUrl = '';
     let incomingMediaName = '';
@@ -13908,6 +13925,49 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       incomingMediaName = extractName(rawMediaName);
     }
 
+    // Prioriza o ID da mensagem real sobre o ID do Chat
+    const messageId = body?.Payload?.Content?.LastMessage?.Id
+      || body?.Payload?.MessageId 
+      || body?.MessageId 
+      || body?.id 
+      || body?.Payload?.Id 
+      || body?.Payload?.Content?.Id;
+
+    const messageType = String(body?.Payload?.Content?.LastMessage?.MessageType || body?.messageType || '').toLowerCase();
+    const isMediaMsg = ['image', 'video', 'audio', 'document', 'file', 'sticker'].includes(messageType);
+
+    // Se a mensagem for de mídia e a URL veio vazia (ou em processamento), tenta buscar via API do UTalk
+    if (isMediaMsg && !incomingMediaUrl && messageId && identity?.utalk_token) {
+      console.log(`[Sofia Webhook] Mídia detectada em processamento. Buscando da API do UTalk para ID: ${messageId}`);
+      const orgId = identity.utalk_organization_id || body?.Payload?.Content?.Organization?.Id;
+      
+      // Tenta buscar com retentativa (até 3 vezes com delay progressivo)
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          // Aguarda um pouco antes de buscar (1s, 2s, 3s)
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+          
+          const url = `https://app-utalk.umbler.com/api/v1/messages/${messageId}/?organizationId=${orgId}`;
+          const apiRes = await fetch(url, {
+            headers: { 'Authorization': `Bearer ${identity.utalk_token}` }
+          });
+          if (apiRes.ok) {
+            const apiData = await apiRes.json();
+            const fetchedUrl = apiData?.file?.url || apiData?.file?.Url || '';
+            const fetchedName = apiData?.file?.name || apiData?.file?.Name || apiData?.file?.originalName || '';
+            if (fetchedUrl) {
+              incomingMediaUrl = fetchedUrl;
+              if (fetchedName) incomingMediaName = fetchedName;
+              console.log(`[Sofia Webhook] Mídia obtida com sucesso na tentativa ${attempt}: ${incomingMediaUrl}`);
+              break;
+            }
+          }
+        } catch (apiErr) {
+          console.error(`[Sofia Webhook] Erro ao buscar mídia da API (tentativa ${attempt}):`, apiErr);
+        }
+      }
+    }
+
     if (incomingMediaUrl && !incomingMediaName) {
       incomingMediaName = incomingMediaUrl.split('/').pop()?.split('?')[0] || 'anexo';
     }
@@ -13919,20 +13979,11 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     }
 
     // Ignora mensagens enviadas pelo próprio bot (número da empresa == número do contato)
-    const fromNorm = fromPhone.replace(/\D/g, '');
-    const telNorm = telefone.replace(/\D/g, '');
     if (fromNorm && telNorm && (fromNorm.endsWith(telNorm) || telNorm.endsWith(fromNorm))) {
       return res.status(200).json({ ok: true, skipped: 'own_message' });
     }
 
     // Deduplicação de concorrência e retries do webhook
-    const messageId = body?.id 
-      || body?.MessageId 
-      || body?.Payload?.Id 
-      || body?.Payload?.MessageId 
-      || body?.Payload?.Content?.Id 
-      || body?.Payload?.Content?.LastMessage?.Id;
-
     const dedupeKey = messageId ? `msg-${messageId}` : `hash-${telNorm}-${incomingMsgText}-${incomingMediaUrl || ''}`;
     const { data: lockAcquired, error: lockError } = await supabase.rpc('try_acquire_webhook_lock', {
       lock_id: dedupeKey,
