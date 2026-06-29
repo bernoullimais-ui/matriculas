@@ -659,6 +659,30 @@ export async function processarMensagem(
     console.error('[Sofia] Erro ao buscar unidades para o prompt:', e);
   }
 
+  function sanitizarParts(parts: any[]): any[] {
+    if (!Array.isArray(parts)) return [];
+    return parts
+      .map(p => {
+        if (p.text) {
+          return { text: String(p.text) };
+        }
+        if (p.inlineData) {
+          return { inlineData: p.inlineData };
+        }
+        if (p.fileData) {
+          return { fileData: p.fileData };
+        }
+        if (p.functionCall) {
+          return { functionCall: p.functionCall };
+        }
+        if (p.functionResponse) {
+          return { functionResponse: p.functionResponse };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+
   // 6. Chama o Gemini com Function Calling
   let respostaFinal = '';
   let escalado = false;
@@ -675,7 +699,7 @@ export async function processarMensagem(
         model: 'gemini-2.5-flash',
         contents: historico.map(m => ({
           role: m.role,
-          parts: m.parts
+          parts: sanitizarParts(m.parts)
         })),
         config: {
           systemInstruction: gerarSystemPrompt(config.nomeAgente, alunosContextStr, config.baseConhecimento, unidadesContextStr),
