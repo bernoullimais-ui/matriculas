@@ -14203,6 +14203,12 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     if (source && source !== 'contact') {
       return res.status(200).json({ ok: true, skipped: `message_from_source_${source}` });
     }
+
+    // Ignora explicitamente mensagens de grupos
+    const contactType = String(body?.Payload?.Contact?.ContactType || body?.Payload?.Content?.Contact?.ContactType || '').toLowerCase();
+    if (contactType === 'group') {
+      return res.status(200).json({ ok: true, skipped: 'group_message' });
+    }
     
     // Ignora ecos de mensagens enviadas pelos atendentes (padrão *[Nome]* ou *[Nome]*:)
     const rawMsg = body?.Payload?.Content?.LastMessage?.Content || body?.Payload?.Content?.Text || body?.Payload?.Content?.Body || body?.message?.text || body?.text || body?.content || body?.message || body?.body;
