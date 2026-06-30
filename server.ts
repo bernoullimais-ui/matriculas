@@ -14195,6 +14195,74 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     // Ignora mensagens ENVIADAS (direction: 'out' ou 'outbound') — só processa RECEBIDAS
     const direction = String(body?.direction || body?.type || body?.messageType || body?.Payload?.Direction || '').toLowerCase();
     if (direction === 'out' || direction === 'outbound' || direction === 'sent') {
+      if (messageId && telNorm) {
+        try {
+          const { data: conversa } = await supabase
+            .from('conversas_whatsapp')
+            .select('id, historico')
+            .eq('telefone', telNorm)
+            .neq('status', 'encerrado')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (conversa && conversa.historico) {
+            const jaExiste = conversa.historico.some((m: any) => m.id === messageId);
+            if (!jaExiste) {
+              const memberName = body?.Payload?.LastMessage?.SentByOrganizationMember?.Name 
+                || body?.Payload?.Content?.LastMessage?.SentByOrganizationMember?.Name
+                || body?.Payload?.Content?.LastMessage?.SentBy?.Name
+                || body?.Payload?.LastMessage?.SentBy?.Name;
+
+              let prefixo = '';
+              const IA_SIGNATURE_PATTERN = /^\[.*?, Assistente Virtual.*?\]/i;
+              const ATTENDANT_SIGNATURE_PATTERN = /^\[Atendente(?: - (.*?))?\]/i;
+              const hasSignature = IA_SIGNATURE_PATTERN.test(mensagem || '') || ATTENDANT_SIGNATURE_PATTERN.test(mensagem || '');
+
+              if (!hasSignature) {
+                if (memberName) {
+                  prefixo = `[Atendente - ${memberName}]\n`;
+                } else {
+                  prefixo = `[Atendente]\n`;
+                }
+              }
+
+              const formattedText = prefixo ? `${prefixo}${mensagem || ''}` : (mensagem || '');
+
+              const outboundParts: any[] = [];
+              if (formattedText.trim()) {
+                outboundParts.push({ text: formattedText });
+              }
+              if (incomingMediaUrl) {
+                outboundParts.push({
+                  mediaUrl: incomingMediaUrl,
+                  mediaName: incomingMediaName || 'Arquivo Anexo'
+                });
+              }
+
+              const novaMsg = {
+                id: messageId,
+                role: 'model',
+                parts: outboundParts,
+                timestamp: body?.Payload?.Content?.LastMessage?.EventAtUTC 
+                  || body?.Payload?.LastMessage?.EventAtUTC 
+                  || new Date().toISOString(),
+                reactions: reactions || []
+              };
+
+              const novoHistorico = [...conversa.historico, novaMsg];
+              await supabase
+                .from('conversas_whatsapp')
+                .update({ historico: novoHistorico })
+                .eq('id', conversa.id);
+
+              console.log(`[Sofia Webhook] Mensagem de saída de atendente salva na conversa ${conversa.id}: ${messageId}`);
+            }
+          }
+        } catch (err) {
+          console.error('[Sofia Webhook] Erro ao salvar mensagem de saída no histórico:', err);
+        }
+      }
       return res.status(200).json({ ok: true, skipped: 'outgoing_message' });
     }
 
