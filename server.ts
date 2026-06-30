@@ -12,6 +12,7 @@ import bcrypt from "bcryptjs";
 import * as fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa, pausarConversa } from "./services/sofia-agent.js";
+import { queueNotaFiscal, processarFilaNotasFiscais } from "./services/focusNfeService.js";
 
 // Handle __dirname and __filename for both ESM and CJS environments
 const currentDirname = process.cwd();
@@ -8798,6 +8799,66 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
   });
 
   // Pagar.me Webhook
+  app.post('/api/cron/processar-notas', async (req, res) => {
+    try {
+      // Opcional: Proteger a rota com um token de segurança, ex:
+      // if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).send('Unauthorized');
+      
+      const resultado = await processarFilaNotasFiscais();
+      res.json(resultado);
+    } catch (e: any) {
+      console.error('[CRON Notas Fiscais] Erro:', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Focus NFe Webhook (Retorno de Status)
+  app.post('/api/webhooks/focus-nfe', async (req, res) => {
+    try {
+      const payload = req.body;
+      console.log('[Webhook Focus NFe] Payload recebido:', JSON.stringify(payload, null, 2));
+
+      // A Focus envia a "ref" que usamos na criação
+      const ref = payload.ref;
+      if (!ref || !ref.startsWith('NF_')) {
+        return res.status(200).json({ received: true, ignored: true });
+      }
+
+      const notaId = ref.replace('NF_', '');
+      const novoStatus = payload.status; // 'autorizado', 'erro', 'cancelado', etc.
+      
+      const updateData: any = {
+        status: novoStatus === 'autorizado' ? 'autorizada' : 
+                novoStatus === 'cancelado' ? 'cancelada' :
+                novoStatus === 'erro' ? 'erro' : novoStatus,
+      };
+
+      if (novoStatus === 'autorizado') {
+        updateData.nfe_numero = payload.numero;
+        updateData.nfe_url_xml = payload.caminho_xml_nota_fiscal;
+        updateData.nfe_url_pdf = payload.caminho_danfe || payload.url;
+      } else if (novoStatus === 'erro') {
+        updateData.mensagem_erro = JSON.stringify(payload.erros);
+      }
+
+      const { error } = await supabase
+        .from('notas_fiscais_fila')
+        .update(updateData)
+        .eq('id', notaId);
+
+      if (error) {
+        console.error('[Webhook Focus NFe] Erro ao atualizar nota:', error);
+      } else {
+        console.log(`[Webhook Focus NFe] Nota ${notaId} atualizada para ${updateData.status}`);
+      }
+
+      res.status(200).json({ received: true });
+    } catch (e: any) {
+      console.error('[Webhook Focus NFe] Exceção:', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post('/api/webhooks/pagarme', async (req, res) => {
     const event = req.body || {};
     const signature = req.headers['x-pagarme-signature'] as string;
@@ -8994,6 +9055,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
               
               // Notificar cliente
               sendLojaNotificationByPedidoId(realPedidoId, 'pago');
+              queueNotaFiscal(realPedidoId, 'NFe', { origin: 'loja' });
             }
           } else if (isCanceled || isFailed) {
             const { data: currentOrder } = await supabase
@@ -9078,6 +9140,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
                   console.error('[WhatsApp Webhook Eventos] Falha ao montar/enviar mensagem:', err);
                 }
               }
+              queueNotaFiscal(realEventoId, 'NFSe', { origin: 'evento' });
             }
           } else if (isCanceled || isFailed) {
             const { data: currentInscricao } = await supabase
@@ -9117,6 +9180,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
                  const msg = `Olá ${matInfo.responsaveis.nome_completo}! O pagamento da mensalidade via PIX foi confirmado com sucesso. Muito obrigado!`;
                  await sendWhatsAppMessage(matInfo.responsaveis.telefone || '11999999999', matInfo.responsaveis.nome_completo, msg, matInfo.unidade).catch(e => console.error("Erro whats webhook pix", e));
                }
+               queueNotaFiscal(fatura.id, 'NFSe', { origin: 'mensalidade_pix' });
              }
           }
           return res.status(200).json({ received: true, type: 'mensalidade_pix' });
@@ -9187,6 +9251,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
                   }
                 }
               }
+              queueNotaFiscal(pagamento.id, 'NFSe', { origin: 'excecao_pix' });
             }
           }
           
@@ -9429,6 +9494,10 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
             await supabase.from('pagamentos').update({ status: status }).eq('id', targetPaymentId);
           }
           
+          if (isPaid && targetPaymentId) {
+            queueNotaFiscal(targetPaymentId, 'NFSe', { origin: 'geral' });
+          }
+
           if (isCreated) {
             // Se for uma nova fatura de assinatura PIX, envia o QR Code
             const invoiceData = data; // data é a fatura
