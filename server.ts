@@ -8837,6 +8837,38 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
         updateData.nfe_numero = payload.numero;
         updateData.nfe_url_xml = payload.caminho_xml_nota_fiscal;
         updateData.nfe_url_pdf = payload.caminho_danfe || payload.url;
+
+        // Disparar e-mail via Brevo se configurado
+        try {
+          const { data: config } = await supabase.from('configuracoes_nf').select('brevo_template_id').limit(1).single();
+          if (config && config.brevo_template_id && process.env.BREVO_API_KEY) {
+            const { data: notaInfo } = await supabase.from('notas_fiscais_fila').select('dados_emissao').eq('id', notaId).single();
+            if (notaInfo && notaInfo.dados_emissao && notaInfo.dados_emissao.email) {
+              await fetch('https://api.brevo.com/v3/smtp/email', {
+                method: 'POST',
+                headers: {
+                  'accept': 'application/json',
+                  'api-key': process.env.BREVO_API_KEY,
+                  'content-type': 'application/json'
+                },
+                body: JSON.stringify({
+                  to: [{ email: notaInfo.dados_emissao.email, name: notaInfo.dados_emissao.nome || 'Cliente' }],
+                  templateId: config.brevo_template_id,
+                  params: {
+                    NOME_CLIENTE: notaInfo.dados_emissao.nome || 'Cliente',
+                    NUMERO_NOTA: payload.numero,
+                    LINK_PDF: updateData.nfe_url_pdf,
+                    LINK_XML: updateData.nfe_url_xml
+                  }
+                })
+              });
+              console.log(`[Webhook Focus NFe] E-mail enviado via Brevo (Template ${config.brevo_template_id}) para ${notaInfo.dados_emissao.email}`);
+            }
+          }
+        } catch (mailError) {
+          console.error('[Webhook Focus NFe] Erro ao enviar e-mail Brevo:', mailError);
+        }
+
       } else if (novoStatus === 'erro') {
         updateData.mensagem_erro = JSON.stringify(payload.erros);
       }

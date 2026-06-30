@@ -32,6 +32,8 @@ const MODULOS_PAINEL = [
   { id: 'escolas_parceiras_conciliacao', label: 'Escolas Parceiras - Conciliação' },
   { id: 'recursos_humanos_contratos_equipe', label: 'Recursos Humanos - Contratos & Equipe' },
   { id: 'recursos_humanos_folha_pagamento', label: 'Recursos Humanos - Folha de Pagamento' },
+  { id: 'fiscal_notas', label: 'Fiscal - Notas Fiscais' },
+  { id: 'fiscal_configuracoes', label: 'Fiscal - Configurações' },
   { id: 'configuracoes', label: 'Configurações' }
 ];
 

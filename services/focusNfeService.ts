@@ -40,6 +40,13 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
       console.error(`[Focus NFe] Erro ao enfileirar nota fiscal para ${pagamentoId}:`, error);
     } else {
       console.log(`[Focus NFe] Nota fiscal (${tipoNota}) enfileirada com sucesso para ${pagamentoId}`);
+      
+      // Checa a configuração
+      const { data: config } = await supabase.from('configuracoes_nf').select('frequencia').limit(1).single();
+      if (config?.frequencia === 'imediato') {
+        // Dispara de forma assíncrona (fogo e esquece)
+        processarFilaNotasFiscais().catch(console.error);
+      }
     }
   } catch (err) {
     console.error(`[Focus NFe] Exceção ao enfileirar nota fiscal:`, err);
@@ -51,6 +58,28 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
  */
 export async function processarFilaNotasFiscais() {
   console.log('[Focus NFe] Iniciando processamento em lote de notas fiscais...');
+  
+  // Buscar configuração
+  const { data: config } = await supabase.from('configuracoes_nf').select('*').limit(1).single();
+  
+  if (config && config.frequencia !== 'imediato') {
+    const today = new Date();
+    // UTC to Brasília
+    today.setHours(today.getHours() - 3);
+    
+    if (config.frequencia === 'semanal') {
+      if (today.getDay() !== (config.dia_semana || 0)) {
+        console.log(`[Focus NFe] Hoje não é o dia da semana configurado para processamento semanal (${config.dia_semana}). Abortando.`);
+        return { success: true, count: 0, skipped: true };
+      }
+    } else if (config.frequencia === 'mensal') {
+      if (today.getDate() !== (config.dia_mes || 1)) {
+        console.log(`[Focus NFe] Hoje não é o dia do mês configurado para processamento mensal (${config.dia_mes}). Abortando.`);
+        return { success: true, count: 0, skipped: true };
+      }
+    }
+    // "diario" always proceeds since the cron runs daily (or we just let it run)
+  }
   
   const { data: pendentes, error } = await supabase
     .from('notas_fiscais_fila')

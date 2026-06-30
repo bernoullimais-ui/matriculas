@@ -25,6 +25,8 @@ import { RegrasB2BTab } from '../../components/admin/b2b/RegrasB2BTab';
 import { ConciliacaoB2BTab } from '../../components/admin/b2b/ConciliacaoB2BTab';
 import SettingsTab from '../../components/admin/settings/SettingsTab';
 import CampanhasTab from '../../components/admin/CampanhasTab';
+import NotasFiscaisTab from '../../components/admin/fiscal/NotasFiscaisTab';
+import ConfigurarNFTab from '../../components/admin/fiscal/ConfigurarNFTab';
 import toast from 'react-hot-toast';
 
 export default function UnifiedAdmin() {
@@ -38,6 +40,7 @@ export default function UnifiedAdmin() {
     loja: false,
     cursos: false,
     rh: false,
+    fiscal: false,
     b2b: false,
     comercial: false
   });
@@ -413,6 +416,26 @@ export default function UnifiedAdmin() {
             </div>
           )}
 
+          {/* Fiscal */}
+          {(hasAccess('fiscal_notas') || hasAccess('fiscal_configuracoes')) && (
+            <div className="pt-2 pb-1">
+              <button onClick={() => toggleMenu('fiscal')} className="w-full flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider px-3 transition-colors hover:text-slate-300">
+                <div className="flex items-center gap-2"><Receipt size={14} /> Fiscal</div>
+                {menuOpen.fiscal ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+              {menuOpen.fiscal && (
+                <div className="mt-2 ml-4 pl-4 border-l border-slate-700 space-y-1">
+                  {hasAccess('fiscal_notas') && (
+                    <button onClick={() => setTab('fiscal_notas')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'fiscal_notas' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Notas Fiscais</button>
+                  )}
+                  {hasAccess('fiscal_configuracoes') && (
+                    <button onClick={() => setTab('fiscal_config')} className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors \${tab === 'fiscal_config' ? 'bg-slate-800 text-white font-bold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>Configurar NF</button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {hasAccess('configuracoes') && (
             <div className="pt-4 mt-4 border-t border-slate-800">
               <button onClick={() => setTab('settings')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors \${tab === 'settings' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
@@ -509,6 +532,8 @@ export default function UnifiedAdmin() {
             {tab === 'pedidos' && <PedidosTab />}
             {tab === 'rh_contratos' && <ContratosEquipeTab />}
             {tab === 'rh_folha' && <FolhaPagamentoTab />}
+            {tab === 'fiscal_notas' && <NotasFiscaisTab />}
+            {tab === 'fiscal_config' && <ConfigurarNFTab />}
             {tab === 'b2b_regras' && <RegrasB2BTab />}
             {tab === 'b2b_conciliacao' && <ConciliacaoB2BTab />}
             {tab === 'settings' && hasAccess('configuracoes') && <SettingsTab />}
