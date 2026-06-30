@@ -6,7 +6,14 @@ dotenv.config();
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+let supabase: any;
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.warn("[Focus NFe] Supabase URL or Key is missing in environment variables. Using dummy client.");
+  supabase = createClient("https://dummy.supabase.co", "dummy-key");
+} else {
+  supabase = createClient(supabaseUrl, supabaseServiceKey);
+}
 
 const FOCUS_API_URL = process.env.FOCUS_NFE_API_URL || 'https://api.focusnfe.com.br/v2';
 const FOCUS_API_TOKEN = process.env.FOCUS_NFE_API_TOKEN || '';
