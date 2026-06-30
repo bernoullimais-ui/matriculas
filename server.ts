@@ -14192,6 +14192,41 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       return res.status(200).json({ ok: true, processed: 'reaction_updated' });
     }
 
+    // Extração de anexo/mídia (imagem, vídeo, áudio, documento) enviado pelo cliente no formato UTalk
+    let incomingMediaUrl = '';
+    let incomingMediaName = '';
+
+    const rawFile = body?.Payload?.Content?.LastMessage?.File
+      || body?.Payload?.Content?.File
+      || body?.file;
+
+    const rawMediaUrl = body?.Payload?.Content?.LastMessage?.MediaUrl
+      || body?.Payload?.Content?.LastMessage?.Url
+      || body?.Payload?.Content?.MediaUrl
+      || body?.Payload?.Content?.Url
+      || body?.mediaUrl
+      || body?.media;
+
+    const rawMediaName = body?.Payload?.Content?.LastMessage?.MediaName
+      || body?.Payload?.Content?.LastMessage?.FileName
+      || body?.Payload?.Content?.MediaName
+      || body?.Payload?.Content?.FileName
+      || body?.mediaName
+      || body?.fileName;
+
+    if (rawFile) {
+      incomingMediaUrl = extractUrl(rawFile);
+      incomingMediaName = extractName(rawFile);
+    }
+
+    if (!incomingMediaUrl && rawMediaUrl) {
+      incomingMediaUrl = extractUrl(rawMediaUrl);
+    }
+
+    if (!incomingMediaName && rawMediaName) {
+      incomingMediaName = extractName(rawMediaName);
+    }
+
     // Ignora mensagens ENVIADAS (direction: 'out' ou 'outbound') — só processa RECEBIDAS
     const direction = String(body?.direction || body?.type || body?.messageType || body?.Payload?.Direction || '').toLowerCase();
     if (direction === 'out' || direction === 'outbound' || direction === 'sent') {
@@ -14304,40 +14339,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       console.error('[Sofia Webhook] Erro ao buscar identidades no início:', dbErr);
     }
 
-    // Extração de anexo/mídia (imagem, vídeo, áudio, documento) enviado pelo cliente no formato UTalk
-    let incomingMediaUrl = '';
-    let incomingMediaName = '';
 
-    const rawFile = body?.Payload?.Content?.LastMessage?.File
-      || body?.Payload?.Content?.File
-      || body?.file;
-
-    const rawMediaUrl = body?.Payload?.Content?.LastMessage?.MediaUrl
-      || body?.Payload?.Content?.LastMessage?.Url
-      || body?.Payload?.Content?.MediaUrl
-      || body?.Payload?.Content?.Url
-      || body?.mediaUrl
-      || body?.media;
-
-    const rawMediaName = body?.Payload?.Content?.LastMessage?.MediaName
-      || body?.Payload?.Content?.LastMessage?.FileName
-      || body?.Payload?.Content?.MediaName
-      || body?.Payload?.Content?.FileName
-      || body?.mediaName
-      || body?.fileName;
-
-    if (rawFile) {
-      incomingMediaUrl = extractUrl(rawFile);
-      incomingMediaName = extractName(rawFile);
-    }
-
-    if (!incomingMediaUrl && rawMediaUrl) {
-      incomingMediaUrl = extractUrl(rawMediaUrl);
-    }
-
-    if (!incomingMediaName && rawMediaName) {
-      incomingMediaName = extractName(rawMediaName);
-    }
 
     // messageId já foi extraído no início do webhook
 
