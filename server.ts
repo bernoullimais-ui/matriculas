@@ -14565,7 +14565,11 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
             (parseInt(pagina as string) + 1) * parseInt(limite as string) - 1
           );
 
-        if (status) query = query.eq('status', status as string);
+        if (status) {
+          query = query.eq('status', status as string);
+        } else {
+          query = query.in('status', ['ativo', 'escalado']);
+        }
         if (identidade) query = query.eq('identidade_nome', identidade as string);
         if (etiqueta) query = query.contains('etiquetas', [etiqueta as string]);
 
