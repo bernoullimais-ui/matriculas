@@ -34,6 +34,56 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
       return;
     }
 
+    // Fetch customer data if missing based on origin
+    if (!dadosEmissao.nome || !dadosEmissao.cpf) {
+      if (dadosEmissao.origin === 'loja') {
+        const { data: pedido } = await supabase.from('loja_pedidos').select('cliente_nome, cliente_cpf, cliente_email, total').eq('id', pagamentoId).maybeSingle();
+        if (pedido) {
+          dadosEmissao.nome = pedido.cliente_nome;
+          dadosEmissao.cpf = pedido.cliente_cpf;
+          dadosEmissao.email = pedido.cliente_email;
+          if (!dadosEmissao.valor) dadosEmissao.valor = pedido.total;
+        }
+      } else if (dadosEmissao.origin === 'evento') {
+        const { data: inscricao } = await supabase.from('evento_inscricoes').select('nome_responsavel, cpf_responsavel, email_responsavel, valor_total').eq('id', pagamentoId).maybeSingle();
+        if (inscricao) {
+          dadosEmissao.nome = inscricao.nome_responsavel;
+          dadosEmissao.cpf = inscricao.cpf_responsavel;
+          dadosEmissao.email = inscricao.email_responsavel;
+          if (!dadosEmissao.valor) dadosEmissao.valor = inscricao.valor_total;
+        }
+      } else if (dadosEmissao.origin === 'mensalidade_pix') {
+        const { data: fatura } = await supabase.from('faturas_pix').select('valor, matricula_id').eq('id', pagamentoId).maybeSingle();
+        if (fatura && fatura.matricula_id) {
+          const { data: mat } = await supabase.from('matriculas').select('responsaveis(nome_completo, cpf, email)').eq('id', fatura.matricula_id).maybeSingle();
+          const resp = mat?.responsaveis;
+          if (resp) {
+            dadosEmissao.nome = Array.isArray(resp) ? resp[0]?.nome_completo : resp.nome_completo;
+            dadosEmissao.cpf = Array.isArray(resp) ? resp[0]?.cpf : resp.cpf;
+            dadosEmissao.email = Array.isArray(resp) ? resp[0]?.email : resp.email;
+          }
+          if (!dadosEmissao.valor) dadosEmissao.valor = fatura.valor;
+        }
+      } else if (dadosEmissao.origin === 'excecao_pix' || dadosEmissao.origin === 'geral') {
+        let query = supabase.from('pagamentos').select('valor, responsavel_id');
+        if (pagamentoId.includes('-')) {
+           query = query.eq('id', pagamentoId);
+        } else {
+           query = query.eq('pagarme', pagamentoId);
+        }
+        const { data: pag } = await query.maybeSingle();
+        if (pag && pag.responsavel_id) {
+          const { data: resp } = await supabase.from('responsaveis').select('nome_completo, cpf, email').eq('id', pag.responsavel_id).maybeSingle();
+          if (resp) {
+            dadosEmissao.nome = resp.nome_completo;
+            dadosEmissao.cpf = resp.cpf;
+            dadosEmissao.email = resp.email;
+          }
+          if (!dadosEmissao.valor) dadosEmissao.valor = pag.valor;
+        }
+      }
+    }
+
     const { error } = await supabase
       .from('notas_fiscais_fila')
       .insert({
