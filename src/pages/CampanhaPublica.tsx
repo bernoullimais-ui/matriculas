@@ -307,30 +307,36 @@ export default function CampanhaPublica() {
                 </div>
               )}
 
-              {/* Price */}
-              {(lp.preco_original || lp.preco_promocional) && (
+              {/* Price, Condition & Coupon */}
+              {(lp.preco_original || lp.preco_promocional || lp.condicao_texto || lp.cupom) && (
                 <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 space-y-4">
-                  <div className="flex items-center gap-6">
-                    {discount && (
-                      <div className="w-16 h-16 rounded-full flex items-center justify-center text-white font-black text-lg shrink-0" style={{ background: primaryColor }}>
-                        -{discount}%
+                  {(lp.preco_original || lp.preco_promocional || lp.condicao_texto) && (
+                    <div className="flex items-center gap-6">
+                      {discount && (
+                        <div className="w-16 h-16 rounded-full flex items-center justify-center text-white font-black text-lg shrink-0" style={{ background: primaryColor }}>
+                          -{discount}%
+                        </div>
+                      )}
+                      <div>
+                        {hasDiscount && (
+                          <p className="text-slate-400 text-sm line-through">
+                            De R$ {lp.preco_original!.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
+                        )}
+                        {(lp.preco_promocional || lp.preco_original) && (
+                          <p className="text-3xl font-black" style={{ color: primaryColor }}>
+                            R$ {(lp.preco_promocional || lp.preco_original)!.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            <span className="text-slate-400 text-base font-medium">/mês</span>
+                          </p>
+                        )}
+                        {lp.condicao_texto && (
+                          <p className={`text-sm mt-1 font-medium ${(!lp.preco_promocional && !lp.preco_original) ? 'text-lg text-slate-700' : 'text-slate-500'}`}>
+                            {lp.condicao_texto}
+                          </p>
+                        )}
                       </div>
-                    )}
-                    <div>
-                      {hasDiscount && (
-                        <p className="text-slate-400 text-sm line-through">
-                          De R$ {lp.preco_original!.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </p>
-                      )}
-                      <p className="text-3xl font-black" style={{ color: primaryColor }}>
-                        R$ {(lp.preco_promocional || lp.preco_original)!.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        <span className="text-slate-400 text-base font-medium">/mês</span>
-                      </p>
-                      {lp.condicao_texto && (
-                        <p className="text-sm text-slate-500 mt-1 font-medium">{lp.condicao_texto}</p>
-                      )}
                     </div>
-                  </div>
+                  )}
 
                   {/* Cupom Destaque */}
                   {lp.cupom && <CupomCard cupom={lp.cupom} cor={primaryColor} />}
