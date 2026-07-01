@@ -1846,7 +1846,8 @@ app.use('/api/admin', requireAdminAuth);
       const responsavelIds = [...new Set(alunos.map((a: any) => a.responsavel_id).filter(Boolean))];
       const responsaveisMap = new Map<string, string>();
       if (responsavelIds.length > 0) {
-        const { data: respData } = await supabase.from('responsaveis').select('id, email, whatsapp, celular').in('id', responsavelIds);
+        const { data: respData, error: respErr } = await supabase.from('responsaveis').select('id, email, telefone').in('id', responsavelIds);
+        if (respErr) console.error('[Campanhas] Erro ao buscar responsaveis:', respErr.message);
         if (respData) {
           respData.forEach((r: any) => responsaveisMap.set(r.id, r));
         }
@@ -1855,7 +1856,7 @@ app.use('/api/admin', requireAdminAuth);
       for (const a of alunos) {
         const resp = responsaveisMap.get(a.responsavel_id) || {} as any;
         const emailDest = a.email || resp.email;
-        const whatsappDest = a.whatsapp_1 || a.whatsapp_2 || resp.whatsapp || resp.celular;
+        const whatsappDest = a.whatsapp_1 || a.whatsapp_2 || resp.telefone;
         
         // We require either email or whatsapp, because it could be an email campaign or a whatsapp campaign
         if (!emailDest && !whatsappDest) continue;
