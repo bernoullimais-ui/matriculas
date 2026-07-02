@@ -37,20 +37,32 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
     // Fetch customer data if missing based on origin
     if (!dadosEmissao.nome || !dadosEmissao.cpf) {
       if (dadosEmissao.origin === 'loja') {
-        const { data: pedido } = await supabase.from('loja_pedidos').select('cliente_nome, cliente_cpf, cliente_email, total').eq('id', pagamentoId).maybeSingle();
+        const { data: pedido } = await supabase.from('loja_pedidos').select('nome_cliente, email_cliente, total, responsavel_id').eq('id', pagamentoId).maybeSingle();
         if (pedido) {
-          dadosEmissao.nome = pedido.cliente_nome;
-          dadosEmissao.cpf = pedido.cliente_cpf;
-          dadosEmissao.email = pedido.cliente_email;
+          dadosEmissao.nome = pedido.nome_cliente;
+          dadosEmissao.email = pedido.email_cliente;
           if (!dadosEmissao.valor) dadosEmissao.valor = pedido.total;
+          if (pedido.responsavel_id) {
+             const { data: resp } = await supabase.from('responsaveis').select('cpf').eq('id', pedido.responsavel_id).maybeSingle();
+             if (resp) dadosEmissao.cpf = resp.cpf;
+          }
         }
       } else if (dadosEmissao.origin === 'evento') {
-        const { data: inscricao } = await supabase.from('evento_inscricoes').select('nome_responsavel, cpf_responsavel, email_responsavel, valor_total').eq('id', pagamentoId).maybeSingle();
+        const { data: inscricao } = await supabase.from('evento_inscricoes').select('nome_responsavel, email_responsavel, valor_pago, respostas_personalizadas, responsavel_id').eq('id', pagamentoId).maybeSingle();
         if (inscricao) {
           dadosEmissao.nome = inscricao.nome_responsavel;
-          dadosEmissao.cpf = inscricao.cpf_responsavel;
           dadosEmissao.email = inscricao.email_responsavel;
-          if (!dadosEmissao.valor) dadosEmissao.valor = inscricao.valor_total;
+          if (!dadosEmissao.valor) dadosEmissao.valor = inscricao.valor_pago;
+          
+          let cpf = '';
+          if (inscricao.respostas_personalizadas) {
+            cpf = inscricao.respostas_personalizadas['CPF do Responsável'] || inscricao.respostas_personalizadas['CPF'];
+          }
+          if (!cpf && inscricao.responsavel_id) {
+             const { data: resp } = await supabase.from('responsaveis').select('cpf').eq('id', inscricao.responsavel_id).maybeSingle();
+             if (resp) cpf = resp.cpf;
+          }
+          dadosEmissao.cpf = cpf;
         }
       } else if (dadosEmissao.origin === 'mensalidade_pix') {
         const { data: fatura } = await supabase.from('faturas_pix').select('valor, matricula_id').eq('id', pagamentoId).maybeSingle();
