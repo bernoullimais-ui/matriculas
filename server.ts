@@ -2354,6 +2354,38 @@ app.use('/api/admin', requireAdminAuth);
     }
   });
 
+  // GET /api/admin/whatsapp/templates — busca os templates da API Oficial do WhatsApp
+  app.get('/api/admin/whatsapp/templates', requireAdminAuth, async (req, res) => {
+    try {
+      const { data: identidades, error: idErr } = await supabase.from('identidades').select('*');
+      if (idErr) throw idErr;
+      
+      const identityToUse = identidades.find((i: any) => i.nome?.toLowerCase().includes('sport for kids')) || identidades[0];
+      if (!identityToUse || !identityToUse.wa_official_token || !identityToUse.wa_official_waba_id) {
+        return res.json({ data: [] });
+      }
+
+      // Meta Graph API /v19.0/{whatsapp_business_account_id}/message_templates
+      const metaResponse = await fetch(`https://graph.facebook.com/v19.0/${identityToUse.wa_official_waba_id}/message_templates`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${identityToUse.wa_official_token}`
+        }
+      });
+
+      if (!metaResponse.ok) {
+        const errText = await metaResponse.text();
+        throw new Error("Erro na API Oficial (Meta) ao buscar templates: " + errText);
+      }
+
+      const metaData = await metaResponse.json();
+      res.json(metaData);
+    } catch (e: any) {
+      console.error('[WhatsApp] Erro ao buscar templates:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // GET /api/admin/campaigns/:id/audience — pega a audiência sem disparar
   app.get('/api/admin/campaigns/:id/audience', requireAdminAuth, async (req, res) => {
     try {

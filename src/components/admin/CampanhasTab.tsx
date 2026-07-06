@@ -46,6 +46,7 @@ interface CampaignEmail {
   imagem_url?: string;
   remetente_email?: string;
   remetente_nome?: string;
+  meta_template_name?: string;
 }
 
 interface CampaignLandingPage {
@@ -1334,6 +1335,7 @@ function CampaignWizard({
   const [imagemUrl, setImagemUrl] = useState(editCampaign?.email?.imagem_url || '');
   const [remetenteEmail, setRemetenteEmail] = useState(editCampaign?.email?.remetente_email || '');
   const [remetenteNome, setRemetenteNome] = useState(editCampaign?.email?.remetente_nome || '');
+  const [metaTemplateName, setMetaTemplateName] = useState(editCampaign?.email?.meta_template_name || '');
 
   // Step 4
   const [lpAtiva, setLpAtiva] = useState(editCampaign?.landing_page?.ativa || false);
@@ -1409,12 +1411,39 @@ function CampaignWizard({
     }
   }, []);
 
+  const [metaTemplates, setMetaTemplates] = useState<any[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+
   useEffect(() => { 
     if (step === 2) {
       fetchAudienceCount();
       fetchSavedFilters();
     }
   }, [targets, step, fetchAudienceCount, fetchSavedFilters]);
+
+  useEffect(() => {
+    if (step === 3 && metodoEnvio === 'whatsapp') {
+      const fetchTemplates = async () => {
+        setLoadingTemplates(true);
+        try {
+          const res = await fetch('/api/admin/whatsapp/templates', { headers: authHeader() });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.data) {
+              setMetaTemplates(data.data.filter((t: any) => t.status === 'APPROVED'));
+            } else if (Array.isArray(data)) {
+              setMetaTemplates(data.filter((t: any) => t.status === 'APPROVED'));
+            }
+          }
+        } catch (e) {
+          console.error("Erro ao carregar templates do WhatsApp", e);
+        } finally {
+          setLoadingTemplates(false);
+        }
+      };
+      fetchTemplates();
+    }
+  }, [step, metodoEnvio]);
 
   const addTarget = (tipo: CampaignTarget['tipo_alvo'], valor?: string) => {
     if (targets.some(t => t.tipo_alvo === tipo && t.valor_alvo === valor)) return;
@@ -1432,7 +1461,7 @@ function CampaignWizard({
         data_fim: dataFim || null,
         agendado_para: !dispararAgora && agendadoPara ? agendadoPara : null,
         targets,
-        email: (tipo !== 'landing_page') ? { assunto, formato, conteudo, imagem_url: imagemUrl, remetente_email: remetenteEmail, remetente_nome: remetenteNome } : null,
+        email: (tipo !== 'landing_page') ? { assunto, formato, conteudo, imagem_url: imagemUrl, remetente_email: remetenteEmail, remetente_nome: remetenteNome, meta_template_name: metaTemplateName } : null,
         landing_page: (tipo !== 'email') ? { titulo: lpTitulo, descricao: lpDescricao, banner_url: lpBanner, video_url: lpVideo, preco_original: lpPrecoOrig ? parseFloat(lpPrecoOrig) : null, preco_promocional: lpPrecoPromo ? parseFloat(lpPrecoPromo) : null, condicao_texto: lpCondicao, cta_texto: lpCtaTexto, cta_url: lpCtaUrl, cor_primaria: lpCor, cupom_id: cupomId || null, ativa: lpAtiva } : null,
       };
 
@@ -1883,6 +1912,34 @@ function CampaignWizard({
                 <label className={labelClass}>{metodoEnvio === 'whatsapp' ? 'URL do Flyer/Imagem (Opcional)' : 'URL do Flyer/Imagem'}</label>
                 <input value={imagemUrl} onChange={e => setImagemUrl(e.target.value)} placeholder="https://..." className={inputClass} />
                 {imagemUrl && <img src={imagemUrl} className="mt-3 max-h-40 rounded-xl object-cover border border-slate-200" alt="preview" />}
+              </div>
+            )}
+
+            {metodoEnvio === 'whatsapp' && (
+              <div>
+                <label className={labelClass}>Template do WhatsApp Oficial (Opcional - Requer provedor "whatsapp_official")</label>
+                {loadingTemplates ? (
+                  <div className="flex items-center gap-2 text-sm text-slate-500 py-2">
+                    <Loader2 size={16} className="animate-spin" /> Carregando templates...
+                  </div>
+                ) : (
+                  <select 
+                    value={metaTemplateName} 
+                    onChange={e => setMetaTemplateName(e.target.value)} 
+                    className={inputClass}
+                  >
+                    <option value="">Nenhum template selecionado (Usa texto livre via UTalk)</option>
+                    {metaTemplates.map(t => (
+                      <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
+                    ))}
+                  </select>
+                )}
+                {metaTemplateName && (
+                  <p className="text-xs text-amber-600 mt-1.5 flex items-center gap-1">
+                    <AlertCircle size={12} />
+                    Ao usar um template oficial, a mensagem de texto livre abaixo será usada apenas para envio via UTalk.
+                  </p>
+                )}
               </div>
             )}
             
