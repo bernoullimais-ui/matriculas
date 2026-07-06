@@ -258,7 +258,11 @@ async function sendWhatsAppMessage(toPhone: string, contactName: string, message
         }
       }
 
-      const telNorm = toPhone.replace(/\D/g, '');
+      let telNorm = toPhone.replace(/\D/g, '');
+      if (telNorm.length >= 10 && !telNorm.startsWith('55')) {
+        telNorm = '55' + telNorm;
+      }
+      
       const { data: existingConvs } = await supabase
         .from('conversas_whatsapp')
         .select('*')
