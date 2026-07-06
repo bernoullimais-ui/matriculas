@@ -14432,10 +14432,21 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     try {
       const { data: idents } = await supabase.from('identidades').select('*');
       if (idents && idents.length > 0) {
-        identity = idents.find(i => 
-          (i.utalk_organization_id && body?.Payload?.Content?.Organization?.Id === i.utalk_organization_id)
-          || (i.utalk_from_phone && fromNorm === i.utalk_from_phone.replace(/\D/g, ''))
-        ) || idents[0];
+        const strip9 = (p: string) => {
+          if (p.startsWith('55') && p.length === 13 && p[4] === '9') return p.slice(0, 4) + p.slice(5);
+          if (p.startsWith('55') && p.length === 12) return p;
+          return p;
+        };
+        const normFrom = strip9(fromNorm);
+        
+        identity = idents.find(i => {
+          if (i.utalk_organization_id && body?.Payload?.Content?.Organization?.Id === i.utalk_organization_id) return true;
+          if (i.utalk_from_phone) {
+             const dbPhone = strip9(i.utalk_from_phone.replace(/\D/g, ''));
+             return dbPhone === normFrom || dbPhone.includes(normFrom) || normFrom.includes(dbPhone);
+          }
+          return false;
+        }) || idents[0];
       }
     } catch (dbErr) {
       console.error('[Sofia Webhook] Erro ao buscar identidades no início:', dbErr);
@@ -14528,10 +14539,17 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
           .select('nome, utalk_from_phone')
           .not('utalk_from_phone', 'is', null);
         
-        const identidade = identidades?.find(i => 
-          i.utalk_from_phone?.replace(/\D/g, '').includes(fromNorm) ||
-          fromNorm.includes(i.utalk_from_phone?.replace(/\D/g, '') || '')
-        );
+        const strip9 = (p: string) => {
+          if (p.startsWith('55') && p.length === 13 && p[4] === '9') return p.slice(0, 4) + p.slice(5);
+          if (p.startsWith('55') && p.length === 12) return p;
+          return p;
+        };
+        const normFrom = strip9(fromNorm);
+        
+        const identidade = identidades?.find(i => {
+           const dbPhone = strip9(i.utalk_from_phone?.replace(/\D/g, '') || '');
+           return dbPhone && (dbPhone === normFrom || dbPhone.includes(normFrom) || normFrom.includes(dbPhone));
+        });
         identidadeNome = identidade?.nome || '';
       }
 
