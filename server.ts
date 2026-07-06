@@ -2226,33 +2226,98 @@ app.use('/api/admin', requireAdminAuth);
       const identity = identidades.find((i: any) => i.nome?.toLowerCase().includes('sport for kids')) || identidades[0];
       if (!identity || !identity.utalk_token) throw new Error('UTalk não configurado');
 
-      let cleanTo = String(dest.whatsapp).replace(/\D/g, '');
-      if (cleanTo.length >= 10 && !cleanTo.startsWith('55')) cleanTo = '55' + cleanTo;
+      let identityToUse = identity;
       
-      const cleanFrom = (identity.utalk_from_phone || '').replace(/\D/g, '');
+      // Checar qual provedor de campanhas está configurado
+      // Para campanhas sempre buscaremos a unidade Sport for Kids caso não enviem unidade na request (pois é o default do backend)
+      const provider = identityToUse?.provider_campaigns || 'utalk';
+      let wasSentViaMeta = false;
 
-      const payload: any = {
-        toPhone: cleanTo,
-        fromPhone: cleanFrom,
-        organizationId: identity.utalk_organization_id,
-        message: textContent || ''
-      };
-      if (mediaUrl) payload.file = mediaUrl;
+      if (provider === 'whatsapp_official') {
+        // Enviar usando Cloud API / Meta
+        if (!identityToUse.wa_official_token || !identityToUse.wa_official_phone_id) {
+           throw new Error('API Oficial WhatsApp selecionada mas credenciais estão vazias.');
+        }
 
-      const response = await fetch("https://app-utalk.umbler.com/api/v1/messages/simplified/", {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${identity.utalk_token}`,
-          'token': identity.utalk_token,
-          'x-token': identity.utalk_token
-        },
-        body: JSON.stringify(payload)
-      });
+        let cleanTo = String(dest.whatsapp).replace(/\D/g, '');
+        if (cleanTo.length >= 10 && !cleanTo.startsWith('55')) cleanTo = '55' + cleanTo;
 
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error("Erro na API Utalk: " + errText);
+        // Na API da Meta a mensagem é enviada via payload JSON no graph.facebook.com
+        // O nome do template vem da req.body.metaTemplateName
+        const templateName = req.body.metaTemplateName;
+        if (!templateName) {
+           throw new Error('Nome do template Meta não foi fornecido.');
+        }
+
+        const metaPayload = {
+          messaging_product: "whatsapp",
+          to: cleanTo,
+          type: "template",
+          template: {
+            name: templateName,
+            language: {
+              code: "pt_BR"
+            },
+            components: [
+              {
+                type: "body",
+                parameters: [
+                  {
+                     type: "text",
+                     text: textContent || "Mensagem"
+                  }
+                ]
+              }
+            ]
+          }
+        };
+
+        const metaResponse = await fetch(`https://graph.facebook.com/v19.0/${identityToUse.wa_official_phone_id}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${identityToUse.wa_official_token}`
+          },
+          body: JSON.stringify(metaPayload)
+        });
+
+        if (!metaResponse.ok) {
+          const errText = await metaResponse.text();
+          throw new Error("Erro na API Oficial (Meta): " + errText);
+        }
+        
+        wasSentViaMeta = true;
+
+      } else {
+        // Enviar via UTalk (legado)
+        let cleanTo = String(dest.whatsapp).replace(/\D/g, '');
+        if (cleanTo.length >= 10 && !cleanTo.startsWith('55')) cleanTo = '55' + cleanTo;
+        
+        const cleanFrom = (identityToUse.utalk_from_phone || '').replace(/\D/g, '');
+
+        const payload: any = {
+          toPhone: cleanTo,
+          fromPhone: cleanFrom,
+          organizationId: identityToUse.utalk_organization_id,
+          message: textContent || ''
+        };
+        if (mediaUrl) payload.file = mediaUrl;
+
+        const response = await fetch("https://app-utalk.umbler.com/api/v1/messages/simplified/", {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${identityToUse.utalk_token}`,
+            'token': identityToUse.utalk_token,
+            'x-token': identityToUse.utalk_token
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error("Erro na API Utalk: " + errText);
+        }
       }
 
       // Log success and update metrics (increment enviadas)
