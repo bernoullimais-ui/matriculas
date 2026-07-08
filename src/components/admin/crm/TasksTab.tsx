@@ -106,23 +106,34 @@ export default function TasksTab() {
         };
       }
 
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        await fetch('/api/tasks/update-status', {
+      if (endpoint !== '') {
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ taskId: task.id, status: 'concluido' })
+          body: JSON.stringify(payload)
         });
+        
+        if (!res.ok) {
+          const err = await res.json();
+          toast.error(err.error || 'Erro ao processar solicitação.');
+          setLoadingAction(false);
+          return;
+        }
+      }
+
+      // Se deu tudo certo (ou se não tinha endpoint específico como mudanca_turma), atualiza o status para concluído
+      const resUpdate = await fetch('/api/tasks/update-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId: task.id, status: 'concluido' })
+      });
+      
+      if (resUpdate.ok) {
         toast.success('Solicitação aprovada e processada!');
         setApproveCancelModal({ isOpen: false, task: null, date: '' });
         loadData();
       } else {
-        const err = await res.json();
+        const err = await resUpdate.json();
         toast.error(err.error || 'Erro ao processar solicitação.');
       }
     } catch {
