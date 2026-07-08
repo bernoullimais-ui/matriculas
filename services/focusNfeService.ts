@@ -37,8 +37,12 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
     // Fetch customer data if missing based on origin
     if (!dadosEmissao.nome || !dadosEmissao.cpf) {
       if (dadosEmissao.origin === 'loja') {
-        const { data: pedido } = await supabase.from('loja_pedidos').select('nome_cliente, email_cliente, total, responsavel_id').eq('id', pagamentoId).maybeSingle();
+        const { data: pedido } = await supabase.from('loja_pedidos').select('nome_cliente, email_cliente, total, responsavel_id, status').eq('id', pagamentoId).maybeSingle();
         if (pedido) {
+          if (pedido.status !== 'pago') {
+            console.log(`[Focus NFe] Cancelando fila para loja_pedidos ${pagamentoId} (status = ${pedido.status})`);
+            return;
+          }
           dadosEmissao.nome = pedido.nome_cliente;
           dadosEmissao.email = pedido.email_cliente;
           if (!dadosEmissao.valor) dadosEmissao.valor = pedido.total;
@@ -48,8 +52,12 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
           }
         }
       } else if (dadosEmissao.origin === 'evento') {
-        const { data: inscricao } = await supabase.from('evento_inscricoes').select('nome_responsavel, email_responsavel, valor_pago, respostas_personalizadas, responsavel_id').eq('id', pagamentoId).maybeSingle();
+        const { data: inscricao } = await supabase.from('evento_inscricoes').select('nome_responsavel, email_responsavel, valor_pago, respostas_personalizadas, responsavel_id, status').eq('id', pagamentoId).maybeSingle();
         if (inscricao) {
+          if (inscricao.status !== 'confirmada') {
+            console.log(`[Focus NFe] Cancelando fila para evento_inscricoes ${pagamentoId} (status = ${inscricao.status})`);
+            return;
+          }
           dadosEmissao.nome = inscricao.nome_responsavel;
           dadosEmissao.email = inscricao.email_responsavel;
           if (!dadosEmissao.valor) dadosEmissao.valor = inscricao.valor_pago;
@@ -65,8 +73,12 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
           dadosEmissao.cpf = cpf;
         }
       } else if (dadosEmissao.origin === 'mensalidade_pix') {
-        const { data: fatura } = await supabase.from('faturas_pix').select('valor, matricula_id').eq('id', pagamentoId).maybeSingle();
+        const { data: fatura } = await supabase.from('faturas_pix').select('valor, matricula_id, status').eq('id', pagamentoId).maybeSingle();
         if (fatura && fatura.matricula_id) {
+          if (fatura.status !== 'pago') {
+            console.log(`[Focus NFe] Cancelando fila para faturas_pix ${pagamentoId} (status = ${fatura.status})`);
+            return;
+          }
           const { data: mat } = await supabase.from('matriculas').select('responsaveis(nome_completo, cpf, email)').eq('id', fatura.matricula_id).maybeSingle();
           const resp = mat?.responsaveis;
           if (resp) {
@@ -77,19 +89,25 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
           if (!dadosEmissao.valor) dadosEmissao.valor = fatura.valor;
         }
       } else if (dadosEmissao.origin === 'excecao_pix' || dadosEmissao.origin === 'geral') {
-        let query = supabase.from('pagamentos').select('valor, responsavel_id');
+        let query = supabase.from('pagamentos').select('valor, responsavel_id, status');
         if (pagamentoId.includes('-')) {
            query = query.eq('id', pagamentoId);
         } else {
            query = query.eq('pagarme', pagamentoId);
         }
         const { data: pag } = await query.maybeSingle();
-        if (pag && pag.responsavel_id) {
-          const { data: resp } = await supabase.from('responsaveis').select('nome_completo, cpf, email').eq('id', pag.responsavel_id).maybeSingle();
-          if (resp) {
-            dadosEmissao.nome = resp.nome_completo;
-            dadosEmissao.cpf = resp.cpf;
-            dadosEmissao.email = resp.email;
+        if (pag) {
+          if (pag.status !== 'pago') {
+            console.log(`[Focus NFe] Cancelando fila para pagamentos ${pagamentoId} (status = ${pag.status})`);
+            return;
+          }
+          if (pag.responsavel_id) {
+            const { data: resp } = await supabase.from('responsaveis').select('nome_completo, cpf, email').eq('id', pag.responsavel_id).maybeSingle();
+            if (resp) {
+              dadosEmissao.nome = resp.nome_completo;
+              dadosEmissao.cpf = resp.cpf;
+              dadosEmissao.email = resp.email;
+            }
           }
           if (!dadosEmissao.valor) dadosEmissao.valor = pag.valor;
         }
