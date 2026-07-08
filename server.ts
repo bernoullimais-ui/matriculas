@@ -7077,14 +7077,14 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
         .from('alunos')
         .select('nome_completo, responsavel_id')
         .eq('id', oldEnrollment.aluno_id)
-        .single();
+        .maybeSingle();
       
-      if (studentData) {
+      if (studentData && studentData.responsavel_id) {
         const { data: guardianData } = await supabase
           .from('responsaveis')
           .select('nome_completo, telefone')
           .eq('id', studentData.responsavel_id)
-          .single();
+          .maybeSingle();
 
         if (guardianData && guardianData.telefone) {
           let identidade = `na *Sport for Kids* (${oldEnrollment.unidade})`;
