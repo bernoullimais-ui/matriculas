@@ -11,6 +11,7 @@ import EventosPage from './pages/Eventos/index.tsx';
 import EventoDetalhesPage from './pages/Eventos/Evento.tsx';
 import UnifiedAdminPage from './pages/Admin/UnifiedAdmin.tsx';
 import PagamentoManual from './pages/PagamentoManual.tsx';
+import PagamentoAtualizar from './pages/PagamentoAtualizar.tsx';
 import PagamentoPix from './pages/PagamentoPix.tsx';
 import AjudaPage from './pages/Ajuda/index.tsx';
 import PortalLogin from './pages/PortalResponsavel/Login.tsx';
@@ -85,6 +86,7 @@ function RootApp() {
         <Route path="/eventos/:slug" element={<EventoDetalhesPage />} />
         <Route path="/gestao" element={<UnifiedAdminPage />} />
         <Route path="/pagar/:id" element={<PagamentoManual />} />
+        <Route path="/pagamento/atualizar/:id" element={<PagamentoAtualizar />} />
         <Route path="/pix/:id" element={<PagamentoPix />} />
         <Route path="/tutoriais" element={<AjudaPage />} />
         <Route path="/ajuda" element={<AjudaPage />} />
