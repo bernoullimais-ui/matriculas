@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAdminStore } from '../../../stores/adminStore';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Bot } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getTodayDateString } from '../../../utils/dateUtils';
 
@@ -183,9 +183,15 @@ export default function TasksTab() {
               {visibleTasks.map((t: any) => (
                 <div key={t.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div>
-                    <div className="flex items-center gap-2 mb-2">
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      {t.detalhes?.origem === 'sofia_whatsapp' && (
+                        <span className="inline-flex items-center gap-1 text-[10px] uppercase font-extrabold px-2.5 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">
+                          <Bot size={12} />
+                          Criado por IA
+                        </span>
+                      )}
                       <span className="inline-block text-[10px] uppercase font-extrabold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600">
-                        {t.tipo === 'vaga_disponivel' ? 'Vaga Disponível' : t.tipo === 'cancelamento' ? 'Cancelamento' : 'Transferência'}
+                        {t.tipo === 'vaga_disponivel' ? 'Vaga Disponível' : t.tipo === 'cancelamento' ? 'Cancelamento' : t.tipo === 'mudanca_turma' ? 'Mudança de Turma' : 'Transferência'}
                       </span>
                       <span className={`inline-block text-[10px] uppercase font-extrabold px-2.5 py-0.5 rounded-full ${
                         t.status === 'pendente' ? 'bg-amber-100 text-amber-700' :
