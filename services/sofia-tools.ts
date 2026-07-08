@@ -587,8 +587,8 @@ export async function buscarTurmasDisponiveis(
       query = query.ilike('nome', `%${modalidade}%`);
     }
 
-    // Aumentamos o limite para 50 para poder fazer filtragem de ano escolar na memória de forma segura
-    const { data: turmas, error } = await query.limit(50);
+    // Aumentamos o limite para 1000 para poder fazer filtragem de ano escolar na memória sem truncar resultados
+    const { data: turmas, error } = await query.limit(1000);
     if (error) throw error;
 
     if (!turmas || turmas.length === 0) {
@@ -664,7 +664,7 @@ export async function buscarEventos(ctx: SofiaToolContext): Promise<string> {
 
     const { data: eventos, error } = await ctx.supabase
       .from('eventos')
-      .select('id, titulo, descricao, data_inicio, data_fim, local, taxa_inscricao, slug')
+      .select('id, titulo, descricao, data_inicio, data_fim, local, taxa_inscricao, slug, tipo_preco, opcoes_precos')
       .gte('data_inicio', hoje)
       .order('data_inicio')
       .limit(10);
@@ -681,15 +681,37 @@ export async function buscarEventos(ctx: SofiaToolContext): Promise<string> {
     return JSON.stringify({
       encontrado: true,
       total: eventos.length,
-      eventos: eventos.map(e => ({
-        id: e.id,
-        titulo: e.titulo,
-        descricao: e.descricao,
-        data_inicio: formatDate(e.data_inicio),
-        data_fim: e.data_fim ? formatDate(e.data_fim) : null,
-        local: e.local,
-        valor_inscricao: e.taxa_inscricao ? formatCurrency(Number(e.taxa_inscricao) * 100) : 'Gratuito'
-      }))
+      eventos: eventos.map(e => {
+        let valorFomatado = 'Gratuito';
+        if (e.tipo_preco === 'categorias' && Array.isArray(e.opcoes_precos) && e.opcoes_precos.length > 0) {
+          const precos = e.opcoes_precos.map((op: any) => op.preco).filter((p: any) => p !== undefined && p !== null);
+          if (precos.length > 0) {
+            const min = Math.min(...precos);
+            const max = Math.max(...precos);
+            if (min === max) {
+              valorFomatado = formatCurrency(min * 100);
+            } else {
+              valorFomatado = `A partir de ${formatCurrency(min * 100)}`;
+            }
+          } else {
+            valorFomatado = 'Valores variam por categoria (verifique no link)';
+          }
+        } else if (e.taxa_inscricao && Number(e.taxa_inscricao) > 0) {
+          valorFomatado = formatCurrency(Number(e.taxa_inscricao) * 100);
+        } else if (e.tipo_preco === 'fixo' && e.taxa_inscricao === 0) {
+          valorFomatado = 'Gratuito';
+        }
+
+        return {
+          id: e.id,
+          titulo: e.titulo,
+          descricao: e.descricao,
+          data_inicio: formatDate(e.data_inicio),
+          data_fim: e.data_fim ? formatDate(e.data_fim) : null,
+          local: e.local,
+          valor_inscricao: valorFomatado
+        };
+      })
     });
   } catch (e: any) {
     return JSON.stringify({ erro: e.message || 'Erro ao buscar eventos' });
