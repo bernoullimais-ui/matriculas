@@ -121,10 +121,13 @@ export function EventosTab() {
   };
 
   const addPriceOption = () => {
+    if (!newPriceOptionName.trim()) return;
     setEventoForm({
       ...eventoForm,
-      opcoes_precos: [...(eventoForm.opcoes_precos || []), { nome: '', preco: 0 }]
+      opcoes_precos: [...(eventoForm.opcoes_precos || []), { nome: newPriceOptionName, preco: newPriceOptionPrice || 0 }]
     });
+    setNewPriceOptionName('');
+    setNewPriceOptionPrice(0);
   };
 
   const removePriceOption = (idx: number) => {
@@ -133,17 +136,18 @@ export function EventosTab() {
     setEventoForm({ ...eventoForm, opcoes_precos: current });
   };
 
-  const addCategoryTag = (tag: string) => {
-    if (!tag) return;
+  const addCategoryTag = () => {
+    if (!newCategoryName.trim()) return;
     const current = new Set(eventoForm.categorias_inscricao || []);
-    current.add(tag);
+    current.add(newCategoryName.trim());
     setEventoForm({ ...eventoForm, categorias_inscricao: Array.from(current) });
+    setNewCategoryName('');
   };
 
-  const removeCategoryTag = (tag: string) => {
-    const current = new Set(eventoForm.categorias_inscricao || []);
-    current.delete(tag);
-    setEventoForm({ ...eventoForm, categorias_inscricao: Array.from(current) });
+  const removeCategoryTag = (idx: number) => {
+    const current = [...(eventoForm.categorias_inscricao || [])];
+    current.splice(idx, 1);
+    setEventoForm({ ...eventoForm, categorias_inscricao: current });
   };
 
 
@@ -289,7 +293,7 @@ export function EventosTab() {
                       )}
                     </div>
 
-                      {eventoForm.tipo_preco === 'por_categoria' && (
+                      {eventoForm.tipo_preco === 'categorias' && (
                       <div className="space-y-3 pt-2">
                         <label className="block text-xs font-bold text-slate-500 uppercase">Gerenciar Categorias de Preço</label>
                         <div className="flex gap-2">
