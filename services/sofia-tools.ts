@@ -579,15 +579,7 @@ export async function buscarTurmasDisponiveis(
       .eq('ativa', true)
       .order('nome');
 
-    if (unidade) {
-      query = query.ilike('unidade_nome', `%${unidade}%`);
-    }
-
-    if (modalidade) {
-      query = query.ilike('nome', `%${modalidade}%`);
-    }
-
-    // Aumentamos o limite para 1000 para poder fazer filtragem de ano escolar na memória sem truncar resultados
+    // Aumentamos o limite para 1000 para poder fazer filtragem na memória sem truncar resultados
     const { data: turmas, error } = await query.limit(1000);
     if (error) throw error;
 
@@ -596,6 +588,22 @@ export async function buscarTurmasDisponiveis(
     }
 
     let filteredTurmas = turmas;
+
+    // Função auxiliar para normalizar strings (remover acentos e minúsculas)
+    const normalizeString = (str: string) => {
+      return str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    };
+
+    if (unidade) {
+      const unidadeNorm = normalizeString(unidade.split(' ')[0]);
+      filteredTurmas = filteredTurmas.filter(t => t.unidade_nome && normalizeString(t.unidade_nome).includes(unidadeNorm));
+    }
+
+    if (modalidade) {
+      const modalidadeNorm = normalizeString(modalidade);
+      filteredTurmas = filteredTurmas.filter(t => t.nome && normalizeString(t.nome).includes(modalidadeNorm));
+    }
+
     if (ano_escolar) {
       const searchNorm = ano_escolar.toLowerCase()
         .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
