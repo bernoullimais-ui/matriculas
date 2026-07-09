@@ -12879,7 +12879,7 @@ app.post('/api/webhooks/wix', async (req, res) => {
         // Fetch existing student details
         const { data: existingStudent, error: studentError } = await supabase
           .from('alunos')
-          .select('serie_ano')
+          .select('serie_ano, nome_completo')
           .eq('id', alunoId)
           .single();
 
@@ -12887,6 +12887,10 @@ app.post('/api/webhooks/wix', async (req, res) => {
           return res.status(404).json({ error: 'Aluno não encontrado.' });
         }
         studentGrade = existingStudent.serie_ano;
+        if (!studentData) {
+          // ensure we have a name for the message
+          studentData = { name: existingStudent.nome_completo, birthDate: '', grade: '' };
+        }
       }
 
       // Fetch class details
@@ -12920,6 +12924,45 @@ app.post('/api/webhooks/wix', async (req, res) => {
       if (tError) {
         console.error('Error booking trial class:', tError);
         return res.status(500).json({ error: 'Erro ao agendar aula experimental.' });
+      }
+
+      // Send WhatsApp confirmation
+      try {
+        const { data: identidades } = await supabase.from('identidades').select('*');
+        const identity = identidades?.find((i: any) => i.nome?.toLowerCase().includes('sport for kids')) || identidades?.[0];
+        
+        if (identity && identity.utalk_token) {
+          let cleanTo = guardianData.telefone.replace(/\D/g, '');
+          if (cleanTo.length >= 10 && !cleanTo.startsWith('55')) {
+            cleanTo = '55' + cleanTo;
+          }
+          const cleanFrom = (identity.utalk_from_phone || '').replace(/\D/g, '');
+
+          const alunoNome = (studentData && studentData.name) ? studentData.name.trim() : 'seu filho(a)';
+          const respFirstName = guardianData.nome_completo.split(' ')[0];
+
+          const mensagem = `Olá, ${respFirstName}! 🎉\n\nRecebemos o agendamento da Aula Experimental de ${alunoNome}.\n\n📍 *Unidade:* ${bookingData.unidade}\n🥋 *Turma:* ${bookingData.turma}\n🗓 *Data:* ${bookingData.dataAula}\n⏰ *Horário:* ${classData?.dias_horarios || 'A confirmar'}\n\nFicamos muito felizes com o interesse! Estaremos esperando por vocês. Se tiver qualquer dúvida ou precisar reagendar, é só nos chamar por aqui!`;
+
+          const payload: any = {
+            toPhone: cleanTo,
+            fromPhone: cleanFrom,
+            organizationId: identity.utalk_organization_id,
+            message: mensagem
+          };
+
+          fetch("https://app-utalk.umbler.com/api/v1/messages/simplified/", {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${identity.utalk_token}`,
+              'token': identity.utalk_token,
+              'x-token': identity.utalk_token
+            },
+            body: JSON.stringify(payload)
+          }).catch(err => console.error("Erro assíncrono ao enviar WhatsApp de confirmação de aula experimental:", err));
+        }
+      } catch (waError) {
+        console.error("Falha ao tentar enviar WhatsApp de confirmação:", waError);
       }
 
       // Fetch updated list of students and flatten for frontend compatibility
