@@ -9400,7 +9400,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
         const isRecurringCode = paymentId && /-\d+$/.test(paymentId);
         
         // Don't split if it's a recurring code (e.g., -02, -03), so the recurring block can handle finding the next pending installment
-        if (paymentId && paymentId.includes('_') && !paymentId.startsWith('enroll_') && !paymentId.startsWith('or_') && !paymentId.startsWith('ch_') && !paymentId.startsWith('sub_') && !paymentId.startsWith('in_')) {
+        if (paymentId && paymentId.includes('_') && !paymentId.startsWith('enroll_') && !paymentId.startsWith('or_') && !paymentId.startsWith('ch_') && !paymentId.startsWith('sub_') && !paymentId.startsWith('in_') && !paymentId.startsWith('pl_')) {
           if (!isRecurringCode) {
             paymentId = paymentId.split('_')[0];
           }
