@@ -803,7 +803,10 @@ export async function processarMensagem(
           return { fileData: p.fileData };
         }
         if (p.functionCall) {
-          return { functionCall: p.functionCall };
+          const ret: any = { functionCall: p.functionCall };
+          if (p.thoughtSignature) ret.thoughtSignature = p.thoughtSignature;
+          if (p.thought) ret.thought = p.thought;
+          return ret;
         }
         if (p.functionResponse) {
           return { functionResponse: p.functionResponse };
