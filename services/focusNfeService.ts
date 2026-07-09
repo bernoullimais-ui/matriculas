@@ -50,6 +50,9 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
              const { data: resp } = await supabase.from('responsaveis').select('cpf').eq('id', pedido.responsavel_id).maybeSingle();
              if (resp) dadosEmissao.cpf = resp.cpf;
           }
+        } else {
+          console.log(`[Focus NFe] Cancelando fila: loja_pedidos não encontrado para ${pagamentoId}`);
+          return;
         }
       } else if (dadosEmissao.origin === 'evento') {
         const { data: inscricao } = await supabase.from('evento_inscricoes').select('nome_responsavel, email_responsavel, valor_pago, respostas_personalizadas, responsavel_id, status').eq('id', pagamentoId).maybeSingle();
@@ -71,6 +74,9 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
              if (resp) cpf = resp.cpf;
           }
           dadosEmissao.cpf = cpf;
+        } else {
+          console.log(`[Focus NFe] Cancelando fila: evento_inscricoes não encontrado para ${pagamentoId}`);
+          return;
         }
       } else if (dadosEmissao.origin === 'mensalidade_pix') {
         const { data: fatura } = await supabase.from('faturas_pix').select('valor, matricula_id, status').eq('id', pagamentoId).maybeSingle();
@@ -87,6 +93,9 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
             dadosEmissao.email = Array.isArray(resp) ? resp[0]?.email : resp.email;
           }
           if (!dadosEmissao.valor) dadosEmissao.valor = fatura.valor;
+        } else {
+          console.log(`[Focus NFe] Cancelando fila: faturas_pix não encontrado para ${pagamentoId}`);
+          return;
         }
       } else if (dadosEmissao.origin === 'excecao_pix' || dadosEmissao.origin === 'geral') {
         let query = supabase.from('pagamentos').select('valor, responsavel_id, status');
@@ -110,6 +119,9 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
             }
           }
           if (!dadosEmissao.valor) dadosEmissao.valor = pag.valor;
+        } else {
+          console.log(`[Focus NFe] Cancelando fila: pagamento não encontrado para ${pagamentoId}`);
+          return;
         }
       }
     }

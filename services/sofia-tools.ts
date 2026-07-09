@@ -1027,8 +1027,6 @@ export async function escalarParaHumano(
   }
 }
 
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: consultar_tabela_banco
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1062,7 +1060,7 @@ export async function consultarTabelaBanco(
     }
 
     const colunasSelect = configTabela.colunas || '*';
-    let query = ctx.supabase.from(tabela).select(colunasSelect);
+    let query: any = ctx.supabase.from(tabela).select(colunasSelect);
 
     if (configTabela.filtro) {
       const partes = configTabela.filtro.split('=');

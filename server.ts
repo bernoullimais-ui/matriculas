@@ -12815,7 +12815,7 @@ app.post('/api/webhooks/wix', async (req, res) => {
   // Portal book trial class
   app.post("/api/portal/aulas-experimentais/agendar", async (req, res) => {
     try {
-      const { guardianId, alunoId, studentData, bookingData } = req.body;
+      let { guardianId, alunoId, studentData, bookingData } = req.body;
       if (!guardianId || !bookingData || !bookingData.unidade || !bookingData.turma || !bookingData.dataAula) {
         return res.status(400).json({ error: 'Parâmetros obrigatórios ausentes.' });
       }
