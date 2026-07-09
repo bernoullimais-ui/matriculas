@@ -252,6 +252,28 @@ export const SOFIA_TOOL_DECLARATIONS = [
       },
       required: ['motivo']
     }
+  },
+  {
+    name: 'consultar_tabela_banco',
+    description: 'Consulta informações em tempo real de uma das tabelas de banco de dados disponíveis na base de conhecimento (ex: loja_produtos). Use sempre que precisar responder sobre estoque, preços, produtos ou outras tabelas fornecidas.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        tabela: {
+          type: Type.STRING,
+          description: 'Nome da tabela a ser consultada (deve ser exatamente como aparece na lista de tabelas disponíveis, ex: loja_produtos)'
+        },
+        filtro_coluna: {
+          type: Type.STRING,
+          description: 'Nome da coluna para aplicar filtro de busca opcional (ex: nome, descricao)'
+        },
+        filtro_valor: {
+          type: Type.STRING,
+          description: 'Valor para buscar na coluna (texto parcial ou exato)'
+        }
+      },
+      required: ['tabela']
+    }
   }
 ];
 
@@ -1005,6 +1027,72 @@ export async function escalarParaHumano(
   }
 }
 
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: consultar_tabela_banco
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function consultarTabelaBanco(
+  ctx: SofiaToolContext,
+  tabela: string,
+  filtroColuna?: string,
+  filtroValor?: string
+): Promise<string> {
+  try {
+    const { data: identidade } = await ctx.supabase
+      .from('identidades')
+      .select('base_conhecimento')
+      .eq('nome', ctx.identidadeNome)
+      .single();
+
+    if (!identidade || !identidade.base_conhecimento) {
+      return JSON.stringify({ erro: 'Base de conhecimento não configurada para esta identidade.' });
+    }
+
+    const bc = typeof identidade.base_conhecimento === 'string' 
+      ? JSON.parse(identidade.base_conhecimento) 
+      : identidade.base_conhecimento;
+
+    const tabelas = bc.tabelas_banco || [];
+    const configTabela = tabelas.find((t: any) => t.nome === tabela);
+
+    if (!configTabela) {
+      return JSON.stringify({ erro: `Tabela '${tabela}' não está autorizada para consulta.` });
+    }
+
+    const colunasSelect = configTabela.colunas || '*';
+    let query = ctx.supabase.from(tabela).select(colunasSelect);
+
+    if (configTabela.filtro) {
+      const partes = configTabela.filtro.split('=');
+      if (partes.length === 2) {
+        const col = partes[0].trim();
+        let val: any = partes[1].trim();
+        if (val === 'true') val = true;
+        else if (val === 'false') val = false;
+        query = query.eq(col, val);
+      }
+    }
+
+    if (filtroColuna && filtroValor) {
+      query = query.ilike(filtroColuna, `%${filtroValor}%`);
+    }
+
+    const { data, error } = await query.limit(20);
+
+    if (error) throw error;
+
+    if (!data || data.length === 0) {
+      return JSON.stringify({ mensagem: `Nenhum registro encontrado na tabela ${tabela} com esses filtros.` });
+    }
+
+    return JSON.stringify({ sucesso: true, tabela, resultados: data });
+  } catch (e: any) {
+    return JSON.stringify({ erro: e.message || 'Erro ao consultar tabela.' });
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Executor de Ferramentas
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1057,6 +1145,9 @@ export async function executarFerramenta(
 
     case 'escalar_para_humano':
       return escalarParaHumano(ctx, conversaId, args.motivo);
+
+    case 'consultar_tabela_banco':
+      return consultarTabelaBanco(ctx, args.tabela, args.filtro_coluna, args.filtro_valor);
 
     default:
       return JSON.stringify({ erro: `Ferramenta "${toolName}" não encontrada.` });
