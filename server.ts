@@ -2497,7 +2497,7 @@ Regras:
         try {
           const ai = new GoogleGenAI({ apiKey: primaryKey });
           response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3.5-flash',
             contents: prompt,
             config: { systemInstruction, temperature: 0.1 }
           });
@@ -2506,7 +2506,7 @@ Regras:
             console.log("Falha na chave primária do Gemini, tentando chave reserva...");
             const fallbackAi = new GoogleGenAI({ apiKey: fallbackKey });
             response = await fallbackAi.models.generateContent({
-              model: 'gemini-2.5-flash',
+              model: 'gemini-3.5-flash',
               contents: prompt,
               config: { systemInstruction, temperature: 0.1 }
             });
@@ -2626,7 +2626,7 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
       try {
         const ai = new GoogleGenAI({ apiKey: primaryKey });
         response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: 'gemini-3.5-flash',
           contents: prompt,
           config: {
             systemInstruction,
@@ -2639,7 +2639,7 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
           console.log("Falha na chave primária do Gemini ao gerar copy, tentando chave reserva...");
           const fallbackAi = new GoogleGenAI({ apiKey: fallbackKey });
           response = await fallbackAi.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3.5-flash',
             contents: prompt,
             config: {
               systemInstruction,
