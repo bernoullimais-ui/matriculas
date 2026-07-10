@@ -2125,11 +2125,13 @@ app.use('/api/admin', requireAdminAuth);
       }
       // Email
       if (email) {
-        await supabase.from('campaign_emails').insert([{ ...email, campaign_id: cid }]);
+        const { error: eErr } = await supabase.from('campaign_emails').insert([{ ...email, campaign_id: cid }]);
+        if (eErr) throw eErr;
       }
       // Landing page
       if (landing_page) {
-        await supabase.from('campaign_landing_pages').insert([{ ...landing_page, campaign_id: cid }]);
+        const { error: lpErr } = await supabase.from('campaign_landing_pages').insert([{ ...landing_page, campaign_id: cid }]);
+        if (lpErr) throw lpErr;
       }
       // Inicializa métricas zeradas
       await supabase.from('campaign_metrics').insert([{ campaign_id: cid }]);
@@ -2174,12 +2176,18 @@ app.use('/api/admin', requireAdminAuth);
       // Atualiza email
       if (email !== undefined) {
         await supabase.from('campaign_emails').delete().eq('campaign_id', id);
-        if (email) await supabase.from('campaign_emails').insert([{ ...email, campaign_id: id }]);
+        if (email) {
+          const { error: eErr } = await supabase.from('campaign_emails').insert([{ ...email, campaign_id: id }]);
+          if (eErr) throw eErr;
+        }
       }
       // Atualiza landing page
       if (landing_page !== undefined) {
         await supabase.from('campaign_landing_pages').delete().eq('campaign_id', id);
-        if (landing_page) await supabase.from('campaign_landing_pages').insert([{ ...landing_page, campaign_id: id }]);
+        if (landing_page) {
+          const { error: lpErr } = await supabase.from('campaign_landing_pages').insert([{ ...landing_page, campaign_id: id }]);
+          if (lpErr) throw lpErr;
+        }
       }
 
       res.json({ success: true });
