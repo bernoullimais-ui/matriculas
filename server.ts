@@ -2329,9 +2329,9 @@ app.use('/api/admin', requireAdminAuth);
       }
 
       // Log success and update metrics (increment enviadas)
-      const { data: m } = await supabase.from('campaign_metrics').select('enviados').eq('campaign_id', id).maybeSingle();
+      const { data: m } = await supabase.from('campaign_metrics').select('emails_enviados').eq('campaign_id', id).maybeSingle();
       if (m) {
-        await supabase.from('campaign_metrics').update({ enviados: (m.enviados || 0) + 1, disparado_em: new Date().toISOString() }).eq('campaign_id', id);
+        await supabase.from('campaign_metrics').update({ emails_enviados: (m.emails_enviados || 0) + 1 }).eq('campaign_id', id);
       }
 
       await supabase.from('campaign_sends').insert([{
@@ -2352,11 +2352,6 @@ app.use('/api/admin', requireAdminAuth);
         status: 'erro',
         mensagem_erro: e.message
       }]);
-
-      const { data: m } = await supabase.from('campaign_metrics').select('erros').eq('campaign_id', req.params.id).maybeSingle();
-      if (m) {
-        await supabase.from('campaign_metrics').update({ erros: (m.erros || 0) + 1, disparado_em: new Date().toISOString() }).eq('campaign_id', req.params.id);
-      }
 
       res.status(500).json({ error: e.message });
     }
