@@ -10,7 +10,7 @@ import axios from "axios";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import * as fs from "fs";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa, pausarConversa } from "./services/sofia-agent.js";
 import { queueNotaFiscal, processarFilaNotasFiscais } from "./services/focusNfeService.js";
 
@@ -2631,7 +2631,16 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
           config: {
             systemInstruction,
             temperature: 0.7,
-            responseMimeType: 'application/json'
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                emailSubject: { type: Type.STRING },
+                emailBody: { type: Type.STRING },
+                whatsappText: { type: Type.STRING },
+                lpDescription: { type: Type.STRING }
+              }
+            }
           }
         });
       } catch (e: any) {
@@ -2644,7 +2653,16 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
             config: {
               systemInstruction,
               temperature: 0.7,
-              responseMimeType: 'application/json'
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  emailSubject: { type: Type.STRING },
+                  emailBody: { type: Type.STRING },
+                  whatsappText: { type: Type.STRING },
+                  lpDescription: { type: Type.STRING }
+                }
+              }
             }
           });
         } else {
