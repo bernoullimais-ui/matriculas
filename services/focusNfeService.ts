@@ -232,7 +232,7 @@ export async function processarFilaNotasFiscais() {
           aliquota: 3,
           discriminacao: "Prestação de serviços educacionais e atividades esportivas",
           item_lista_servico: "08.01",
-          codigo_tributario_municipio: "0801",
+          codigo_tributario_municipio: "0801001",
           codigo_nbs: "122011900", // Educação infantil / ensino regular
           ibs_cbs_classificacao_tributaria: "000001", // Situações tributadas integralmente
           codigo_indicador_operacao: "050101", // Operação presencial
