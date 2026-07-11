@@ -230,6 +230,7 @@ export async function processarFilaNotasFiscais() {
         },
         servico: {
           aliquota: 3,
+          discriminacao: "Prestação de serviços educacionais e atividades esportivas",
           item_lista_servico: "08.01",
           codigo_tributario_municipio: "0801",
           valor_servicos: nota.dados_emissao?.valor || 100.00
