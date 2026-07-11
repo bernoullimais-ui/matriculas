@@ -232,7 +232,7 @@ export async function processarFilaNotasFiscais() {
           aliquota: 3,
           discriminacao: "Prestação de serviços educacionais e atividades esportivas",
           item_lista_servico: "06.04",
-          codigo_tributario_municipio: "0604-0/01",
+          codigo_tributario_municipio: "0604001",
           codigo_nbs: "122051200", // Serviços de educação desportiva e recreacional
           ibs_cbs_classificacao_tributaria: "200041", // Fornecimento de serviço de educação desportiva
           codigo_indicador_operacao: "030101", // Local da prestação
