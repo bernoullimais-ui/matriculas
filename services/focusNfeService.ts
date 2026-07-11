@@ -233,6 +233,7 @@ export async function processarFilaNotasFiscais() {
           discriminacao: "Prestação de serviços educacionais e atividades esportivas",
           item_lista_servico: "08.01",
           codigo_tributario_municipio: "0801",
+          codigo_nbs: "1.2201.19.00", // Educação infantil / ensino regular
           valor_servicos: nota.dados_emissao?.valor || 100.00
         }
       };
