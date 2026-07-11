@@ -39,7 +39,7 @@ export default function NotasFiscaisTab() {
   });
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
+    switch (status?.toLowerCase()) {
       case 'autorizado':
         return <span className="flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold"><CheckCircle2 size={14} /> Autorizada</span>;
       case 'erro':
