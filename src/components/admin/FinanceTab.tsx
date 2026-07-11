@@ -214,7 +214,7 @@ export function FinanceTab() {
         if (finSecondaryTab === 'wix' && p.metodo_pagamento !== 'wix') return false;
         if (finSecondaryTab === 'pagarme' && p.metodo_pagamento === 'wix') return false;
       } else if (finPrimaryTab === 'inadimplencias') {
-        const isUnpaid = p.status === 'pendente' || p.status === 'aguardando_pagamento';
+        const isUnpaid = p.status === 'pendente' || p.status === 'aguardando_pagamento' || p.status === 'cancelado';
         if (!isUnpaid) return false;
       }
 
