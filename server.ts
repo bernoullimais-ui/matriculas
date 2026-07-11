@@ -8126,8 +8126,13 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
           dateStr = w.created_at;
         }
         
-        const sig = `${w.aluno_id || w.cobranca_email}-${dateStr}-${w.valor}-${w.produto_nome || ''}`;
-        
+        // Se houver id_provedor_pagamento (ex: orderId-cycle-index), essa é a identidade definitiva da parcela!
+        // Caso contrário, tenta agrupar por data (apenas yyyy-mm para evitar que retentativas em dias diferentes gerem duplicatas).
+        let sig = w.id_provedor_pagamento;
+        if (!sig) {
+          const yearMonth = dateStr ? dateStr.substring(0, 7) : 'no-date';
+          sig = `${w.aluno_id || w.cobranca_email}-${yearMonth}-${w.valor}-${w.produto_nome || ''}`;
+        }
         const existing = uniqueWixMap.get(sig);
         if (!existing) {
           uniqueWixMap.set(sig, w);
