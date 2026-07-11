@@ -8190,7 +8190,8 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
           matricula_id: w.matricula_id,
           aluno_id: w.aluno_id,
           valor: w.valor,
-          status: (w.status_transacao || '').toLowerCase().includes('bem-sucedido') ? 'pago' : 
+          status: (w.status_transacao || '').toLowerCase() === 'perdoado' ? 'perdoado' :
+                  (w.status_transacao || '').toLowerCase().includes('bem-sucedido') ? 'pago' : 
                   ((w.status_transacao || '').toLowerCase().includes('recusado') || 
                    (w.status_transacao || '').toLowerCase().includes('falhou') || 
                    (w.status_transacao || '').toLowerCase().includes('falha') || 
@@ -8223,7 +8224,9 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
 
         const statusLower = (ps.status || '').toLowerCase();
         let normalizedStatus = 'pendente';
-        if (statusLower.includes('aprovad') || statusLower.includes('paga') || statusLower.includes('disponivel') || statusLower.includes('conciliado')) {
+        if (statusLower === 'perdoado') {
+          normalizedStatus = 'perdoado';
+        } else if (statusLower.includes('aprovad') || statusLower.includes('paga') || statusLower.includes('disponivel') || statusLower.includes('conciliado')) {
           normalizedStatus = 'pago';
         } else if (statusLower.includes('cancelad') || statusLower.includes('devolvida') || statusLower.includes('estornado')) {
           normalizedStatus = 'cancelado';
