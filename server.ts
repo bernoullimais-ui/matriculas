@@ -10612,15 +10612,6 @@ async function syncWixRecurringPayments() {
           ? order.lastPaymentStatus  // PAID, FAILED, PENDING
           : 'PAID';
 
-        // Correção Crítica: O Wix mantém o 'lastPaymentStatus' como 'PAID' (ativo) durante o período 
-        // de tolerância (grace period) de retentativas. Se confiarmos nisso, o Cron injetará falsos 
-        // positivos (Bem-sucedido) antes do pagamento realmente ocorrer.
-        // Assim, para o ciclo atual, se o status for 'PAID', forçamos para 'Pendente' para que
-        // a escola não ache que o dinheiro já entrou. (O Webhook do Wix atualizará para Bem-sucedido).
-        if (cycleIndex === currentCycleIndex && cycleStatus === 'PAID') {
-          cycleStatus = 'PENDING';
-        }
-
         const statusLabel = cycleStatus === 'PAID' ? 'Bem-sucedido'
                            : cycleStatus === 'FAILED' ? 'Falhou'
                            : 'Pendente';
