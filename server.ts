@@ -8142,23 +8142,29 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
           
           const wSuccess = wStatus.includes('bem-sucedido') || wStatus === 'pago';
           const eSuccess = eStatus.includes('bem-sucedido') || eStatus === 'pago';
+          const wPerdoado = wStatus === 'perdoado';
+          const ePerdoado = eStatus === 'perdoado';
           
-          const wIsWebhook = w.provedor_pagamento === 'Wix Webhook';
-          const eIsWebhook = existing.provedor_pagamento === 'Wix Webhook';
-
-          if (wIsWebhook && !eIsWebhook) {
-            // Webhook é fonte da verdade oficial e em tempo real sobre cobranças avulsas/falhas reais
+          if (wSuccess && !eSuccess) {
             uniqueWixMap.set(sig, w);
-          } else if (!wIsWebhook && eIsWebhook) {
-            // Mantém a existente que é Webhook
+          } else if (eSuccess && !wSuccess) {
+            // Mantém a existente
+          } else if (wPerdoado && !ePerdoado) {
+            uniqueWixMap.set(sig, w);
+          } else if (ePerdoado && !wPerdoado) {
+            // Mantém a existente
           } else {
-            // Se ambas são do mesmo tipo (ex: dois Webhooks), mantém a bem-sucedida
-            if (wSuccess && !eSuccess) {
+            // Empate (ambas falhas, ambas sucesso, ou ambas perdoadas) -> desempata pelo Webhook
+            const wIsWebhook = w.provedor_pagamento === 'Wix Webhook';
+            const eIsWebhook = existing.provedor_pagamento === 'Wix Webhook';
+
+            if (wIsWebhook && !eIsWebhook) {
               uniqueWixMap.set(sig, w);
-            } else if (wSuccess && eSuccess) {
-              if (w.provedor_pagamento === 'Wix API Cron' && existing.provedor_pagamento !== 'Wix API Cron') {
-                uniqueWixMap.set(sig, w);
-              }
+            } else if (!wIsWebhook && eIsWebhook) {
+              // Mantém a existente
+            } else {
+              // Se ambas sucesso e mesmo tipo, a nova sobrescreve (pode ter dados mais frescos)
+              uniqueWixMap.set(sig, w);
             }
           }
         }
