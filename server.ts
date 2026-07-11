@@ -8966,12 +8966,60 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
            updateData.nfe_url_pdf = payload.caminho_danfe || payload.url_danfse || payload.url;
         }
 
-        // Disparar e-mail via Brevo se configurado
+        // Disparar e-mail via Brevo
         try {
-          const { data: config } = await supabase.from('configuracoes_nf').select('brevo_template_id').limit(1).single();
-          if (config && config.brevo_template_id && process.env.BREVO_API_KEY) {
+          if (process.env.BREVO_API_KEY) {
+            const { data: config } = await supabase.from('configuracoes_nf').select('brevo_template_id').limit(1).single();
             const { data: notaInfo } = await supabase.from('notas_fiscais_fila').select('dados_emissao').eq('id', notaId).single();
+            
             if (notaInfo && notaInfo.dados_emissao && notaInfo.dados_emissao.email) {
+              const nomeCliente = notaInfo.dados_emissao.nome || 'Cliente';
+              
+              let brevoBody: any = {
+                to: [{ email: notaInfo.dados_emissao.email, name: nomeCliente }]
+              };
+
+              if (config && config.brevo_template_id) {
+                // Usa o template ID cadastrado no painel da Brevo
+                brevoBody.templateId = parseInt(config.brevo_template_id);
+                brevoBody.params = {
+                  NOME_CLIENTE: nomeCliente,
+                  NUMERO_NOTA: payload.numero,
+                  LINK_PDF: updateData.nfe_url_pdf,
+                  LINK_XML: updateData.nfe_url_xml
+                };
+              } else {
+                // Template HTML Interno Embutido (Não exige cadastro na Brevo)
+                brevoBody.sender = { name: 'Sport for Kids', email: 'contato@sportforkids.com.br' };
+                brevoBody.subject = 'Sua Nota Fiscal de Serviços (NFS-e) foi emitida - Sport for Kids';
+                brevoBody.htmlContent = `
+                  <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background-color: #ffffff;">
+                    <div style="background-color: #0f172a; padding: 30px 20px; text-align: center;">
+                      <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">Sport for Kids</h1>
+                    </div>
+                    <div style="padding: 40px 30px; color: #334155; line-height: 1.6;">
+                      <p style="font-size: 16px; margin-top: 0;">Olá, <strong>${nomeCliente}</strong>,</p>
+                      <p style="font-size: 16px;">Sua Nota Fiscal de Serviços Eletrônica (NFS-e) número <strong>${payload.numero}</strong> foi emitida com sucesso!</p>
+                      
+                      <div style="margin: 40px 0; text-align: center;">
+                        <a href="${updateData.nfe_url_pdf}" style="background-color: #4f46e5; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.2);">
+                          Acessar PDF da Nota Fiscal
+                        </a>
+                      </div>
+                      
+                      <p style="font-size: 14px; color: #64748b; margin-bottom: 0;">
+                        Se preferir, você também pode baixar o arquivo XML clicando <a href="${updateData.nfe_url_xml}" style="color: #4f46e5; text-decoration: underline;">aqui</a>.
+                      </p>
+                    </div>
+                    <div style="background-color: #f8fafc; padding: 20px 30px; text-align: center; border-top: 1px solid #f1f5f9;">
+                      <p style="font-size: 13px; color: #94a3b8; margin: 0;">
+                        Atenciosamente,<br/><strong style="color: #64748b;">Equipe Sport for Kids</strong>
+                      </p>
+                    </div>
+                  </div>
+                `;
+              }
+
               await fetch('https://api.brevo.com/v3/smtp/email', {
                 method: 'POST',
                 headers: {
@@ -8979,18 +9027,9 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
                   'api-key': process.env.BREVO_API_KEY,
                   'content-type': 'application/json'
                 },
-                body: JSON.stringify({
-                  to: [{ email: notaInfo.dados_emissao.email, name: notaInfo.dados_emissao.nome || 'Cliente' }],
-                  templateId: config.brevo_template_id,
-                  params: {
-                    NOME_CLIENTE: notaInfo.dados_emissao.nome || 'Cliente',
-                    NUMERO_NOTA: payload.numero,
-                    LINK_PDF: updateData.nfe_url_pdf,
-                    LINK_XML: updateData.nfe_url_xml
-                  }
-                })
+                body: JSON.stringify(brevoBody)
               });
-              console.log(`[Webhook Focus NFe] E-mail enviado via Brevo (Template ${config.brevo_template_id}) para ${notaInfo.dados_emissao.email}`);
+              console.log(`[Webhook Focus NFe] E-mail enviado via Brevo para ${notaInfo.dados_emissao.email} (Template: ${brevoBody.templateId ? 'Externo ID '+brevoBody.templateId : 'Interno'})`);
             }
           }
         } catch (mailError) {
