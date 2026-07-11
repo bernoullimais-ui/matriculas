@@ -9058,6 +9058,105 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
     }
   });
 
+  // Wix Webhook (Automations / Events)
+  app.post('/api/webhooks/wix', async (req, res) => {
+    try {
+      const authHeader = req.headers['authorization'];
+      const secret = process.env.WIX_WEBHOOK_SECRET;
+
+      if (secret && authHeader !== secret) {
+        console.warn(`[Webhook Wix] Autenticação falhou. Recebido: ${authHeader}`);
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      console.log(`[Webhook Wix] Payload recebido:`, JSON.stringify(req.body, null, 2));
+
+      // Extrai os dados do webhook (adaptável para Automations ou Events)
+      const data = req.body.data ? (typeof req.body.data === 'string' ? JSON.parse(req.body.data) : req.body.data) : req.body;
+      
+      const wixOrderId = data.orderId || data.id;
+      const email = data.contactEmail || data.email || data.buyerEmail;
+      const planName = data.planName || data.title || data.productName;
+      const paymentStatus = (data.paymentStatus || data.status || '').toUpperCase();
+      const amount = Number(data.amount || data.price || data.total || 0);
+      const dateStr = data.date || data.createdAt || new Date().toISOString();
+
+      if (!email || !planName) {
+        console.warn(`[Webhook Wix] Payload ignorado por falta de dados básicos (email/plano)`);
+        return res.status(200).json({ received: true, ignored: true });
+      }
+
+      const isSuccess = paymentStatus === 'PAID' || paymentStatus === 'SUCCESS' || paymentStatus === 'BEM-SUCEDIDO';
+      const isFailed = paymentStatus === 'FAILED' || paymentStatus === 'DECLINED' || paymentStatus === 'RECUSADO';
+      
+      const statusLabel = isSuccess ? 'Bem-sucedido' : isFailed ? 'Falhou' : 'Pendente';
+
+      console.log(`[Webhook Wix] Processando: ${email} | ${planName} | Status: ${statusLabel}`);
+
+      // Buscar aluno correspondente pelo email e plano
+      const { data: resp } = await supabase.from('responsaveis').select('id, nome_completo').eq('email', email.trim().toLowerCase()).maybeSingle();
+      
+      let aluno_id = null;
+      let matricula_id = null;
+      let turma_id = null;
+
+      if (resp) {
+        const { data: matriculas } = await supabase.from('matriculas').select('id, aluno_id, turma_id, plano, turma').eq('responsavel_id', resp.id).eq('status', 'ativo');
+        if (matriculas && matriculas.length > 0) {
+          // Simplificação: tenta encontrar a matrícula pelo nome do plano
+          const mat = matriculas.find((m: any) => m.plano?.toLowerCase().includes(planName.toLowerCase().split(' ')[0]) || m.turma?.toLowerCase().includes(planName.toLowerCase().split(' ')[0]));
+          if (mat) {
+            aluno_id = mat.aluno_id;
+            matricula_id = mat.id;
+            turma_id = mat.turma_id;
+          } else {
+            aluno_id = matriculas[0].aluno_id;
+            matricula_id = matriculas[0].id;
+          }
+        }
+      }
+
+      // Cria a assinatura para evitar duplicação (usando o mês/ano)
+      const dateObj = new Date(dateStr);
+      const yearMonth = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
+      
+      // Salva no banco com o provedor 'Wix Webhook' (que tem prioridade sobre o Cron)
+      const uniqueId = `webhook-${wixOrderId || 'evt'}-${yearMonth}-${Date.now()}`;
+      
+      const insertData = {
+        id_provedor_pagamento: uniqueId,
+        data_pagamento_gmt_03: dateStr,
+        data_transacao_gmt_03: dateStr,
+        moeda: 'BRL',
+        valor: amount,
+        status_transacao: statusLabel,
+        cobranca_nome: resp ? resp.nome_completo : 'Desconhecido',
+        cobranca_email: email,
+        produto_nome: planName,
+        responsavel_id: resp ? resp.id : null,
+        aluno_id: aluno_id,
+        matricula_id: matricula_id,
+        turma_id: turma_id,
+        provedor_pagamento: 'Wix Webhook',
+        id_pedido: wixOrderId,
+        tipo_pedido: 'Webhook'
+      };
+
+      const { error } = await supabase.from('pagamentos_wix').insert([insertData]);
+      
+      if (error) {
+        console.error(`[Webhook Wix] Erro ao inserir pagamento no banco:`, error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      console.log(`[Webhook Wix] Pagamento inserido com sucesso (${statusLabel}) para ${email}`);
+      res.status(200).json({ received: true });
+    } catch (e: any) {
+      console.error('[Webhook Wix] Exceção:', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post('/api/webhooks/pagarme', async (req, res) => {
     const event = req.body || {};
     const signature = req.headers['x-pagarme-signature'] as string;
@@ -10509,9 +10608,18 @@ async function syncWixRecurringPayments() {
         }
 
         // Status: only the current cycle has a real lastPaymentStatus; past cycles assumed PAID
-        const cycleStatus = cycleIndex === currentCycleIndex
+        let cycleStatus = cycleIndex === currentCycleIndex
           ? order.lastPaymentStatus  // PAID, FAILED, PENDING
           : 'PAID';
+
+        // Correção Crítica: O Wix mantém o 'lastPaymentStatus' como 'PAID' (ativo) durante o período 
+        // de tolerância (grace period) de retentativas. Se confiarmos nisso, o Cron injetará falsos 
+        // positivos (Bem-sucedido) antes do pagamento realmente ocorrer.
+        // Assim, para o ciclo atual, se o status for 'PAID', forçamos para 'Pendente' para que
+        // a escola não ache que o dinheiro já entrou. (O Webhook do Wix atualizará para Bem-sucedido).
+        if (cycleIndex === currentCycleIndex && cycleStatus === 'PAID') {
+          cycleStatus = 'PENDING';
+        }
 
         const statusLabel = cycleStatus === 'PAID' ? 'Bem-sucedido'
                            : cycleStatus === 'FAILED' ? 'Falhou'
