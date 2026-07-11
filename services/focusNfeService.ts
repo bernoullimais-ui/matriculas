@@ -210,8 +210,9 @@ export async function processarFilaNotasFiscais() {
       const payload = {
         natureza_operacao: "1", // Exemplo padrão
         prestador: {
-          cnpj: "00000000000000", // CNPJ da Escola (Deve vir do ENV ou do banco)
-          inscricao_municipal: "123456"
+          cnpj: "01327184000161", // FOR KIDS SOLUCOES EDUCACIONAIS LTDA
+          inscricao_municipal: "0012734900199",
+          codigo_municipio: "2927408" // Salvador - BA
         },
         tomador: {
           cpf: nota.dados_emissao?.cpf || '00000000000',
