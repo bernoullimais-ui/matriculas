@@ -446,6 +446,7 @@ export function FinanceTab() {
       risk: 'BAIXO' | 'MODERADO' | 'ALTO';
       lastPresence: string;
       isActive: boolean;
+      parcelas: string[];
     }> = {};
 
     if (finPrimaryTab === 'inadimplencias') {
@@ -472,12 +473,17 @@ export function FinanceTab() {
             totalOwed: 0,
             risk: 'BAIXO',
             lastPresence: presenceDate,
-            isActive: !!activeMat
+            isActive: !!activeMat,
+            parcelas: []
           };
         }
 
         overdueStudentsMap[studentId].outstandingCount++;
         overdueStudentsMap[studentId].totalOwed += net;
+        
+        const pDate = p.data_vencimento || p.created_at;
+        const fmtDate = pDate ? new Date(pDate).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '';
+        if (fmtDate) overdueStudentsMap[studentId].parcelas.push(fmtDate);
         
         const count = overdueStudentsMap[studentId].outstandingCount;
         overdueStudentsMap[studentId].risk = count === 1 ? 'BAIXO' : count === 2 ? 'MODERADO' : 'ALTO';
@@ -1378,8 +1384,17 @@ export function FinanceTab() {
                                       <td className="p-4 text-xs font-semibold text-slate-600">
                                         {item.lastPresence}
                                       </td>
-                                      <td className="p-4 text-xs font-bold text-amber-600">
-                                        {item.outstandingCount} parcela(s)
+                                      <td className="p-4 align-top">
+                                        <div className="text-xs font-bold text-amber-600">
+                                          {item.outstandingCount} parcela(s)
+                                        </div>
+                                        {item.parcelas && item.parcelas.length > 0 && (
+                                          <div className="mt-1 flex flex-col gap-0.5">
+                                            {item.parcelas.map((d: string, i: number) => (
+                                              <span key={i} className="text-[10px] text-slate-500 font-medium">({d})</span>
+                                            ))}
+                                          </div>
+                                        )}
                                       </td>
                                       <td className="p-4 text-xs font-black text-slate-800 text-right">
                                         {formatCurrency(item.totalOwed)}
