@@ -9772,20 +9772,20 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
                 console.log(`[Webhook Pagar.me] Ciclo 1: Atualizando pagamento original (${targetPaymentId})`);
               }
             } else if (matriculaId) {
-              // Para ciclos 2+, buscamos se já criamos o registro para este invoiceId
-              if (invoiceId) {
+              // Para ciclos 2+, buscamos se já criamos o registro para este identifierId
+              if (identifierId) {
                 const { data: existingPayment } = await supabase
                   .from('pagamentos')
                   .select('id')
-                  .eq('pagarme', invoiceId)
+                  .eq('pagarme', identifierId)
                   .eq('matricula_id', matriculaId)
                   .maybeSingle();
 
                 if (existingPayment) {
                   targetPaymentId = existingPayment.id;
-                  console.log(`[Webhook Pagar.me] Parcela recorrente já existente encontrada (Invoice ${invoiceId}): ${targetPaymentId}`);
+                  console.log(`[Webhook Pagar.me] Parcela recorrente já existente encontrada (Identifier ${identifierId}): ${targetPaymentId}`);
                 } else {
-                  console.log(`[Webhook Pagar.me] Nenhuma parcela existente encontrada para a fatura ${invoiceId}. Criando novo registro...`);
+                  console.log(`[Webhook Pagar.me] Nenhuma parcela existente encontrada para a fatura/cobrança ${identifierId}. Criando novo registro...`);
                   // Fetch matrícula details to create a new payment
                   const { data: matricula, error: matError } = await supabase
                     .from('matriculas')
@@ -9834,7 +9834,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
                   }
                 }
               } else {
-                console.log(`[Webhook Pagar.me] Ciclo recorrente, mas sem invoiceId válido. Usando target = ${targetPaymentId}`);
+                console.log(`[Webhook Pagar.me] Ciclo recorrente, mas sem identifierId válido. Usando target = ${targetPaymentId}`);
               }
             } else {
               console.log(`[Webhook Pagar.me] Matrícula não encontrada via assinatura ou pagamento original. Impossível tratar parcela recorrente.`);
