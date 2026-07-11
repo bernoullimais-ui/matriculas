@@ -9173,6 +9173,51 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
 
         let originalCode = paymentId;
         
+        // Auto-fix temporary CPFs (IMPY...) with real CPF from Pagar.me
+        const customerDocument = data?.customer?.document || data?.order?.customer?.document || data?.subscription?.customer?.document;
+        if (customerDocument && customerDocument.replace(/\D/g, '').length === 11 && originalCode) {
+           (async () => {
+              try {
+                let responsavelId = null;
+                const cleanCode = originalCode.replace('loja_', '').replace('evento_', '');
+                
+                if (originalCode.startsWith('loja_')) {
+                   const { data: ped } = await supabase.from('loja_pedidos').select('responsavel_id').eq('id', cleanCode).maybeSingle();
+                   if (ped) responsavelId = ped.responsavel_id;
+                } else if (originalCode.startsWith('evento_')) {
+                   const { data: insc } = await supabase.from('evento_inscricoes').select('responsavel_id').eq('id', cleanCode).maybeSingle();
+                   if (insc) responsavelId = insc.responsavel_id;
+                } else {
+                   const { data: mat } = await supabase.from('matriculas').select('aluno_id').eq('id', cleanCode).maybeSingle();
+                   if (mat && mat.aluno_id) {
+                      const { data: alu } = await supabase.from('alunos').select('responsavel_id').eq('id', mat.aluno_id).maybeSingle();
+                      if (alu) responsavelId = alu.responsavel_id;
+                   }
+                }
+                
+                if (responsavelId) {
+                   const { data: resp } = await supabase.from('responsaveis').select('cpf').eq('id', responsavelId).maybeSingle();
+                   if (resp && resp.cpf && resp.cpf.startsWith('IMP')) {
+                      await supabase.from('responsaveis').update({ cpf: customerDocument }).eq('id', responsavelId);
+                      console.log(`[Webhook Pagar.me] Substituiu CPF temporário ${resp.cpf} por ${customerDocument} para responsavel ${responsavelId}`);
+                      
+                      const { data: notas } = await supabase.from('notas_fiscais_fila').select('id, dados_emissao').like('dados_emissao->>cpf', 'IMP%');
+                      if (notas && notas.length > 0) {
+                         for (const nota of notas) {
+                            if (nota.dados_emissao && nota.dados_emissao.cpf === resp.cpf) {
+                               const novosDados = { ...nota.dados_emissao, cpf: customerDocument };
+                               await supabase.from('notas_fiscais_fila').update({ dados_emissao: novosDados }).eq('id', nota.id);
+                            }
+                         }
+                      }
+                   }
+                }
+              } catch(err) {
+                 console.error('[Webhook Pagar.me] Erro ao tentar corrigir CPF temporario:', err);
+              }
+           })();
+        }
+
         if (originalCode && originalCode.startsWith('loja_')) {
           console.log(`[Webhook Pagar.me] Processando pagamento da loja: ${originalCode}`);
           const parts = originalCode.split('_');
