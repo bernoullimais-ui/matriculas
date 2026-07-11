@@ -8951,15 +8951,20 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
       const novoStatus = payload.status; // 'autorizado', 'erro', 'cancelado', etc.
       
       const updateData: any = {
-        status: novoStatus === 'autorizado' ? 'autorizada' : 
-                novoStatus === 'cancelado' ? 'cancelada' :
+        status: novoStatus === 'autorizado' ? 'autorizado' : 
+                novoStatus === 'cancelado' ? 'cancelado' :
                 novoStatus === 'erro' ? 'erro' : novoStatus,
       };
 
       if (novoStatus === 'autorizado') {
         updateData.nfe_numero = payload.numero;
-        updateData.nfe_url_xml = payload.caminho_xml_nota_fiscal;
-        updateData.nfe_url_pdf = payload.caminho_danfe || payload.url;
+        
+        if (payload.caminho_xml_nota_fiscal) {
+           updateData.nfe_url_xml = `https://api.focusnfe.com.br${payload.caminho_xml_nota_fiscal}`;
+           updateData.nfe_url_pdf = `https://api.focusnfe.com.br${payload.caminho_xml_nota_fiscal.replace('.xml', '.pdf')}`;
+        } else {
+           updateData.nfe_url_pdf = payload.caminho_danfe || payload.url_danfse || payload.url;
+        }
 
         // Disparar e-mail via Brevo se configurado
         try {
