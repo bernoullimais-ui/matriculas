@@ -231,11 +231,11 @@ export async function processarFilaNotasFiscais() {
         servico: {
           aliquota: 3,
           discriminacao: "Prestação de serviços educacionais e atividades esportivas",
-          item_lista_servico: "08.01",
-          codigo_tributario_municipio: "0801001",
-          codigo_nbs: "122011900", // Educação infantil / ensino regular
-          ibs_cbs_classificacao_tributaria: "000001", // Situações tributadas integralmente
-          codigo_indicador_operacao: "050101", // Operação presencial
+          item_lista_servico: "06.04",
+          codigo_tributario_municipio: "0604001",
+          codigo_nbs: "122051200", // Serviços de educação desportiva e recreacional
+          ibs_cbs_classificacao_tributaria: "200041", // Fornecimento de serviço de educação desportiva
+          codigo_indicador_operacao: "030101", // Local da prestação
           valor_servicos: nota.dados_emissao?.valor || 100.00
         }
       };
