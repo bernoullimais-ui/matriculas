@@ -82,6 +82,44 @@ export function FinanceTab() {
   const [finPrimaryTab, setFinPrimaryTab] = useState<'projetada' | 'aferida' | 'inadimplencias'>('aferida');
   const [finSecondaryTab, setFinSecondaryTab] = useState<'professor' | 'unidade' | 'detalhado' | 'sem_integral' | 'estudantes_integral' | 'wix' | 'pagarme' | 'loja' | 'eventos' | 'consolidado' | 'comissionamento' | ''>('consolidado');
 
+  const [isPerdoarModalOpen, setIsPerdoarModalOpen] = useState(false);
+  const [perdoarStudent, setPerdoarStudent] = useState<any>(null);
+  const [perdoarSelectedParcelas, setPerdoarSelectedParcelas] = useState<any[]>([]);
+
+  const handleOpenPerdoarModal = (student: any) => {
+    setPerdoarStudent(student);
+    setPerdoarSelectedParcelas([...(student.parcelas || [])]);
+    setIsPerdoarModalOpen(true);
+  };
+
+  const handleClosePerdoarModal = () => {
+    setIsPerdoarModalOpen(false);
+    setPerdoarStudent(null);
+    setPerdoarSelectedParcelas([]);
+  };
+
+  const handlePerdoarSubmit = async () => {
+    if (!perdoarSelectedParcelas.length) return;
+    setLoadingAction(true);
+    try {
+      const token = sessionStorage.getItem('admin_token');
+      const res = await fetch('/api/admin/payments/conciliate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ items: perdoarSelectedParcelas.map(p => ({ id: p.id, is_wix: p.metodo_pagamento === 'wix' || !p.metodo_pagamento || p.provedor_pagamento === 'Wix API Cron' || p.provedor_pagamento === 'Wix Webhook' || p.provedor_pagamento === 'Wix Payments' })) })
+      });
+      if (!res.ok) throw new Error('Falha ao perdoar parcelas');
+      
+      handleClosePerdoarModal();
+      await fetchFinanceData();
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao perdoar parcelas.');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
   const computedFinance = React.useMemo(() => {
     if (!financialData) return null;
 
@@ -446,7 +484,7 @@ export function FinanceTab() {
       risk: 'BAIXO' | 'MODERADO' | 'ALTO';
       lastPresence: string;
       isActive: boolean;
-      parcelas: string[];
+      parcelas: any[];
     }> = {};
 
     if (finPrimaryTab === 'inadimplencias') {
@@ -483,7 +521,7 @@ export function FinanceTab() {
         
         const pDate = p.data_vencimento || p.created_at;
         const fmtDate = pDate ? new Date(pDate).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '';
-        if (fmtDate) overdueStudentsMap[studentId].parcelas.push(fmtDate);
+        if (fmtDate) overdueStudentsMap[studentId].parcelas.push({ ...p, fmtDate });
         
         const count = overdueStudentsMap[studentId].outstandingCount;
         overdueStudentsMap[studentId].risk = count === 1 ? 'BAIXO' : count === 2 ? 'MODERADO' : 'ALTO';
@@ -1390,8 +1428,8 @@ export function FinanceTab() {
                                         </div>
                                         {item.parcelas && item.parcelas.length > 0 && (
                                           <div className="mt-1 flex flex-col gap-0.5">
-                                            {item.parcelas.map((d: string, i: number) => (
-                                              <span key={i} className="text-[10px] text-slate-500 font-medium">({d})</span>
+                                            {item.parcelas.map((d: any, i: number) => (
+                                              <span key={i} className="text-[10px] text-slate-500 font-medium">({d.fmtDate})</span>
                                             ))}
                                           </div>
                                         )}
@@ -1411,17 +1449,25 @@ export function FinanceTab() {
                                         </span>
                                       </td>
                                       <td className="p-4 text-center">
-                                        <button
-                                          onClick={() => {
-                                            const msg = `Olá ${item.guardianName}, tudo bem? Consta uma pendência financeira em nosso sistema referente ao aluno ${item.studentName} na modalidade ${item.className} (${item.unitName}). Poderia nos auxiliar na regularização? Obrigado!`;
-                                            const phone = item.guardianWhatsapp ? item.guardianWhatsapp.replace(/\D/g, '') : '';
-                                            const url = `https://api.whatsapp.com/send?phone=55${phone}&text=${encodeURIComponent(msg)}`;
-                                            window.open(url, '_blank');
-                                          }}
-                                          className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold uppercase transition-all shadow-sm flex items-center gap-1.5 mx-auto"
-                                        >
-                                          Cobrar
-                                        </button>
+                                        <div className="flex items-center justify-center gap-2">
+                                          <button
+                                            onClick={() => {
+                                              const msg = `Olá ${item.guardianName}, tudo bem? Consta uma pendência financeira em nosso sistema referente ao aluno ${item.studentName} na modalidade ${item.className} (${item.unitName}). Poderia nos auxiliar na regularização? Obrigado!`;
+                                              const phone = item.guardianWhatsapp ? item.guardianWhatsapp.replace(/\D/g, '') : '';
+                                              const url = `https://api.whatsapp.com/send?phone=55${phone}&text=${encodeURIComponent(msg)}`;
+                                              window.open(url, '_blank');
+                                            }}
+                                            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold uppercase transition-all shadow-sm flex items-center gap-1.5"
+                                          >
+                                            Cobrar
+                                          </button>
+                                          <button
+                                            onClick={() => handleOpenPerdoarModal(item)}
+                                            className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[10px] font-bold uppercase transition-all shadow-sm flex items-center gap-1.5"
+                                          >
+                                            Perdoar
+                                          </button>
+                                        </div>
                                       </td>
                                     </tr>
                                   ))
@@ -1434,6 +1480,57 @@ export function FinanceTab() {
                     </div>
                   )}
                 </div>
+
+                {isPerdoarModalOpen && perdoarStudent && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col">
+                      <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                        <h3 className="font-bold text-slate-800">Perdoar Parcelas</h3>
+                        <button onClick={handleClosePerdoarModal} className="text-slate-400 hover:text-slate-600 font-bold text-lg">
+                          &times;
+                        </button>
+                      </div>
+                      <div className="p-5 overflow-y-auto max-h-[60vh]">
+                        <p className="text-sm text-slate-600 mb-4 leading-relaxed">
+                          Selecione as parcelas pendentes de <strong className="text-slate-800">{perdoarStudent.studentName}</strong> que você deseja perdoar/ignorar. Elas sumirão da Inadimplência e <strong>não</strong> constarão na Receita Aferida.
+                        </p>
+                        <div className="flex flex-col gap-2">
+                          {perdoarStudent.parcelas.map((p: any, i: number) => (
+                            <label key={i} className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer transition-colors">
+                              <input
+                                type="checkbox"
+                                checked={perdoarSelectedParcelas.some(sp => sp.id === p.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setPerdoarSelectedParcelas([...perdoarSelectedParcelas, p]);
+                                  } else {
+                                    setPerdoarSelectedParcelas(perdoarSelectedParcelas.filter(sp => sp.id !== p.id));
+                                  }
+                                }}
+                                className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600"
+                              />
+                              <div className="flex flex-col">
+                                <span className="text-sm font-bold text-slate-800">{p.fmtDate} - {formatCurrency(p.valor)}</span>
+                                <span className="text-xs text-slate-500">{p.produto_nome || p.tipo_pedido || 'Mensalidade'}</span>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="p-5 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                        <button onClick={handleClosePerdoarModal} className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-200 transition-colors rounded-lg">Cancelar</button>
+                        <button 
+                          onClick={handlePerdoarSubmit} 
+                          disabled={loadingAction || perdoarSelectedParcelas.length === 0}
+                          className="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors rounded-lg disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {loadingAction ? <RefreshCw className="animate-spin" size={16} /> : null}
+                          {loadingAction ? 'Processando...' : `Perdoar (${perdoarSelectedParcelas.length})`}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
     </>
   );
 }

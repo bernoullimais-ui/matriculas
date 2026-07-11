@@ -14398,6 +14398,28 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     }
   });
 
+  app.post("/api/admin/payments/conciliate", async (req, res) => {
+    try {
+      const { items } = req.body;
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "Nenhum item fornecido para conciliação." });
+      }
+
+      for (const item of items) {
+        if (item.is_wix) {
+          await supabase.from('pagamentos_wix').update({ status_transacao: 'Perdoado' }).eq('id', item.id);
+        } else {
+          await supabase.from('pagamentos').update({ status: 'perdoado' }).eq('id', item.id);
+        }
+      }
+
+      res.json({ message: "Parcelas perdoadas com sucesso." });
+    } catch (err: any) {
+      console.error("[Conciliate API Error]:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/admin/resend-pix", async (req, res) => {
     try {
       const { paymentId } = req.body;
