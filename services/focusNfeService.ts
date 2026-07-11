@@ -207,7 +207,8 @@ export async function processarFilaNotasFiscais() {
       // 2. Monta o payload dependendo do tipo (NFSe ou NFe)
       // O payload real precisa ser ajustado com base nos dados do aluno/responsavel salvos no banco.
       // Simplificado para exemplo de integração:
-      const payload = {
+      const payload: any = {
+        data_emissao: new Date().toISOString(),
         natureza_operacao: "1", // Exemplo padrão
         prestador: {
           cnpj: "01327184000161", // FOR KIDS SOLUCOES EDUCACIONAIS LTDA
@@ -219,12 +220,12 @@ export async function processarFilaNotasFiscais() {
           razao_social: nota.dados_emissao?.nome || 'Consumidor',
           email: nota.dados_emissao?.email,
           endereco: {
-            logradouro: nota.dados_emissao?.rua,
-            numero: nota.dados_emissao?.numero,
-            bairro: nota.dados_emissao?.bairro,
-            cep: nota.dados_emissao?.cep,
-            codigo_municipio: "3550308", // Requer conversão ou busca correta do município IBGE
-            uf: nota.dados_emissao?.uf
+            logradouro: nota.dados_emissao?.rua || "Não informado",
+            numero: nota.dados_emissao?.numero || "S/N",
+            bairro: nota.dados_emissao?.bairro || "Não informado",
+            cep: nota.dados_emissao?.cep || "40000000",
+            codigo_municipio: "2927408", // Salvador - BA (Padrão caso não tenha)
+            uf: nota.dados_emissao?.uf || "BA"
           }
         },
         servico: {
