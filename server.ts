@@ -13496,11 +13496,18 @@ app.post('/api/webhooks/wix', async (req, res) => {
       
       let alunosData: any[] = [];
       if (alunosIds.length > 0) {
-        const { data: aData } = await supabase
-          .from('alunos')
-          .select('id, data_nascimento, unidade')
-          .in('id', alunosIds);
-        if (aData) alunosData = aData;
+        // Fetch in chunks of 30 to avoid URL length limits
+        const chunkSize = 30;
+        for (let i = 0; i < alunosIds.length; i += chunkSize) {
+          const chunk = alunosIds.slice(i, i + chunkSize);
+          const { data: aData } = await supabase
+            .from('alunos')
+            .select('id, data_nascimento, unidade')
+            .in('id', chunk);
+          if (aData) {
+            alunosData = alunosData.concat(aData);
+          }
+        }
       }
 
       const alunosMap = new Map();
