@@ -122,7 +122,7 @@ export function InscricoesTab() {
   };
   const handleExportCSV = () => {
     let csvContent = "\ufeff"; // BOM for UTF-8 Excel compatibility
-    csvContent += "Data;Evento;Aluno;Responsável;Telefone;Email;Categoria;Valor Pago (R$);Status;Presença\n";
+    csvContent += "Data;Evento;Aluno;Responsável;Telefone;Email;Categoria;Valor Pago (R$);Status;Presença;Unidade;Data de Nascimento\n";
     
     filteredInscricoes.forEach((ins: any) => {
       const data = ins.created_at ? formatDateTime(ins.created_at) : 'N/A';
@@ -135,8 +135,21 @@ export function InscricoesTab() {
       const valor = ins.valor_pago ? Number(ins.valor_pago).toFixed(2) : '0.00';
       const status = ins.status || 'N/A';
       const presenca = ins.checkin ? 'Presente' : 'Ausente';
+      const unidade = ins.alunos?.unidade || ins.respostas_personalizadas?.['Unidade'] || 'N/A';
+      
+      let dataNascimento = 'N/A';
+      const rawNascimento = ins.alunos?.data_nascimento || ins.respostas_personalizadas?.['Data de Nascimento do Aluno'] || ins.respostas_personalizadas?.['Data de Nascimento'];
+      if (rawNascimento) {
+        // Try to format it if it's YYYY-MM-DD
+        const parts = rawNascimento.split('-');
+        if (parts.length === 3) {
+          dataNascimento = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        } else {
+          dataNascimento = rawNascimento;
+        }
+      }
 
-      csvContent += `"${data}";"${evento}";"${aluno}";"${responsavel}";"${telefone}";"${email}";"${categoria}";${valor};"${status}";"${presenca}"\n`;
+      csvContent += `"${data}";"${evento}";"${aluno}";"${responsavel}";"${telefone}";"${email}";"${categoria}";${valor};"${status}";"${presenca}";"${unidade}";"${dataNascimento}"\n`;
     });
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });

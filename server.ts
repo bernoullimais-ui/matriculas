@@ -11164,9 +11164,11 @@ async function syncPagarmeRecurringPayments(maxPages: number = 3) {
           data_pagamento: invoice.charge?.paid_at || invoice.paid_at || invoice.due_at || invoice.created_at || new Date().toISOString()
         };
 
-        const { error: insertError } = await supabase
+        const { data: insertedData, error: insertError } = await supabase
           .from('pagamentos')
-          .insert([newPayment]);
+          .insert([newPayment])
+          .select('id')
+          .single();
 
         if (insertError) {
           console.error(`[Cron] Fatura Pagar.me ${invoiceId}: Erro ao inserir no banco: ${insertError.message}`);
@@ -11174,6 +11176,9 @@ async function syncPagarmeRecurringPayments(maxPages: number = 3) {
           totalCreated++;
           existingPaymentsSet.add(invoiceId);
           console.log(`[Cron] Fatura Pagar.me ${invoiceId} sincronizada com sucesso! (R$ ${valorReal})`);
+          if (insertedData?.id) {
+            queueNotaFiscal(insertedData.id, 'NFSe', { origin: 'geral' });
+          }
         }
       }
 
@@ -13467,7 +13472,7 @@ app.post('/api/webhooks/wix', async (req, res) => {
     try {
       const { data, error } = await supabase
         .from('evento_inscricoes')
-        .select('*, eventos(*)')
+        .select('*, eventos(*), alunos(data_nascimento, unidade)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
