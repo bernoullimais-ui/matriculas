@@ -13472,7 +13472,7 @@ app.post('/api/webhooks/wix', async (req, res) => {
     try {
       const { data, error } = await supabase
         .from('evento_inscricoes')
-        .select('*, eventos(*), alunos(data_nascimento, unidade)')
+        .select('*, eventos(*)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -13492,6 +13492,20 @@ app.post('/api/webhooks/wix', async (req, res) => {
       const responsaveisMap = new Map();
       responsaveisData.forEach((r: any) => responsaveisMap.set(r.id, r));
 
+      const alunosIds = Array.from(new Set(data?.map((i: any) => i.aluno_id).filter(Boolean)));
+      
+      let alunosData: any[] = [];
+      if (alunosIds.length > 0) {
+        const { data: aData } = await supabase
+          .from('alunos')
+          .select('id, data_nascimento, unidade')
+          .in('id', alunosIds);
+        if (aData) alunosData = aData;
+      }
+
+      const alunosMap = new Map();
+      alunosData.forEach((a: any) => alunosMap.set(a.id, a));
+
       const mappedData = data?.map((inscricao: any) => {
         if (!inscricao.telefone_responsavel && !inscricao.whatsapp_responsavel && inscricao.responsavel_id) {
           const resp = responsaveisMap.get(inscricao.responsavel_id);
@@ -13499,6 +13513,14 @@ app.post('/api/webhooks/wix', async (req, res) => {
             inscricao.whatsapp_responsavel = resp.celular || resp.telefone || '';
           }
         }
+        
+        if (inscricao.aluno_id) {
+          const aluno = alunosMap.get(inscricao.aluno_id);
+          if (aluno) {
+            inscricao.alunos = aluno;
+          }
+        }
+        
         return inscricao;
       });
 
