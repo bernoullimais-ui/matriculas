@@ -156,11 +156,16 @@ export function FinanceTab() {
 
         let targetMat = null;
         if (targetAl.matriculas && targetAl.matriculas.length > 0) {
-          const activeMats = targetAl.matriculas.filter((m: any) => m.status === 'ativo' || m.status === 'Ativo');
-          if (activeMats.length > 0) {
-            targetMat = activeMats.find((m: any) => pName && (String(m.plano || '').toLowerCase() === pName || String(m.turma || '').toLowerCase() === pName)) || activeMats[0];
-          } else {
-            targetMat = targetAl.matriculas[0];
+          if (p.matricula_id) {
+            targetMat = targetAl.matriculas.find((m: any) => String(m.id) === String(p.matricula_id));
+          }
+          if (!targetMat) {
+            const activeMats = targetAl.matriculas.filter((m: any) => m.status === 'ativo' || m.status === 'Ativo');
+            if (activeMats.length > 0) {
+              targetMat = activeMats.find((m: any) => pName && (String(m.plano || '').toLowerCase() === pName || String(m.turma || '').toLowerCase() === pName)) || activeMats[0];
+            } else {
+              targetMat = targetAl.matriculas[0];
+            }
           }
         }
 
@@ -175,7 +180,7 @@ export function FinanceTab() {
           }
         }
       }
-      return { studentName, studentId, unitName, className, profName, isIntegral };
+      return { studentName, studentId, unitName, className, profName, isIntegral, targetMat };
     };
 
     // 2. Filter raw enrollments (for Receita Projetada)
@@ -254,6 +259,14 @@ export function FinanceTab() {
       } else if (finPrimaryTab === 'inadimplencias') {
         const isUnpaid = p.status === 'pendente' || p.status === 'aguardando_pagamento' || p.status === 'cancelado' || p.status === 'falha';
         if (!isUnpaid) return false;
+        
+        if (info.targetMat && info.targetMat.data_cancelamento) {
+          const cancelDate = new Date(info.targetMat.data_cancelamento + 'T00:00:00');
+          // If the payment is due after the cancellation date, it's not a valid debt.
+          if (payDate > cancelDate) {
+            return false;
+          }
+        }
       }
 
       return true;
