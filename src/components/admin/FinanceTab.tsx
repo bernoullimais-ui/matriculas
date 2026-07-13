@@ -134,6 +134,7 @@ export function FinanceTab() {
       let className = '';
       let profName = '';
       let isIntegral = false;
+      let targetMat = null;
       
       const resp = p.responsaveis;
       if (resp && resp.alunos && resp.alunos.length > 0) {
@@ -154,7 +155,6 @@ export function FinanceTab() {
         studentName = targetAl.nome_completo || '';
         studentId = studentId || targetAl.id;
 
-        let targetMat = null;
         if (targetAl.matriculas && targetAl.matriculas.length > 0) {
           if (p.matricula_id) {
             targetMat = targetAl.matriculas.find((m: any) => String(m.id) === String(p.matricula_id));
