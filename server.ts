@@ -8974,8 +8974,28 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
         updateData.nfe_numero = payload.numero;
         
         if (payload.caminho_xml_nota_fiscal) {
-           updateData.nfe_url_xml = `https://api.focusnfe.com.br${payload.caminho_xml_nota_fiscal}`;
-           updateData.nfe_url_pdf = `https://api.focusnfe.com.br${payload.caminho_xml_nota_fiscal.replace('.xml', '.pdf')}`;
+           const xmlUrl = `https://api.focusnfe.com.br${payload.caminho_xml_nota_fiscal}`;
+           updateData.nfe_url_xml = xmlUrl;
+           
+           try {
+             // Fetch the XML to extract the verification code
+             const tokenAuth = Buffer.from(`${process.env.FOCUS_NFE_API_TOKEN || process.env.FOCUS_API_TOKEN}:`).toString('base64');
+             const xmlResp = await axios.get(xmlUrl, {
+               headers: { 'Authorization': `Basic ${tokenAuth}` }
+             });
+             const match = xmlResp.data.match(/<CodigoVerificacao>([^<]+)<\/CodigoVerificacao>/);
+             if (match && match[1]) {
+               const codigo = match[1];
+               const apiUrl = process.env.FOCUS_NFE_API_URL || process.env.FOCUS_API_URL || '';
+               const prefeitura = apiUrl.includes('homologacao') ? 'notahml' : 'nota';
+               updateData.nfe_url_pdf = `https://${prefeitura}.salvador.ba.gov.br/site/contribuinte/nota/notaprint.aspx?nf=${payload.numero}&inscricao=0012734900199&verificacao=${codigo}`;
+             } else {
+               updateData.nfe_url_pdf = `https://api.focusnfe.com.br${payload.caminho_xml_nota_fiscal.replace('.xml', '.pdf')}`;
+             }
+           } catch (xmlErr) {
+             console.error('[Webhook Focus NFe] Erro ao buscar XML para extrair URL do PDF:', xmlErr);
+             updateData.nfe_url_pdf = `https://api.focusnfe.com.br${payload.caminho_xml_nota_fiscal.replace('.xml', '.pdf')}`;
+           }
         } else {
            updateData.nfe_url_pdf = payload.caminho_danfe || payload.url_danfse || payload.url;
         }

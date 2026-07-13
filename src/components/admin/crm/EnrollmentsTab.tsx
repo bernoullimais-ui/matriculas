@@ -567,11 +567,11 @@ export default function EnrollmentsTab() {
                                       >
                                         <Edit size={16} />
                                       </button>
-                                      {e.matricula.hasWixPayments && matriculaStatus === 'ativo' && (
+                                      {matriculaStatus === 'ativo' && (
                                         <button 
                                           onClick={() => handleMigrateToPagarme(e.matricula.id)}
                                           className="p-1 text-purple-500 hover:text-purple-600 hover:bg-purple-50 rounded transition-colors"
-                                          title="Migrar Pagamento para Pagar.me"
+                                          title="Gerar / Migrar Pagamento para Pagar.me"
                                         >
                                           <RefreshCw size={16} />
                                         </button>

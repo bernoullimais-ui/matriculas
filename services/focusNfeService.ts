@@ -152,6 +152,77 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
   }
 }
 
+export async function processarNotaUnica(notaId: string) {
+  try {
+    const { data: nota } = await supabase.from('notas_fiscais_fila').select('*').eq('id', notaId).single();
+    if (!nota) throw new Error('Nota não encontrada');
+
+    // 1. Marca como processando para evitar duplicidade
+    await supabase.from('notas_fiscais_fila').update({ status: 'processando' }).eq('id', nota.id);
+    
+    // 2. Monta o payload
+    const payload: any = {
+      data_emissao: new Date().toISOString(),
+      natureza_operacao: "1", 
+      prestador: {
+        cnpj: "01327184000161", 
+        inscricao_municipal: "0012734900199",
+        codigo_municipio: "2927408" 
+      },
+      tomador: {
+        cpf: nota.dados_emissao?.cpf || '00000000000',
+        razao_social: nota.dados_emissao?.nome || 'Consumidor',
+        email: nota.dados_emissao?.email,
+        endereco: {
+          logradouro: nota.dados_emissao?.rua || "Não informado",
+          numero: nota.dados_emissao?.numero || "S/N",
+          bairro: nota.dados_emissao?.bairro || "Não informado",
+          cep: nota.dados_emissao?.cep || "40000000",
+          codigo_municipio: "2927408", 
+          uf: nota.dados_emissao?.uf || "BA"
+        }
+      },
+      servico: {
+        aliquota: 5,
+        discriminacao: "Prestação de serviços educacionais e atividades esportivas",
+        item_lista_servico: "06.04",
+        codigo_tributario_municipio: "0604001",
+        codigo_nbs: "122051200", 
+        ibs_cbs_classificacao_tributaria: "200041", 
+        codigo_indicador_operacao: "030101", 
+        valor_servicos: nota.dados_emissao?.valor || 100.00
+      }
+    };
+
+    const refId = `NF_${nota.id.replace(/-/g, '')}`;
+    const endpoint = nota.tipo_nota === 'NFSe' ? `/nfse?ref=${refId}` : `/nfe?ref=${refId}`;
+    const tokenAuth = Buffer.from(`${FOCUS_API_TOKEN}:`).toString('base64');
+
+    // 3. Envia para a API da Focus
+    const focusResponse = await axios.post(`${FOCUS_API_URL}${endpoint}`, payload, {
+      headers: {
+        'Authorization': `Basic ${tokenAuth}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    // 4. Atualiza a fila
+    await supabase.from('notas_fiscais_fila').update({ 
+      status: 'processando_sefaz', 
+      focus_id: refId
+    }).eq('id', nota.id);
+
+    return { success: true };
+  } catch (e: any) {
+    console.error(`[Focus NFe] Falha ao enviar nota ${notaId}:`, e.response?.data || e.message);
+    await supabase.from('notas_fiscais_fila').update({ 
+      status: 'erro',
+      mensagem_erro: e.response?.data?.mensagem || e.message
+    }).eq('id', notaId);
+    return { success: false, error: e.message };
+  }
+}
+
 /**
  * Processa a fila de notas fiscais pendentes (Lote)
  */
@@ -163,7 +234,6 @@ export async function processarFilaNotasFiscais() {
   
   if (config && config.frequencia !== 'imediato') {
     const today = new Date();
-    // UTC to Brasília
     today.setHours(today.getHours() - 3);
     
     if (config.frequencia === 'semanal') {
@@ -177,14 +247,13 @@ export async function processarFilaNotasFiscais() {
         return { success: true, count: 0, skipped: true };
       }
     }
-    // "diario" always proceeds since the cron runs daily (or we just let it run)
   }
   
   const { data: pendentes, error } = await supabase
     .from('notas_fiscais_fila')
-    .select('*')
+    .select('id')
     .eq('status', 'pendente')
-    .limit(50); // Processa em lotes de 50
+    .limit(50);
     
   if (error) {
     console.error('[Focus NFe] Erro ao buscar notas pendentes:', error);
@@ -200,73 +269,10 @@ export async function processarFilaNotasFiscais() {
   let processadas = 0;
 
   for (const nota of pendentes) {
-    try {
-      // 1. Marca como processando para evitar duplicidade em execuções concorrentes
-      await supabase.from('notas_fiscais_fila').update({ status: 'processando' }).eq('id', nota.id);
-      
-      // 2. Monta o payload dependendo do tipo (NFSe ou NFe)
-      // O payload real precisa ser ajustado com base nos dados do aluno/responsavel salvos no banco.
-      // Simplificado para exemplo de integração:
-      const payload: any = {
-        data_emissao: new Date().toISOString(),
-        natureza_operacao: "1", // Exemplo padrão
-        prestador: {
-          cnpj: "01327184000161", // FOR KIDS SOLUCOES EDUCACIONAIS LTDA
-          inscricao_municipal: "0012734900199",
-          codigo_municipio: "2927408" // Salvador - BA
-        },
-        tomador: {
-          cpf: nota.dados_emissao?.cpf || '00000000000',
-          razao_social: nota.dados_emissao?.nome || 'Consumidor',
-          email: nota.dados_emissao?.email,
-          endereco: {
-            logradouro: nota.dados_emissao?.rua || "Não informado",
-            numero: nota.dados_emissao?.numero || "S/N",
-            bairro: nota.dados_emissao?.bairro || "Não informado",
-            cep: nota.dados_emissao?.cep || "40000000",
-            codigo_municipio: "2927408", // Salvador - BA (Padrão caso não tenha)
-            uf: nota.dados_emissao?.uf || "BA"
-          }
-        },
-        servico: {
-          aliquota: 5,
-          discriminacao: "Prestação de serviços educacionais e atividades esportivas",
-          item_lista_servico: "06.04",
-          codigo_tributario_municipio: "0604001",
-          codigo_nbs: "122051200", // Serviços de educação desportiva e recreacional
-          ibs_cbs_classificacao_tributaria: "200041", // Fornecimento de serviço de educação desportiva
-          codigo_indicador_operacao: "030101", // Local da prestação
-          valor_servicos: nota.dados_emissao?.valor || 100.00
-        }
-      };
-
-      const refId = `NF_${nota.id.replace(/-/g, '')}`;
-      const endpoint = nota.tipo_nota === 'NFSe' ? `/nfse?ref=${refId}` : `/nfe?ref=${refId}`;
-      const tokenAuth = Buffer.from(`${FOCUS_API_TOKEN}:`).toString('base64');
-
-      // 3. Envia para a API da Focus
-      const focusResponse = await axios.post(`${FOCUS_API_URL}${endpoint}`, payload, {
-        headers: {
-          'Authorization': `Basic ${tokenAuth}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      // 4. Atualiza a fila com a referência retornada pela Focus
-      await supabase.from('notas_fiscais_fila').update({ 
-        status: 'processando_sefaz', 
-        focus_id: refId
-      }).eq('id', nota.id);
-      
-      processadas++;
-    } catch (e: any) {
-      console.error(`[Focus NFe] Falha ao enviar nota ${nota.id}:`, e.response?.data || e.message);
-      await supabase.from('notas_fiscais_fila').update({ 
-        status: 'erro',
-        mensagem_erro: e.response?.data?.mensagem || e.message
-      }).eq('id', nota.id);
-    }
+    const result = await processarNotaUnica(nota.id);
+    if (result.success) processadas++;
   }
 
   return { success: true, count: processadas };
 }
+
