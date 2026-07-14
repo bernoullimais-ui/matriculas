@@ -127,9 +127,11 @@ export default function TrialModal({
       
       const seriesData = t.series_permitidas || t.series;
       const hasSeriesDefined = (Array.isArray(seriesData) && seriesData.length > 0) || (typeof seriesData === 'string' && seriesData.length > 0);
-      const matchesGrade = !hasSeriesDefined || 
-        (grade && Array.isArray(seriesData) && seriesData.includes(grade)) ||
-        (grade && typeof seriesData === 'string' && seriesData.split(',').map((s: string) => s.trim()).includes(grade));
+      const safeGrade = (grade || '').trim().toLowerCase();
+      
+      const matchesGrade = !hasSeriesDefined || !safeGrade ||
+        (Array.isArray(seriesData) && seriesData.some(s => String(s).trim().toLowerCase() === safeGrade)) ||
+        (typeof seriesData === 'string' && seriesData.split(',').some(s => s.trim().toLowerCase() === safeGrade));
         
       if (!matchesGrade) return false;
       
