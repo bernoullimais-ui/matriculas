@@ -15135,7 +15135,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         // Master/Global: vê tudo
         let query = supabase
           .from('conversas_whatsapp')
-          .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids, historico, atendente_id, etiquetas', { count: 'exact' })
+          .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids, historico, atendente_id, etiquetas, avatar_url', { count: 'exact' })
           .order('ultima_mensagem_at', { ascending: false })
           .limit(parseInt(limite as string))
           .range(
