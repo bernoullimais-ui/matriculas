@@ -12,7 +12,7 @@ import bcrypt from "bcryptjs";
 import * as fs from "fs";
 import { GoogleGenAI, Type } from "@google/genai";
 import { processarMensagem, buscarConfigSofia, resolverConversa, encerrarConversa, pausarConversa } from "./services/sofia-agent.js";
-import { queueNotaFiscal, processarFilaNotasFiscais } from "./services/focusNfeService.js";
+import { queueNotaFiscal, processarFilaNotasFiscais, processarNotaUnica } from "./services/focusNfeService.js";
 
 // Handle __dirname and __filename for both ESM and CJS environments
 const currentDirname = process.cwd();
@@ -8932,6 +8932,19 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
     } catch (err: any) {
       console.error('Error in check-tables:', err);
       return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── POST /api/admin/notas/reenviar/:id ──────────────────────────────────────
+  // Endpoint to manually resend or retry an invoice processing
+  app.post('/api/admin/notas/reenviar/:id', requireAdminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const result = await processarNotaUnica(id);
+      res.json(result);
+    } catch (e: any) {
+      console.error('[Admin] Erro ao reenviar nota fiscal:', e);
+      res.status(500).json({ error: e.message });
     }
   });
 
