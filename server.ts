@@ -14649,6 +14649,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     const utalkContact = body?.Payload?.Contact?.PhoneNumber || body?.Payload?.Content?.Contact?.PhoneNumber;
     const utalkText = body?.Payload?.Content?.LastMessage?.Content || body?.Payload?.Content?.Text || body?.Payload?.Content?.Body;
     const utalkChannel = body?.Payload?.Channel?.PhoneNumber || body?.Payload?.Content?.Channel?.PhoneNumber;
+    const utalkAvatar = body?.Payload?.Contact?.ProfilePictureUrl || body?.Payload?.Content?.Contact?.ProfilePictureUrl || body?.Payload?.Contact?.ProfilePicture || body?.Payload?.Content?.Contact?.ProfilePicture || body?.contact?.profilePic || body?.contact?.profilePictureUrl;
     
     const telefone = utalkContact || body?.phone || body?.from || body?.sender || body?.contact?.phone || body?.toPhone;
     const mensagem = utalkText || body?.message?.text || body?.text || body?.content || body?.message || body?.body;
@@ -15036,7 +15037,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         incomingMediaUrl,
         incomingMediaName,
         messageId,
-        reactions
+        reactions,
+        utalkAvatar
       );
 
       // Envia resposta se não escalado (ou se tem resposta de escalamento)

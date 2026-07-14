@@ -473,7 +473,8 @@ async function resolverEstudantesEResponsavelParaTelefone(
 async function carregarOuCriarSessao(
   supabase: SupabaseClient,
   telefone: string,
-  identidadeNome: string
+  identidadeNome: string,
+  avatarUrl?: string
 ): Promise<ConversaWhatsapp> {
   const telNorm = normalizeTelefone(telefone);
   const expiracaoLimite = new Date(Date.now() - SESSAO_EXPIRACAO_HORAS * 60 * 60 * 1000).toISOString();
@@ -512,6 +513,16 @@ async function carregarOuCriarSessao(
         console.error('[Sofia] Erro ao associar responsável na sessão existente:', e);
       }
     }
+
+    // Atualiza o avatar_url se veio um novo e a sessão ainda não o tem
+    if (avatarUrl && (sessaoExistente as any).avatar_url !== avatarUrl) {
+      await supabase
+        .from('conversas_whatsapp')
+        .update({ avatar_url: avatarUrl })
+        .eq('id', sessaoExistente.id);
+      (sessaoExistente as any).avatar_url = avatarUrl;
+    }
+    
     return sessaoExistente as ConversaWhatsapp;
   }
 
@@ -551,7 +562,8 @@ async function carregarOuCriarSessao(
       total_mensagens: 0,
       etiquetas: etiquetasHerdadas,
       responsavel_nome: resolvedInfo.responsavel_nome,
-      aluno_ids: resolvedInfo.aluno_ids
+      aluno_ids: resolvedInfo.aluno_ids,
+      avatar_url: avatarUrl
     })
     .select('*')
     .single();
@@ -626,13 +638,14 @@ export async function processarMensagem(
   mediaUrl?: string,
   mediaName?: string,
   messageId?: string,
-  reactions?: any[]
+  reactions?: any[],
+  avatarUrl?: string
 ): Promise<{ resposta: string; escalado: boolean; conversaId: string }> {
   
   const telNorm = normalizeTelefone(telefone);
   
   // 1. Carregar ou criar sessão
-  const conversa = await carregarOuCriarSessao(supabase, telNorm, config.identidadeNome);
+  const conversa = await carregarOuCriarSessao(supabase, telNorm, config.identidadeNome, avatarUrl);
   
   const isPrimeiraMensagem = conversa.historico.length === 0;
 
