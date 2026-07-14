@@ -8936,7 +8936,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
   });
 
   // Pagar.me Webhook
-  app.post('/api/cron/processar-notas', async (req, res) => {
+  app.all('/api/cron/processar-notas', async (req, res) => {
     try {
       // Opcional: Proteger a rota com um token de segurança, ex:
       // if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).send('Unauthorized');
