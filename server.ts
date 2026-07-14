@@ -14786,6 +14786,31 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       incomingMediaName = extractName(rawMediaName);
     }
 
+    // Busca a identidade correspondente pelo canal ou padrão para pegar o utalk_token
+    let identity: any = null;
+    try {
+      const { data: idents } = await supabase.from('identidades').select('*');
+      if (idents && idents.length > 0) {
+        const strip9 = (p: string) => {
+          if (p.startsWith('55') && p.length === 13 && p[4] === '9') return p.slice(0, 4) + p.slice(5);
+          if (p.startsWith('55') && p.length === 12) return p;
+          return p;
+        };
+        const normFrom = strip9(fromNorm);
+        
+        identity = idents.find(i => {
+          if (i.utalk_organization_id && body?.Payload?.Content?.Organization?.Id === i.utalk_organization_id) return true;
+          if (i.utalk_from_phone) {
+             const dbPhone = strip9(i.utalk_from_phone.replace(/\D/g, ''));
+             return dbPhone === normFrom || dbPhone.includes(normFrom) || normFrom.includes(dbPhone);
+          }
+          return false;
+        }) || idents[0];
+      }
+    } catch (dbErr) {
+      console.error('[Sofia Webhook] Erro ao buscar identidades no início:', dbErr);
+    }
+
     // Ignora mensagens ENVIADAS (direction: 'out' ou 'outbound') — só processa RECEBIDAS
     const direction = String(body?.direction || body?.type || body?.messageType || body?.Payload?.Direction || '').toLowerCase();
     if (direction === 'out' || direction === 'outbound' || direction === 'sent') {
@@ -14800,57 +14825,73 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
             .limit(1)
             .maybeSingle();
 
-          if (conversa && conversa.historico) {
-            const jaExiste = conversa.historico.some((m: any) => m.id === messageId);
-            if (!jaExiste) {
-              const memberName = body?.Payload?.LastMessage?.SentByOrganizationMember?.Name 
-                || body?.Payload?.Content?.LastMessage?.SentByOrganizationMember?.Name
-                || body?.Payload?.Content?.LastMessage?.SentBy?.Name
-                || body?.Payload?.LastMessage?.SentBy?.Name;
+          const jaExiste = conversa?.historico?.some((m: any) => m.id === messageId);
+          if (!jaExiste) {
+            const memberName = body?.Payload?.LastMessage?.SentByOrganizationMember?.Name 
+              || body?.Payload?.Content?.LastMessage?.SentByOrganizationMember?.Name
+              || body?.Payload?.Content?.LastMessage?.SentBy?.Name
+              || body?.Payload?.LastMessage?.SentBy?.Name;
 
-              let prefixo = '';
-              const IA_SIGNATURE_PATTERN = /^\[.*?, Assistente Virtual.*?\]/i;
-              const ATTENDANT_SIGNATURE_PATTERN = /^\[Atendente(?: - (.*?))?\]/i;
-              const hasSignature = IA_SIGNATURE_PATTERN.test(mensagem || '') || ATTENDANT_SIGNATURE_PATTERN.test(mensagem || '');
+            let prefixo = '';
+            const IA_SIGNATURE_PATTERN = /^\[.*?, Assistente Virtual.*?\]/i;
+            const ATTENDANT_SIGNATURE_PATTERN = /^\[Atendente(?: - (.*?))?\]/i;
+            const hasSignature = IA_SIGNATURE_PATTERN.test(mensagem || '') || ATTENDANT_SIGNATURE_PATTERN.test(mensagem || '');
 
-              if (!hasSignature) {
-                if (memberName) {
-                  prefixo = `[Atendente - ${memberName}]\n`;
-                } else {
-                  prefixo = `[Atendente]\n`;
-                }
+            if (!hasSignature) {
+              if (memberName) {
+                prefixo = `[Atendente - ${memberName}]\n`;
+              } else {
+                prefixo = `[Atendente]\n`;
               }
+            }
 
-              const formattedText = prefixo ? `${prefixo}${mensagem || ''}` : (mensagem || '');
+            const formattedText = prefixo ? `${prefixo}${mensagem || ''}` : (mensagem || '');
 
-              const outboundParts: any[] = [];
-              if (formattedText.trim()) {
-                outboundParts.push({ text: formattedText });
-              }
-              if (incomingMediaUrl) {
-                outboundParts.push({
-                  mediaUrl: incomingMediaUrl,
-                  mediaName: incomingMediaName || 'Arquivo Anexo'
-                });
-              }
+            const outboundParts: any[] = [];
+            if (formattedText.trim()) {
+              outboundParts.push({ text: formattedText });
+            }
+            if (incomingMediaUrl) {
+              outboundParts.push({
+                mediaUrl: incomingMediaUrl,
+                mediaName: incomingMediaName || 'Arquivo Anexo'
+              });
+            }
 
-              const novaMsg = {
-                id: messageId,
-                role: 'model',
-                parts: outboundParts,
-                timestamp: body?.Payload?.Content?.LastMessage?.EventAtUTC 
-                  || body?.Payload?.LastMessage?.EventAtUTC 
-                  || new Date().toISOString(),
-                reactions: reactions || []
-              };
+            const novaMsg = {
+              id: messageId,
+              role: 'model',
+              parts: outboundParts,
+              timestamp: body?.Payload?.Content?.LastMessage?.EventAtUTC 
+                || body?.Payload?.LastMessage?.EventAtUTC 
+                || new Date().toISOString(),
+              reactions: reactions || []
+            };
 
-              const novoHistorico = [...conversa.historico, novaMsg];
+            if (conversa) {
+              const novoHistorico = [...(conversa.historico || []), novaMsg];
               await supabase
                 .from('conversas_whatsapp')
                 .update({ historico: novoHistorico })
                 .eq('id', conversa.id);
 
               console.log(`[Sofia Webhook] Mensagem de saída de atendente salva na conversa ${conversa.id}: ${messageId}`);
+            } else {
+              const { data: newSess, error: newErr } = await supabase.from('conversas_whatsapp').insert({
+                telefone: telNorm,
+                identidade_nome: identity?.nome || 'Sport for Kids',
+                status: 'escalado',
+                total_mensagens: 0,
+                historico: [novaMsg],
+                responsavel_nome: '',
+                avatar_url: utalkAvatar || null
+              }).select('id').single();
+              
+              if (newSess) {
+                 console.log(`[Sofia Webhook] Nova conversa criada para mensagem de saída: ${newSess.id}`);
+              } else if (newErr) {
+                 console.error('[Sofia Webhook] Erro ao criar nova conversa de saída:', newErr);
+              }
             }
           }
         } catch (err) {
@@ -14884,30 +14925,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       return res.status(200).json({ ok: true, skipped: 'new_conversation_event' });
     }
 
-    // Busca a identidade correspondente pelo canal ou padrão para pegar o utalk_token
-    let identity: any = null;
-    try {
-      const { data: idents } = await supabase.from('identidades').select('*');
-      if (idents && idents.length > 0) {
-        const strip9 = (p: string) => {
-          if (p.startsWith('55') && p.length === 13 && p[4] === '9') return p.slice(0, 4) + p.slice(5);
-          if (p.startsWith('55') && p.length === 12) return p;
-          return p;
-        };
-        const normFrom = strip9(fromNorm);
-        
-        identity = idents.find(i => {
-          if (i.utalk_organization_id && body?.Payload?.Content?.Organization?.Id === i.utalk_organization_id) return true;
-          if (i.utalk_from_phone) {
-             const dbPhone = strip9(i.utalk_from_phone.replace(/\D/g, ''));
-             return dbPhone === normFrom || dbPhone.includes(normFrom) || normFrom.includes(dbPhone);
-          }
-          return false;
-        }) || idents[0];
-      }
-    } catch (dbErr) {
-      console.error('[Sofia Webhook] Erro ao buscar identidades no início:', dbErr);
-    }
+
 
 
 
