@@ -160,9 +160,15 @@ export async function processarNotaUnica(notaId: string) {
     // 1. Marca como processando para evitar duplicidade
     await supabase.from('notas_fiscais_fila').update({ status: 'processando' }).eq('id', nota.id);
     
+    // Ajuste do timezone para Brasília (-03:00)
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const d = new Date();
+    d.setHours(d.getHours() - 3);
+    const dataEmissaoLocal = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}-03:00`;
+
     // 2. Monta o payload
     const payload: any = {
-      data_emissao: new Date().toISOString(),
+      data_emissao: dataEmissaoLocal,
       natureza_operacao: "1", 
       prestador: {
         cnpj: "01327184000161", 
@@ -185,8 +191,8 @@ export async function processarNotaUnica(notaId: string) {
       servico: {
         aliquota: 5,
         discriminacao: "Prestação de serviços educacionais e atividades esportivas",
-        item_lista_servico: "06.04",
-        codigo_tributario_municipio: "0604001",
+        item_lista_servico: "08.02",
+        codigo_tributario_municipio: "0802001",
         codigo_nbs: "122051200", 
         ibs_cbs_classificacao_tributaria: "200041", 
         codigo_indicador_operacao: "030101", 
