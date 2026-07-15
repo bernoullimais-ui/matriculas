@@ -191,8 +191,8 @@ export async function processarNotaUnica(notaId: string) {
       servico: {
         aliquota: 5,
         discriminacao: "Prestação de serviços educacionais e atividades esportivas",
-        item_lista_servico: "08.02",
-        codigo_tributario_municipio: "0802001",
+        item_lista_servico: "06.04",
+        codigo_tributario_municipio: "0604001",
         codigo_nbs: "122051200", 
         ibs_cbs_classificacao_tributaria: "200041", 
         codigo_indicador_operacao: "030101", 
