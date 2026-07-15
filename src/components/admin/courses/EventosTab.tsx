@@ -209,7 +209,7 @@ export function EventosTab() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-4 gap-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Prazo Fim de Inscrição</label>
                       <input type="datetime-local" value={eventoForm.prazo_inscricao || ''} onChange={e => setEventoForm({ ...eventoForm, prazo_inscricao: e.target.value })} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-700" />
@@ -221,6 +221,18 @@ export function EventosTab() {
                     <div>
                       <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Vagas Totais</label>
                       <input type="number" min="1" value={eventoForm.vagas_total === null || eventoForm.vagas_total === undefined ? '' : eventoForm.vagas_total} onChange={e => setEventoForm({ ...eventoForm, vagas_total: e.target.value === '' ? null : Number(e.target.value) })} placeholder="Ilimitadas" className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-700" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Status</label>
+                      <select 
+                        value={eventoForm.status || 'ativo'} 
+                        onChange={e => setEventoForm({ ...eventoForm, status: e.target.value })} 
+                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-700"
+                      >
+                        <option value="ativo">Ativo</option>
+                        <option value="publicado">Publicado</option>
+                        <option value="encerrado">Encerrado</option>
+                      </select>
                     </div>
                   </div>
 

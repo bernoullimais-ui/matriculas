@@ -12059,7 +12059,7 @@ app.post('/api/webhooks/wix', async (req, res) => {
       const { data, error } = await supabase
         .from('eventos')
         .select('*')
-        .eq('status', 'publicado')
+        .in('status', ['publicado', 'ativo'])
         .order('data_inicio', { ascending: true });
       if (error) throw error;
       res.json({ eventos: data });
