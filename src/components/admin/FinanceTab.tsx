@@ -106,7 +106,7 @@ export function FinanceTab() {
       const res = await fetch('/api/admin/payments/conciliate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ items: perdoarSelectedParcelas.map(p => ({ id: p.id, is_wix: p.metodo_pagamento === 'wix' || !p.metodo_pagamento || p.provedor_pagamento === 'Wix API Cron' || p.provedor_pagamento === 'Wix Webhook' || p.provedor_pagamento === 'Wix Payments' })) })
+        body: JSON.stringify({ items: perdoarSelectedParcelas.map(p => ({ id: p.id, is_wix: p.metodo_pagamento === 'wix' || !p.metodo_pagamento || p.provedor_pagamento === 'Wix API Cron' || p.provedor_pagamento === 'Wix Webhook' || p.provedor_pagamento === 'Wix Payments', is_pagseguro: p.metodo_pagamento === 'pagseguro' || p.is_pagseguro })) })
       });
       if (!res.ok) throw new Error('Falha ao perdoar parcelas');
       

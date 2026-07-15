@@ -14484,6 +14484,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       for (const item of items) {
         if (item.is_wix) {
           await supabase.from('pagamentos_wix').update({ status_transacao: 'Perdoado' }).eq('id', item.id);
+        } else if (item.is_pagseguro) {
+          await supabase.from('pagamentos_pagseguro').update({ status: 'Perdoado' }).eq('id', item.id);
         } else {
           await supabase.from('pagamentos').update({ status: 'perdoado' }).eq('id', item.id);
         }
