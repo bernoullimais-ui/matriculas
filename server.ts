@@ -12077,7 +12077,7 @@ app.post('/api/webhooks/wix', async (req, res) => {
         .from('eventos')
         .select('*')
         .eq('slug', slug)
-        .eq('status', 'publicado')
+        .in('status', ['publicado', 'ativo'])
         .maybeSingle();
       if (error) throw error;
       if (!data) return res.status(404).json({ error: 'Evento não encontrado' });
