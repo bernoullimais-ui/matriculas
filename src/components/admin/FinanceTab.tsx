@@ -267,6 +267,22 @@ export function FinanceTab() {
             return false;
           }
         }
+
+        // Se houver um pagamento pago para o mesmo aluno no mesmo mês/ano, ignorar a cobrança pendente (evitar duplicidades)
+        const pMonth = payDate.getMonth();
+        const pYear = payDate.getFullYear();
+        const hasPaidInSameMonth = (financialData.pagamentos || []).some((otherP: any) => {
+           if (otherP.id === p.id) return false;
+           if (otherP.aluno_id !== p.aluno_id) return false;
+           const isPaid = otherP.status === 'pago' || otherP.status === 'conciliado' || otherP.status === 'bem-sucedido' || otherP.status === 'BEM-SUCEDIDO';
+           if (!isPaid) return false;
+           const otherDateStr = otherP.data_vencimento || otherP.created_at;
+           if (!otherDateStr) return false;
+           const otherDate = new Date(otherDateStr);
+           return otherDate.getMonth() === pMonth && otherDate.getFullYear() === pYear;
+        });
+        
+        if (hasPaidInSameMonth) return false;
       }
 
       return true;
