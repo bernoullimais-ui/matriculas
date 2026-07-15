@@ -160,6 +160,29 @@ export async function processarNotaUnica(notaId: string) {
     // 1. Marca como processando para evitar duplicidade
     await supabase.from('notas_fiscais_fila').update({ status: 'processando' }).eq('id', nota.id);
     
+    // Auto-heal missing data before sending
+    if (!nota.dados_emissao?.nome || !nota.dados_emissao?.cpf) {
+       const { data: pag } = await supabase.from('pagamentos').select('responsavel_id').eq('id', nota.pagamento_id).maybeSingle();
+       if (pag?.responsavel_id) {
+          const { data: resp } = await supabase.from('responsaveis').select('nome_completo, cpf, email, endereco').eq('id', pag.responsavel_id).maybeSingle();
+          if (resp) {
+             nota.dados_emissao = nota.dados_emissao || {};
+             nota.dados_emissao.nome = resp.nome_completo;
+             nota.dados_emissao.cpf = resp.cpf;
+             nota.dados_emissao.email = resp.email;
+             if (resp.endereco && typeof resp.endereco === 'object') {
+                nota.dados_emissao.rua = (resp.endereco as any).rua || (resp.endereco as any).logradouro;
+                nota.dados_emissao.numero = (resp.endereco as any).numero;
+                nota.dados_emissao.bairro = (resp.endereco as any).bairro;
+                nota.dados_emissao.cep = (resp.endereco as any).cep;
+                nota.dados_emissao.uf = (resp.endereco as any).uf;
+             }
+             // Update the queue record with the healed data
+             await supabase.from('notas_fiscais_fila').update({ dados_emissao: nota.dados_emissao }).eq('id', nota.id);
+          }
+       }
+    }
+
     // Ajuste do timezone para Brasília (-03:00)
     const pad = (n: number) => n.toString().padStart(2, '0');
     const d = new Date();
