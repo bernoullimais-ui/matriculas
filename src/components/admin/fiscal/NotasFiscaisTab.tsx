@@ -37,7 +37,11 @@ export default function NotasFiscaisTab() {
       const toastId = toast.loading('Processando nota fiscal...');
       
       const response = await fetch(`/api/admin/notas/reenviar/${id}`, {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${sessionStorage.getItem('admin_token') || ''}`,
+          'Content-Type': 'application/json'
+        }
       });
       
       if (!response.ok) {
