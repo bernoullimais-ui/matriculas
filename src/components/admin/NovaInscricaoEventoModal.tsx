@@ -10,7 +10,7 @@ interface Props {
 }
 
 export function NovaInscricaoEventoModal({ onClose, onSuccess }: Props) {
-  const { eventos } = useAdminStore();
+  const { eventos, enrollments } = useAdminStore();
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
   const [paymentLink, setPaymentLink] = useState('');
@@ -42,32 +42,30 @@ export function NovaInscricaoEventoModal({ onClose, onSuccess }: Props) {
       return;
     }
 
-    const searchAlunos = async () => {
-      const { data, error } = await supabase
-        .from('alunos')
-        .select(`
-          id,
-          nome_completo,
-          responsavel_id,
-          responsaveis (
-            id,
-            nome_completo,
-            email,
-            telefone,
-            cpf
-          )
-        `)
-        .ilike('nome_completo', `%${alunoSearch}%`)
-        .limit(10);
-
-      if (data && !error) {
-        setAlunosOptions(data);
-      }
-    };
+    const searchLower = alunoSearch.toLowerCase();
     
-    const timeout = setTimeout(searchAlunos, 500);
-    return () => clearTimeout(timeout);
-  }, [alunoSearch, isNewUser]);
+    // Cria uma lista plana de alunos com os dados dos seus respectivos responsáveis
+    const allAlunos = (enrollments || []).flatMap((r: any) => 
+      (r.alunos || []).map((a: any) => ({
+        id: a.id,
+        nome_completo: a.nome_completo,
+        responsavel_id: r.id,
+        responsaveis: {
+          id: r.id,
+          nome_completo: r.nome_completo,
+          email: r.email,
+          telefone: r.telefone,
+          cpf: r.cpf
+        }
+      }))
+    );
+
+    const filtered = allAlunos
+      .filter((a: any) => a.nome_completo?.toLowerCase().includes(searchLower))
+      .slice(0, 10);
+
+    setAlunosOptions(filtered);
+  }, [alunoSearch, isNewUser, enrollments]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
