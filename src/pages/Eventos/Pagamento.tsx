@@ -71,8 +71,8 @@ export default function EventoPagamento() {
         card: metodoPagamento === 'credit_card' ? {
           holder_name: cardHolder,
           number: cardNumber.replace(/\D/g, ''),
-          exp_month: cardExp.split('/')[0],
-          exp_year: cardExp.split('/')[1]?.length === 2 ? `20${cardExp.split('/')[1]}` : cardExp.split('/')[1],
+          exp_month: Number(cardExp.split('/')[0]),
+          exp_year: Number(cardExp.split('/')[1]?.length === 2 ? `20${cardExp.split('/')[1]}` : cardExp.split('/')[1]),
           cvv: cardCvv
         } : undefined
       };
