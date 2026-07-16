@@ -15070,7 +15070,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
             const rawMsgText = (mensagem || '').trim();
             const cleanRawMsgText = rawMsgText.replace(/^\[.*?\]\s*/i, '').replace(/^\*\[.*?\]\*\s*/i, '').trim();
 
-            const textAlreadyExists = conversa?.historico?.slice(-5).some((m: any) => {
+            const textAlreadyExists = (conversa?.historico || []).slice(-5).some((m: any) => {
               if (m.role !== 'model') return false;
               const partsText = m.parts?.map((p: any) => p.text || '').join('').trim();
               const cleanPartsText = partsText.replace(/^\[.*?\]\s*/i, '').replace(/^\*\[.*?\]\*\s*/i, '').trim();
