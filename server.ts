@@ -14141,6 +14141,18 @@ app.get('/loja/produto/:slug', async (req, res, next) => {
   next();
 });
 
+app.get('/eventos/pagamento/:id', async (req, res, next) => {
+  try {
+    let html = await getBaseIndexHtml();
+    if (html) {
+      return res.send(html);
+    }
+  } catch (err) {
+    console.error('Erro SSR Evento Pagamento:', err);
+  }
+  next();
+});
+
 app.get('/eventos/:slug', async (req, res, next) => {
   if (req.path.includes('.')) return next();
   try {
