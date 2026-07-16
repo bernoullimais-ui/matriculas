@@ -15048,9 +15048,11 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       console.error('[Sofia Webhook] Erro ao buscar identidades no início:', dbErr);
     }
 
-    // Ignora mensagens ENVIADAS (direction: 'out' ou 'outbound') — só processa RECEBIDAS
+    // Ignora mensagens ENVIADAS (direction: 'out' ou 'outbound' ou source: 'member') — processa como saída
     const direction = String(body?.direction || body?.type || body?.messageType || body?.Payload?.Direction || '').toLowerCase();
-    if (direction === 'out' || direction === 'outbound' || direction === 'sent') {
+    const source = String(body?.Payload?.LastMessage?.Source || body?.Payload?.Content?.LastMessage?.Source || body?.Payload?.Source || body?.Payload?.Content?.Source || '').toLowerCase();
+    
+    if (direction === 'out' || direction === 'outbound' || direction === 'sent' || source === 'member') {
       if (messageId && telNorm) {
         try {
           const { data: conversa } = await supabase
@@ -15139,7 +15141,6 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     }
 
     // Ignora se o Source não for 'contact' (se a mensagem foi enviada por um atendente/membro, bot, sistema, etc.)
-    const source = String(body?.Payload?.LastMessage?.Source || body?.Payload?.Content?.LastMessage?.Source || body?.Payload?.Source || body?.Payload?.Content?.Source || '').toLowerCase();
     if (source && source !== 'contact') {
       return res.status(200).json({ ok: true, skipped: `message_from_source_${source}` });
     }
