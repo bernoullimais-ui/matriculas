@@ -69,10 +69,10 @@ export default function EventoPagamento() {
         cpf_pagador: cpfPagador,
         telefone_pagador: telefonePagador,
         card: metodoPagamento === 'credit_card' ? {
-          holder_name: cardHolder,
+          holderName: cardHolder,
           number: cardNumber.replace(/\D/g, ''),
-          exp_month: Number(cardExp.split('/')[0]),
-          exp_year: Number(cardExp.split('/')[1]?.length === 2 ? `20${cardExp.split('/')[1]}` : cardExp.split('/')[1]),
+          expMonth: Number(cardExp.split('/')[0]),
+          expYear: Number(cardExp.split('/')[1]?.length === 2 ? `20${cardExp.split('/')[1]}` : cardExp.split('/')[1]),
           cvv: cardCvv
         } : undefined
       };
