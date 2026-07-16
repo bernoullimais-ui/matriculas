@@ -15053,7 +15053,8 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
     const source = String(body?.Payload?.LastMessage?.Source || body?.Payload?.Content?.LastMessage?.Source || body?.Payload?.Source || body?.Payload?.Content?.Source || '').toLowerCase();
     
     if (direction === 'out' || direction === 'outbound' || direction === 'sent' || source === 'member') {
-      if (messageId && telNorm) {
+      const safeMessageId = messageId || `outbound-member-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      if (telNorm) {
         try {
           const { data: conversa } = await supabase
             .from('conversas_whatsapp')
@@ -15064,7 +15065,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
             .limit(1)
             .maybeSingle();
 
-          const jaExiste = conversa?.historico?.some((m: any) => m.id === messageId);
+          const jaExiste = conversa?.historico?.some((m: any) => m.id === safeMessageId);
           if (!jaExiste) {
             // Deduplicação baseada em texto (para evitar duplicar respostas da IA / Sistema / API que já foram salvas)
             const rawMsgText = (mensagem || '').trim();
@@ -15114,7 +15115,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
             }
 
             const novaMsg = {
-              id: messageId,
+              id: safeMessageId,
               role: 'model',
               parts: outboundParts,
               timestamp: body?.Payload?.Content?.LastMessage?.EventAtUTC 
