@@ -2,8 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { CreditCard, QrCode, CheckCircle, ChevronLeft, Calendar, User, Ticket, Loader2, Copy } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { TopNav } from '../../components/TopNav';
-import { Footer } from '../../components/Footer';
 
 export default function EventoPagamento() {
   const { id } = useParams();
@@ -135,8 +133,6 @@ export default function EventoPagamento() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
-      <TopNav />
-      
       <main className="flex-1 py-12 px-4 sm:px-6 lg:px-8">
         <div className="max-w-4xl mx-auto">
           
@@ -417,8 +413,6 @@ export default function EventoPagamento() {
           </div>
         </div>
       </main>
-      
-      <Footer />
     </div>
   );
 }

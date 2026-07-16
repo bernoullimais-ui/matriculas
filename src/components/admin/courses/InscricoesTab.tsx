@@ -377,6 +377,6 @@ export function InscricoesTab() {
           }}
         />
       )}
-    </div>
+    </>
   );
 }
