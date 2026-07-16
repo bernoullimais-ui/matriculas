@@ -9,6 +9,7 @@ import ProdutoDetalhesPage from './pages/Loja/Produto.tsx';
 import CheckoutPage from './pages/Loja/Checkout.tsx';
 import EventosPage from './pages/Eventos/index.tsx';
 import EventoDetalhesPage from './pages/Eventos/Evento.tsx';
+import EventoPagamento from './pages/Eventos/Pagamento.tsx';
 import UnifiedAdminPage from './pages/Admin/UnifiedAdmin.tsx';
 import PagamentoManual from './pages/PagamentoManual.tsx';
 import PagamentoAtualizar from './pages/PagamentoAtualizar.tsx';
@@ -84,6 +85,7 @@ function RootApp() {
         <Route path="/loja/checkout" element={<CheckoutPage cart={cart} setCart={setCart} />} />
         <Route path="/eventos" element={<EventosPage />} />
         <Route path="/eventos/:slug" element={<EventoDetalhesPage />} />
+        <Route path="/eventos/pagamento/:id" element={<EventoPagamento />} />
         <Route path="/gestao" element={<UnifiedAdminPage />} />
         <Route path="/pagar/:id" element={<PagamentoManual />} />
         <Route path="/pagamento/atualizar/:id" element={<PagamentoAtualizar />} />

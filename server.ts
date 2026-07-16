@@ -12348,6 +12348,147 @@ app.post('/api/webhooks/wix', async (req, res) => {
     }
   });
 
+  // Buscar detalhes de uma inscrição pendente para pagamento
+  app.get("/api/eventos/inscricao/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { data: inscricao, error } = await supabase
+        .from('evento_inscricoes')
+        .select('*, eventos(*)')
+        .eq('id', id)
+        .single();
+      
+      if (error || !inscricao) {
+        return res.status(404).json({ error: 'Inscrição não encontrada.' });
+      }
+
+      res.json(inscricao);
+    } catch (err: any) {
+      console.error("[Eventos] Erro ao buscar inscrição:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Processar pagamento de inscrição pendente
+  app.post("/api/eventos/inscricao/:id/pagar", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { metodo_pagamento, card, cpf_pagador, telefone_pagador, installments } = req.body;
+
+      const { data: inscricao, error } = await supabase
+        .from('evento_inscricoes')
+        .select('*, eventos(*)')
+        .eq('id', id)
+        .single();
+      
+      if (error || !inscricao) {
+        return res.status(404).json({ error: 'Inscrição não encontrada.' });
+      }
+
+      if (inscricao.status === 'confirmado' || inscricao.taxa_paga) {
+        return res.status(400).json({ error: 'Esta inscrição já está paga.' });
+      }
+
+      const evento = inscricao.eventos;
+      const finalTaxa = Number(inscricao.valor_pago);
+
+      const softDescriptor = await getSetting('pagarme_soft_descriptor', 'SportForKids');
+      const orderCode = `evento_${inscricao.id}`;
+      
+      const ip = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
+      const clientIp = Array.isArray(ip) ? ip[0] : ip;
+
+      console.log(`[Pagar.me Eventos - Link] Cobrando taxa de R$ ${finalTaxa} para inscrição ${inscricao.id}`);
+
+      const pagarmeOrder = await createPagarmeOrder({
+        customer: {
+          name: inscricao.nome_responsavel,
+          email: inscricao.email_responsavel,
+          cpf: cpf_pagador || inscricao.respostas_personalizadas?.['CPF do Responsável'] || '',
+          phone: telefone_pagador || inscricao.respostas_personalizadas?.['WhatsApp do Responsável'],
+        },
+        card: card,
+        amount: Math.round(finalTaxa * 100),
+        paymentMethod: metodo_pagamento === 'pix' ? 'pix' : 'credit_card',
+        description: `Taxa Evento - ${evento.titulo} - ${inscricao.nome_aluno}`,
+        code: orderCode,
+        softDescriptor: softDescriptor,
+        ip: clientIp,
+        franquia: 'Matriz',
+        installments: installments ? Number(installments) : 1
+      });
+
+      const charge = pagarmeOrder?.charges?.[0];
+      const pixQrCode = charge?.last_transaction?.qr_code;
+      const pixUrl = charge?.last_transaction?.qr_code_url;
+      const pixExpiration = charge?.last_transaction?.expires_at;
+
+      let msgPix = '';
+      if (metodo_pagamento === 'pix') {
+        if (!pixQrCode) {
+          throw new Error('Falha ao gerar o código PIX.');
+        }
+        await supabase
+          .from('evento_inscricoes')
+          .update({
+            respostas_personalizadas: {
+              ...inscricao.respostas_personalizadas,
+              pix_qr_code: pixQrCode,
+              pix_url: pixUrl,
+              pix_expiration: pixExpiration
+            }
+          })
+          .eq('id', inscricao.id);
+      } else {
+        if (pagarmeOrder?.status === 'paid' || charge?.status === 'paid') {
+          await supabase
+            .from('evento_inscricoes')
+            .update({ status: 'confirmado', taxa_paga: true })
+            .eq('id', inscricao.id);
+          
+          try {
+            const dataEv = new Date(evento.data_inicio);
+            const dataFormatada = dataEv.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: 'numeric', month: 'long', year: 'numeric' });
+            const horaFormatada = dataEv.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+            
+            const msg = `Olá, ${inscricao.nome_responsavel}!\n` +
+              `Sua inscrição no evento *${evento.titulo}* foi realizada com sucesso! 🎉\n\n` +
+              `*Detalhes da Inscrição:*\n` +
+              `- Código: ${inscricao.numero_inscricao}\n` +
+              `- Aluno(a): ${inscricao.nome_aluno}\n` +
+              `- Categoria: ${inscricao.categoria || 'Geral'}\n\n` +
+              `*Detalhes do Evento:*\n` +
+              `- Data: ${dataFormatada} às ${horaFormatada}h\n` +
+              `- Local: ${evento.local || 'A definir'}\n\n` +
+              `Pagamento confirmado e participação garantida!`;
+
+            const targetPhone = telefone_pagador || inscricao.respostas_personalizadas?.['WhatsApp do Responsável'];
+            if (targetPhone) {
+              await sendWhatsAppMessage(targetPhone, inscricao.nome_responsavel, msg, 'Matriz');
+            }
+          } catch (err) {
+            console.error('[WhatsApp Eventos - Link] Falha ao enviar mensagem de confirmação:', err);
+          }
+        } else {
+          throw new Error(`Pagamento recusado (Status: ${pagarmeOrder?.status}). Verifique os dados do cartão.`);
+        }
+      }
+
+      return res.json({
+        success: true,
+        inscricao_id: inscricao.id,
+        status: metodo_pagamento === 'pix' ? 'pendente' : 'confirmado',
+        qr_code: pixQrCode,
+        qr_code_url: pixUrl,
+        expires_at: pixExpiration
+      });
+
+    } catch (err: any) {
+      console.error("[Eventos Link] Erro ao pagar:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── ADMIN/PORTAL EXTRA ENDPOINTS ─────────────────────────────────────────────
 
   // Admin list products
@@ -13567,6 +13708,88 @@ app.post('/api/webhooks/wix', async (req, res) => {
       res.json(mappedData);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin POST Criar inscrição manual e gerar link de pagamento
+  app.post("/api/admin/eventos/inscricoes/nova", async (req, res) => {
+    try {
+      const {
+        evento_id,
+        categoria,
+        aluno_id,
+        responsavel_id,
+        nome_aluno,
+        nome_responsavel,
+        email_responsavel,
+        telefone_responsavel,
+        cpf_responsavel
+      } = req.body;
+
+      // 1. Buscar evento
+      const { data: evento, error: evError } = await supabase
+        .from('eventos')
+        .select('*')
+        .eq('id', evento_id)
+        .single();
+      
+      if (evError || !evento) {
+        return res.status(404).json({ error: 'Evento não encontrado.' });
+      }
+
+      // 2. Calcular a taxa
+      let taxa = 0;
+      if (evento.tipo_preco === 'fixo') {
+        taxa = Number(evento.taxa_inscricao || 0);
+      } else if (evento.tipo_preco === 'categorias') {
+        const opc = (evento.opcoes_precos || []).find((o: any) => o.nome === categoria);
+        taxa = opc ? Number(opc.preco || 0) : 0;
+      }
+
+      const numInscricao = `INS_${evento_id.substring(0, 4)}_${Date.now().toString().slice(-6)}`;
+      const isFree = taxa === 0;
+
+      // 3. Criar inscrição pendente
+      const { data: inscricao, error: insError } = await supabase
+        .from('evento_inscricoes')
+        .insert([{
+          evento_id,
+          responsavel_id,
+          aluno_id,
+          categoria,
+          status: isFree ? 'confirmado' : 'pendente',
+          taxa_paga: isFree,
+          observacoes: 'Inscrição gerada manualmente pela administração',
+          numero_inscricao: numInscricao,
+          nome_aluno,
+          nome_responsavel,
+          email_responsavel,
+          respostas_personalizadas: {
+            "WhatsApp do Responsável": telefone_responsavel,
+            "CPF do Responsável": cpf_responsavel
+          },
+          valor_pago: taxa,
+          created_at: new Date().toISOString()
+        }])
+        .select()
+        .single();
+
+      if (insError) throw insError;
+
+      const host = req.get('host') || 'localhost:3000';
+      const protocol = req.protocol || 'https';
+      const paymentLink = isFree ? '' : `${protocol}://${host}/eventos/pagamento/${inscricao.id}`;
+
+      return res.json({
+        success: true,
+        inscricao,
+        payment_link: paymentLink,
+        isFree
+      });
+
+    } catch (err: any) {
+      console.error("[Admin API] Erro ao criar inscrição manual:", err);
+      res.status(500).json({ error: "Erro interno do servidor" });
     }
   });
 

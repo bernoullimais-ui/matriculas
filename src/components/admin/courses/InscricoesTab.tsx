@@ -8,6 +8,7 @@ import {
 , MessageCircle, Info} from 'lucide-react';
 import { useAdminStore } from '../../../stores/adminStore';
 import { formatCurrency, formatDateTime } from '../../../utils/formatters';
+import { NovaInscricaoEventoModal } from '../NovaInscricaoEventoModal';
 
 export function InscricoesTab() {
   const { inscricoes, setInscricoes, eventos, loadData } = useAdminStore();
@@ -16,6 +17,7 @@ export function InscricoesTab() {
   
   const [showInscricaoDetails, setShowInscricaoDetails] = useState<any | null>(null);
   const [showInscricaoEdit, setShowInscricaoEdit] = useState<any | null>(null);
+  const [showNovaInscricaoModal, setShowNovaInscricaoModal] = useState(false);
   const [enrollmentSearch, setEnrollmentSearch] = useState('');
   const [filtroEventoId, setFiltroEventoId] = useState<string>('');
   const [showBulkWhatsAppModal, setShowBulkWhatsAppModal] = useState(false);
@@ -276,6 +278,12 @@ export function InscricoesTab() {
                         Exportar CSV
                       </button>
                       <button
+                        onClick={() => setShowNovaInscricaoModal(true)}
+                        className="px-3 py-1.5 bg-emerald-50 text-emerald-600 font-bold rounded-lg hover:bg-emerald-100 transition-colors text-xs flex items-center gap-1"
+                      >
+                        Nova Inscrição
+                      </button>
+                      <button
                         onClick={() => setShowBulkWhatsAppModal(true)}
                         className="px-3 py-1.5 bg-emerald-50 text-emerald-600 font-bold rounded-lg hover:bg-emerald-100 transition-colors text-xs flex items-center gap-1"
                       >
@@ -360,6 +368,15 @@ export function InscricoesTab() {
                 </div>
               )}
 
-    </>
+      {showNovaInscricaoModal && (
+        <NovaInscricaoEventoModal
+          onClose={() => setShowNovaInscricaoModal(false)}
+          onSuccess={() => {
+            setShowNovaInscricaoModal(false);
+            loadData();
+          }}
+        />
+      )}
+    </div>
   );
 }
