@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Search, User, CreditCard, Link as LinkIcon, CheckCircle } from 'lucide-react';
+import { X, Search, User, CreditCard, Link as LinkIcon, CheckCircle, Ticket } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import toast from 'react-hot-toast';
 import { useAdminStore } from '../../stores/adminStore';
