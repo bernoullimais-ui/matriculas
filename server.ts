@@ -15066,6 +15066,22 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
           const jaExiste = conversa?.historico?.some((m: any) => m.id === messageId);
           if (!jaExiste) {
+            // Deduplicação baseada em texto (para evitar duplicar respostas da IA / Sistema / API que já foram salvas)
+            const rawMsgText = (mensagem || '').trim();
+            const cleanRawMsgText = rawMsgText.replace(/^\[.*?\]\s*/i, '').replace(/^\*\[.*?\]\*\s*/i, '').trim();
+
+            const textAlreadyExists = conversa?.historico?.slice(-5).some((m: any) => {
+              if (m.role !== 'model') return false;
+              const partsText = m.parts?.map((p: any) => p.text || '').join('').trim();
+              const cleanPartsText = partsText.replace(/^\[.*?\]\s*/i, '').replace(/^\*\[.*?\]\*\s*/i, '').trim();
+              return cleanPartsText === cleanRawMsgText && cleanRawMsgText !== '';
+            });
+
+            if (textAlreadyExists) {
+              console.log(`[Sofia Webhook] Mensagem de saída ignorada (já existe no histórico por texto recente): ${messageId}`);
+              return res.status(200).json({ ok: true, skipped: 'already_in_history_by_text' });
+            }
+
             const memberName = body?.Payload?.LastMessage?.SentByOrganizationMember?.Name 
               || body?.Payload?.Content?.LastMessage?.SentByOrganizationMember?.Name
               || body?.Payload?.Content?.LastMessage?.SentBy?.Name
