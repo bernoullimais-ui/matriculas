@@ -15444,6 +15444,23 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         total = parseInt(countData || '0');
       }
 
+      // Adiciona todas as sessões anteriores (encerradas ou não) dos mesmos contatos listados
+      if (conversas.length > 0) {
+        const telefones = Array.from(new Set(conversas.map((c: any) => c.telefone)));
+        const { data: allSessions } = await supabase
+          .from('conversas_whatsapp')
+          .select('id, telefone, responsavel_nome, identidade_nome, status, total_mensagens, ultima_mensagem_at, escalado_at, created_at, aluno_ids, historico, atendente_id, etiquetas, avatar_url')
+          .in('telefone', telefones)
+          .order('created_at', { ascending: false });
+
+        if (allSessions && allSessions.length > 0) {
+          const conversasMap = new Map();
+          for (const c of conversas) conversasMap.set(c.id, c);
+          for (const s of allSessions) conversasMap.set(s.id, s);
+          conversas = Array.from(conversasMap.values());
+        }
+      }
+
       res.json({ conversas, total });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
