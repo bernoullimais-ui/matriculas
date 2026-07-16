@@ -962,6 +962,23 @@ export async function processarMensagem(
     }
   }
 
+  // Garante que a resposta final de texto seja adicionada ao histórico
+  // (pode ter sido omitida se houve quebra de loop, erro, ou fail-safe)
+  if (respostaFinal) {
+    const lastMsg = historico[historico.length - 1];
+    const isAlreadyAdded = lastMsg?.role === 'model' && 
+      lastMsg.parts?.length === 1 && 
+      lastMsg.parts[0]?.text === respostaFinal;
+    
+    if (!isAlreadyAdded) {
+      historico.push({
+        role: 'model',
+        parts: [{ text: respostaFinal }],
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
   // 6. Salva histórico atualizado
   await salvarHistorico(supabase, conversa.id, historico, {
     ...(escalado ? { status: 'escalado', escalado_at: new Date().toISOString() } : {})
