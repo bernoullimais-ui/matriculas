@@ -256,8 +256,9 @@ export function InscricoesTab() {
                         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                         body: JSON.stringify({ phone: telefone, name: nome, message: mensagem })
                       });
-                      // Delay para evitar Rate Limit
-                      await new Promise(r => setTimeout(r, 500));
+                      // Delay aleatório de 8 a 12 segundos para evitar Rate Limit e bloqueio por SPAM
+                      const delayMs = Math.floor(Math.random() * (12000 - 8000 + 1)) + 8000;
+                      await new Promise(r => setTimeout(r, delayMs));
                     }
                   } catch (err) {
                     console.error('Falha no envio para um dos contatos:', err);
