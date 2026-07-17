@@ -9812,6 +9812,8 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
                   .select('id')
                   .eq('pagarme', identifierId)
                   .eq('matricula_id', matriculaId)
+                  .order('created_at', { ascending: false })
+                  .limit(1)
                   .maybeSingle();
 
                 if (existingPayment) {
