@@ -237,8 +237,33 @@ export function InscricoesTab() {
             <form onSubmit={(e) => {
               e.preventDefault();
               const fd = new FormData(e.currentTarget);
-              toast.success(`Mensagem enfileirada para ${filteredInscricoes.length} contatos!`);
+              const mensagem = fd.get('mensagem')?.toString();
+              if (!mensagem) return;
+
+              toast.success(`Mensagem enfileirada para ${filteredInscricoes.length} contatos! O envio será processado em segundo plano.`);
               setShowBulkWhatsAppModal(false);
+
+              // Process background queue
+              (async () => {
+                const token = sessionStorage.getItem('admin_token');
+                for (const ins of filteredInscricoes) {
+                  try {
+                    const telefone = ins.whatsapp_responsavel || ins.telefone_responsavel || ins.telefone_contato || ins.telefone || ins.respostas_personalizadas?.['WhatsApp do Responsável'] || ins.respostas_personalizadas?.['Telefone'] || ins.respostas_personalizadas?.['WhatsApp'];
+                    const nome = ins.nome_responsavel || ins.nome_aluno;
+                    if (telefone && telefone !== 'N/A') {
+                      await fetch('/api/admin/whatsapp/send', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                        body: JSON.stringify({ phone: telefone, name: nome, message: mensagem })
+                      });
+                      // Delay para evitar Rate Limit
+                      await new Promise(r => setTimeout(r, 500));
+                    }
+                  } catch (err) {
+                    console.error('Falha no envio para um dos contatos:', err);
+                  }
+                }
+              })();
             }}>
               <div className="space-y-4">
                 <div>
