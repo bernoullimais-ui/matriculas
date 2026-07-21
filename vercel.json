@@ -27,6 +27,30 @@
       ]
     }
   ],
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "bernoullimais.com.br"
+        }
+      ],
+      "destination": "https://www.sportforkids.com.br/portal/bernoulli",
+      "permanent": false
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.bernoullimais.com.br"
+        }
+      ],
+      "destination": "https://www.sportforkids.com.br/portal/bernoulli",
+      "permanent": false
+    }
+  ],
   "routes": [
     { "handle": "filesystem" },
     {
