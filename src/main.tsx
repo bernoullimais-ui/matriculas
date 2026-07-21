@@ -21,6 +21,11 @@ import FloatingWhatsAppButton from './components/FloatingWhatsAppButton.tsx';
 import CampanhaPublica from './pages/CampanhaPublica.tsx';
 import './index.css';
 
+// Client-side fallback redirect para o domínio do Bernoulli
+if (window.location.hostname.includes('bernoullimais.com.br')) {
+  window.location.href = 'https://www.sportforkids.com.br/portal/bernoulli';
+}
+
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: React.ReactNode }) {
     super(props);
