@@ -842,7 +842,7 @@ export async function processarMensagem(
       loopCount++;
 
       const response = await model.generateContent({
-        model: 'gemini-3.5-flash',
+        model: 'gemini-3.6-flash',
         contents: historico.map(m => ({
           role: m.role,
           parts: sanitizarParts(m.parts)
