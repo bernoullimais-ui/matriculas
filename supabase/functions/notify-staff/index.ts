@@ -58,18 +58,17 @@ serve(async (req) => {
       return vinculado || ehProf;
     });
 
-    // 5. Buscar identidade "Notificações Internas"
+    // 5. Buscar identidade "Sport for Kids" (ou fallback para a primeira)
     const { data: identidades } = await supabase
       .from('identidades')
       .select('nome, utalk_token, utalk_from_phone, utalk_organization_id');
 
     const identidade = (identidades || []).find((i: any) =>
-      i.nome?.toLowerCase().includes('notifica') &&
-      i.nome?.toLowerCase().includes('interna')
-    );
+      i.nome?.toLowerCase().includes('sport for kids')
+    ) || (identidades || [])[0];
 
     if (!identidade?.utalk_token) {
-      console.warn('[notify-staff] Identidade "Notificações Internas" não encontrada.');
+      console.warn('[notify-staff] Nenhuma identidade válida encontrada.');
       return new Response(JSON.stringify({ notified: 0, reason: 'no identity' }), { status: 200, headers: corsHeaders });
     }
 
