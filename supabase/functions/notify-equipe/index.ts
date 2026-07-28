@@ -244,7 +244,7 @@ serve(async (req) => {
             toPhone: phone,
             fromPhone: utalkFrom,
             organizationId: utalkOrgId,
-            message: `*[Gestão Sport for Kids]*\n\n${mensagem}`,
+            message: `*[ALERTA Gestão Sport for Kids]*\n\n${mensagem}`,
             contactName: dest.nome || 'Equipe'
           })
         });
