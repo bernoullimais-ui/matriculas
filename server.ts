@@ -3499,7 +3499,7 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
           };
 
           const UTALK_URL = process.env.UTALK_URL || 'https://app-utalk.umbler.com/api/v1/messages/simplified/';
-          fetch(UTALK_URL, {
+          await fetch(UTALK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -13456,7 +13456,7 @@ app.post('/api/webhooks/wix', async (req, res) => {
             message: mensagem
           };
 
-          fetch("https://app-utalk.umbler.com/api/v1/messages/simplified/", {
+          await fetch("https://app-utalk.umbler.com/api/v1/messages/simplified/", {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
