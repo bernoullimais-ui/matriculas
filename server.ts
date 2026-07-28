@@ -3414,6 +3414,108 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
     if (!cpf) return '';
     return String(cpf).replace(/\D/g, '').trim();
   };
+  app.post("/api/admin/aulas-experimentais/agendar", requireAdminAuth, async (req, res) => {
+    try {
+      let { guardianId, alunoId, unidade, turma, dataAula } = req.body;
+      if (!guardianId || !alunoId || !unidade || !turma || !dataAula) {
+        return res.status(400).json({ error: 'Parâmetros obrigatórios ausentes.' });
+      }
+
+      // Fetch guardian details
+      const { data: guardianData, error: guardianError } = await supabase
+        .from('responsaveis')
+        .select('nome_completo, telefone')
+        .eq('id', guardianId)
+        .single();
+      
+      if (guardianError || !guardianData) {
+        return res.status(404).json({ error: 'Responsável não encontrado.' });
+      }
+
+      // Fetch student details
+      const { data: studentData, error: studentError } = await supabase
+        .from('alunos')
+        .select('serie_ano, nome_completo')
+        .eq('id', alunoId)
+        .single();
+
+      if (studentError || !studentData) {
+        return res.status(404).json({ error: 'Aluno não encontrado.' });
+      }
+
+      // Fetch class details
+      const { data: classData } = await supabase
+        .from('turmas')
+        .select('nome, dias_horarios')
+        .eq('nome', turma)
+        .limit(1)
+        .maybeSingle();
+
+      // Create trial class booking
+      const { data: trialClass, error: tError } = await supabase
+        .from('aulas_experimentais')
+        .insert([{
+          id: crypto.randomUUID(),
+          unidade: unidade,
+          curso: classData?.nome ? classData.nome.split(' ')[0] : 'Esporte',
+          aula: dataAula,
+          horario: classData?.dias_horarios || '',
+          responsavel1: guardianData.nome_completo,
+          whatsapp1: guardianData.telefone,
+          status: 'Pendente',
+          etapa: 'Agendado',
+          ano_escolar: studentData.serie_ano,
+          turma_escolar: turma,
+          aluno_id: alunoId
+        }])
+        .select()
+        .single();
+
+      if (tError) {
+        console.error('Error booking trial class by admin:', tError);
+        return res.status(500).json({ error: 'Erro ao agendar aula experimental.' });
+      }
+
+      // Send WhatsApp confirmation
+      try {
+        const { data: identidades } = await supabase.from('identidades').select('*');
+        const identity = identidades?.find((i: any) => i.nome?.toLowerCase().includes('sport for kids')) || identidades?.[0];
+        
+        if (identity && identity.utalk_token) {
+          let cleanTo = guardianData.telefone.replace(/\D/g, '');
+          if (cleanTo.length >= 10 && !cleanTo.startsWith('55')) {
+            cleanTo = '55' + cleanTo;
+          }
+
+          const alunoNome = studentData.nome_completo.trim();
+          const respFirstName = guardianData.nome_completo.split(' ')[0];
+
+          const mensagem = `Olá, ${respFirstName}! 🎉\n\nRecebemos o agendamento da Aula Experimental de ${alunoNome} feito por nossa equipe.\n\n📍 *Unidade:* ${unidade}\n🥋 *Turma:* ${turma}\n🗓 *Data:* ${dataAula}\n⏰ *Horário:* ${classData?.dias_horarios || 'A confirmar'}\n\nFicamos muito felizes com o interesse! Estaremos esperando por vocês. Se tiver qualquer dúvida ou precisar reagendar, é só nos chamar por aqui!`;
+
+          const payload: any = {
+            token: identity.utalk_token,
+            to: cleanTo,
+            text: mensagem
+          };
+
+          const UTALK_URL = process.env.UTALK_URL || 'https://app-utalk.umbler.com/api/v1/messages/simplified/';
+          fetch(UTALK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          }).catch(err => console.error("Error sending WhatsApp message for trial class by admin:", err));
+        }
+      } catch (waError) {
+        console.error('Error in WhatsApp trigger (admin trial class):', waError);
+      }
+
+      res.status(200).json({ message: 'Aula experimental agendada com sucesso!', trialClass });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ error: 'Erro interno ao processar agendamento.' });
+    }
+  });
+
 
   app.post("/api/admin/impersonate", async (req, res) => {
     try {
