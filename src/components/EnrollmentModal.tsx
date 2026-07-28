@@ -907,6 +907,19 @@ export default function EnrollmentModal({
         setDependents(parsed.alunos || []);
         setHasFidelityDiscount(parsed.hasActiveEnrollments || false);
         
+        if (parsed.cpf) {
+          fetch(`/api/guardian/${parsed.cpf.replace(/\D/g, '')}`)
+            .then(res => res.json())
+            .then(data => {
+              if (data && data.exists) {
+                setHasFidelityDiscount(data.hasActiveEnrollments || false);
+                parsed.hasActiveEnrollments = data.hasActiveEnrollments || false;
+                localStorage.setItem('guardian', JSON.stringify(parsed));
+              }
+            })
+            .catch(err => console.error('Error refreshing fidelity status:', err));
+        }
+
         if (initialStep) {
           setStep(initialStep);
           if (initialStep === 'portal' && initialPortalTab) {
