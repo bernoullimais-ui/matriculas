@@ -220,6 +220,11 @@ serve(async (req) => {
       const vinculadoUnidade = u.unidade?.toLowerCase() === 'todas' || unidades.includes(paramUnidadeNorm);
       const ehProfessorDaTurma = professorTurma && u.nome?.toLowerCase().trim() === professorTurma.toLowerCase().trim();
 
+      const nivel = (u.nivel || '').toLowerCase();
+      if (nivel === 'professor') {
+        return ehProfessorDaTurma;
+      }
+
       return vinculadoUnidade || ehProfessorDaTurma;
     });
 
