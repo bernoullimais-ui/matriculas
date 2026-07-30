@@ -109,7 +109,7 @@ export const SOFIA_TOOL_DECLARATIONS = [
   },
   {
     name: 'criar_tarefa_cancelamento',
-    description: 'Cria uma solicitação formal de cancelamento de matrícula. Esta ação cria uma tarefa pendente para aprovação da equipe. Use apenas após confirmação explícita do responsável (resposta "SIM").',
+    description: 'Cria uma solicitação formal de cancelamento de matrícula. Esta ação cria uma tarefa pendente para aprovação da equipe. O parâmetro motivo É OBRIGATÓRIO (deve conter a causa informada pelo responsável). Use apenas após seguir o fluxo de retenção (perguntar motivo e ofertar transferência de modalidade) e receber confirmação explícita "SIM".',
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -123,10 +123,10 @@ export const SOFIA_TOOL_DECLARATIONS = [
         },
         motivo: {
           type: Type.STRING,
-          description: 'Motivo do cancelamento informado pelo responsável'
+          description: 'Motivo/causa do cancelamento informado pelo responsável (ex: incompatibilidade de horário, interesse em outra modalidade, mudança, financeiro)'
         }
       },
-      required: ['aluno_id', 'matricula_id']
+      required: ['aluno_id', 'matricula_id', 'motivo']
     }
   },
   {
