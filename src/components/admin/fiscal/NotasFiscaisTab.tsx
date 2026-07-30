@@ -204,9 +204,9 @@ export default function NotasFiscaisTab() {
                              <Send size={18} className={processingId === nota.id ? 'animate-pulse' : ''} />
                            </button>
                         )}
-                        {(nota.nfe_url_pdf || nota.referencia) && (
+                        {(nota.nfe_url_pdf || nota.id) && (
                           <button 
-                            onClick={() => handleDownloadPdf(nota.referencia, nota.nfe_url_pdf)}
+                            onClick={() => handleDownloadPdf(`NF_${nota.id}`, nota.nfe_url_pdf)}
                             className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" 
                             title="Baixar PDF"
                           >
