@@ -78,15 +78,22 @@ export default function NotasFiscaisTab() {
         }
       });
       
-      if (!response.ok) throw new Error('Falha ao baixar o PDF');
+      if (!response.ok) {
+        let errorMsg = 'Falha ao baixar o PDF';
+        try {
+          const errorData = await response.json();
+          errorMsg = errorData.details || errorData.error || errorMsg;
+        } catch(e) {}
+        throw new Error(errorMsg);
+      }
       
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank');
       toast.dismiss(toastId);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      toast.error('O PDF direto falhou. Redirecionando...');
+      toast.error(`PDF falhou: ${err.message}. Redirecionando...`);
       if (url_fallback) window.open(url_fallback, '_blank');
     }
   };
