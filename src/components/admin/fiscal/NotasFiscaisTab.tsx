@@ -88,7 +88,7 @@ export default function NotasFiscaisTab() {
       }
       
       const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
       window.open(url, '_blank');
       toast.dismiss(toastId);
     } catch (err: any) {

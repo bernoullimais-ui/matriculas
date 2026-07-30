@@ -9070,7 +9070,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
       
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `inline; filename="${ref}.pdf"`);
-      res.send(Buffer.from(response.data));
+      res.end(Buffer.from(response.data), 'binary');
     } catch (e: any) {
       console.error('[Admin] Erro ao baixar PDF da nota fiscal:', e.message);
       res.status(500).json({ error: 'Erro ao baixar o PDF', details: e.message });
