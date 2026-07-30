@@ -55,7 +55,7 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
           return;
         }
       } else if (dadosEmissao.origin === 'evento') {
-        const { data: inscricao } = await supabase.from('evento_inscricoes').select('nome_responsavel, email_responsavel, valor_pago, respostas_personalizadas, responsavel_id, status').eq('id', pagamentoId).maybeSingle();
+        const { data: inscricao } = await supabase.from('evento_inscricoes').select('nome_responsavel, email_responsavel, valor_pago, respostas_personalizadas, responsavel_id, status, nome_aluno, eventos(titulo)').eq('id', pagamentoId).maybeSingle();
         if (inscricao) {
           if (inscricao.status !== 'confirmada') {
             console.log(`[Focus NFe] Cancelando fila para evento_inscricoes ${pagamentoId} (status = ${inscricao.status})`);
@@ -74,6 +74,8 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
              if (resp) cpf = resp.cpf;
           }
           dadosEmissao.cpf = cpf;
+          dadosEmissao.nome_aluno = inscricao.nome_aluno;
+          dadosEmissao.evento = inscricao.eventos?.titulo;
         } else {
           console.log(`[Focus NFe] Cancelando fila: evento_inscricoes não encontrado para ${pagamentoId}`);
           return;
@@ -85,12 +87,17 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
             console.log(`[Focus NFe] Cancelando fila para faturas_pix ${pagamentoId} (status = ${fatura.status})`);
             return;
           }
-          const { data: mat } = await supabase.from('matriculas').select('responsaveis(nome_completo, cpf, email)').eq('id', fatura.matricula_id).maybeSingle();
+          const { data: mat } = await supabase.from('matriculas').select('responsaveis(nome_completo, cpf, email), alunos(nome_completo), turmas(nome), unidades(nome)').eq('id', fatura.matricula_id).maybeSingle();
           const resp = mat?.responsaveis;
           if (resp) {
             dadosEmissao.nome = Array.isArray(resp) ? resp[0]?.nome_completo : resp.nome_completo;
             dadosEmissao.cpf = Array.isArray(resp) ? resp[0]?.cpf : resp.cpf;
             dadosEmissao.email = Array.isArray(resp) ? resp[0]?.email : resp.email;
+          }
+          if (mat) {
+             dadosEmissao.nome_aluno = mat.alunos?.nome_completo || (Array.isArray(mat.alunos) ? mat.alunos[0]?.nome_completo : undefined);
+             dadosEmissao.turma = mat.turmas?.nome || (Array.isArray(mat.turmas) ? mat.turmas[0]?.nome : undefined);
+             dadosEmissao.unidade = mat.unidades?.nome || (Array.isArray(mat.unidades) ? mat.unidades[0]?.nome : undefined);
           }
           if (!dadosEmissao.valor) dadosEmissao.valor = fatura.valor;
         } else {
@@ -98,7 +105,7 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
           return;
         }
       } else if (dadosEmissao.origin === 'excecao_pix' || dadosEmissao.origin === 'geral') {
-        let query = supabase.from('pagamentos').select('valor, responsavel_id, status');
+        let query = supabase.from('pagamentos').select('valor, responsavel_id, status, matriculas(alunos(nome_completo), turmas(nome), unidades(nome))');
         if (pagamentoId.includes('-')) {
            query = query.eq('id', pagamentoId);
         } else {
@@ -117,6 +124,15 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
               dadosEmissao.cpf = resp.cpf;
               dadosEmissao.email = resp.email;
             }
+          }
+          if (pag.matriculas) {
+             let mat = pag.matriculas;
+             if (Array.isArray(mat)) mat = mat[0];
+             if (mat) {
+                dadosEmissao.nome_aluno = mat.alunos?.nome_completo || (Array.isArray(mat.alunos) ? mat.alunos[0]?.nome_completo : undefined);
+                dadosEmissao.turma = mat.turmas?.nome || (Array.isArray(mat.turmas) ? mat.turmas[0]?.nome : undefined);
+                dadosEmissao.unidade = mat.unidades?.nome || (Array.isArray(mat.unidades) ? mat.unidades[0]?.nome : undefined);
+             }
           }
           if (!dadosEmissao.valor) dadosEmissao.valor = pag.valor;
         } else {
@@ -189,6 +205,21 @@ export async function processarNotaUnica(notaId: string) {
     d.setHours(d.getHours() - 3);
     const dataEmissaoLocal = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}-03:00`;
 
+    // Constrói a discriminação do serviço dinamicamente
+    let discriminacao = "Prestação de serviços educacionais e atividades esportivas";
+    if (nota.dados_emissao?.nome_aluno) {
+      discriminacao += `\nAluno: ${nota.dados_emissao.nome_aluno}`;
+    }
+    if (nota.dados_emissao?.evento) {
+      discriminacao += `\nEvento: ${nota.dados_emissao.evento}`;
+    }
+    if (nota.dados_emissao?.turma) {
+      discriminacao += `\nTurma: ${nota.dados_emissao.turma}`;
+    }
+    if (nota.dados_emissao?.unidade) {
+      discriminacao += `\nUnidade: ${nota.dados_emissao.unidade}`;
+    }
+
     // 2. Monta o payload
     const payload: any = {
       data_emissao: dataEmissaoLocal,
@@ -213,7 +244,7 @@ export async function processarNotaUnica(notaId: string) {
       },
       servico: {
         aliquota: 5,
-        discriminacao: "Prestação de serviços educacionais e atividades esportivas",
+        discriminacao: discriminacao,
         item_lista_servico: "06.04",
         codigo_tributario_municipio: "0604001",
         codigo_nbs: "122051200", 
