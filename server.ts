@@ -9166,7 +9166,8 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
                 };
               } else {
                 // Template HTML Interno Embutido (Não exige cadastro na Brevo)
-                brevoBody.sender = { name: 'Sport for Kids', email: 'contato@sportforkids.com.br' };
+                const senderEmail = process.env.BREVO_SENDER_EMAIL || 'contato@sportforkids.com.br';
+                brevoBody.sender = { name: 'Sport for Kids', email: senderEmail };
                 brevoBody.subject = 'Sua Nota Fiscal de Serviços (NFS-e) foi emitida - Sport for Kids';
                 brevoBody.htmlContent = `
                   <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background-color: #ffffff;">
@@ -9196,7 +9197,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
                 `;
               }
 
-              await fetch('https://api.brevo.com/v3/smtp/email', {
+              const response = await fetch('https://api.brevo.com/v3/smtp/email', {
                 method: 'POST',
                 headers: {
                   'accept': 'application/json',
@@ -9205,7 +9206,13 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
                 },
                 body: JSON.stringify(brevoBody)
               });
-              console.log(`[Webhook Focus NFe] E-mail enviado via Brevo para ${notaInfo.dados_emissao.email} (Template: ${brevoBody.templateId ? 'Externo ID '+brevoBody.templateId : 'Interno'})`);
+              
+              if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`[Webhook Focus NFe] Erro da Brevo ao enviar e-mail: HTTP ${response.status} - ${errorText}`);
+              } else {
+                console.log(`[Webhook Focus NFe] E-mail enviado via Brevo para ${notaInfo.dados_emissao.email} (Template: ${brevoBody.templateId ? 'Externo ID '+brevoBody.templateId : 'Interno'})`);
+              }
             }
           }
         } catch (mailError) {
