@@ -199,6 +199,59 @@ export async function processarNotaUnica(notaId: string) {
        }
     }
 
+    // Auto-heal missing extra details (aluno, turma, unidade, evento)
+    if (!nota.dados_emissao?.nome_aluno && nota.pagamento_id) {
+       let healedExtra = false;
+       nota.dados_emissao = nota.dados_emissao || {};
+       
+       // Tenta evento_inscricoes
+       const { data: inscricao } = await supabase.from('evento_inscricoes').select('nome_aluno, eventos(titulo)').eq('id', nota.pagamento_id).maybeSingle();
+       if (inscricao) {
+          nota.dados_emissao.nome_aluno = inscricao.nome_aluno;
+          nota.dados_emissao.evento = inscricao.eventos?.titulo;
+          healedExtra = true;
+       }
+       
+       if (!healedExtra) {
+          // Tenta faturas_pix
+          const { data: fatura } = await supabase.from('faturas_pix').select('matricula_id').eq('id', nota.pagamento_id).maybeSingle();
+          if (fatura?.matricula_id) {
+             const { data: mat } = await supabase.from('matriculas').select('alunos(nome_completo), turmas(nome), unidades(nome)').eq('id', fatura.matricula_id).maybeSingle();
+             if (mat) {
+                nota.dados_emissao.nome_aluno = mat.alunos?.nome_completo || (Array.isArray(mat.alunos) ? mat.alunos[0]?.nome_completo : undefined);
+                nota.dados_emissao.turma = mat.turmas?.nome || (Array.isArray(mat.turmas) ? mat.turmas[0]?.nome : undefined);
+                nota.dados_emissao.unidade = mat.unidades?.nome || (Array.isArray(mat.unidades) ? mat.unidades[0]?.nome : undefined);
+                healedExtra = true;
+             }
+          }
+       }
+       
+       if (!healedExtra) {
+          // Tenta pagamentos (mensalidades normais)
+          let query = supabase.from('pagamentos').select('matriculas(alunos(nome_completo), turmas(nome), unidades(nome))');
+          if (nota.pagamento_id.includes('-')) {
+             query = query.eq('id', nota.pagamento_id);
+          } else {
+             query = query.eq('pagarme', nota.pagamento_id);
+          }
+          const { data: pag } = await query.maybeSingle();
+          if (pag?.matriculas) {
+             let mat = pag.matriculas;
+             if (Array.isArray(mat)) mat = mat[0];
+             if (mat) {
+                nota.dados_emissao.nome_aluno = mat.alunos?.nome_completo || (Array.isArray(mat.alunos) ? mat.alunos[0]?.nome_completo : undefined);
+                nota.dados_emissao.turma = mat.turmas?.nome || (Array.isArray(mat.turmas) ? mat.turmas[0]?.nome : undefined);
+                nota.dados_emissao.unidade = mat.unidades?.nome || (Array.isArray(mat.unidades) ? mat.unidades[0]?.nome : undefined);
+                healedExtra = true;
+             }
+          }
+       }
+
+       if (healedExtra) {
+          await supabase.from('notas_fiscais_fila').update({ dados_emissao: nota.dados_emissao }).eq('id', nota.id);
+       }
+    }
+
     // Ajuste do timezone para Brasília (-03:00)
     const pad = (n: number) => n.toString().padStart(2, '0');
     const d = new Date();
