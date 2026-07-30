@@ -9068,9 +9068,8 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
         }
       });
       
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="${ref}.pdf"`);
-      res.end(Buffer.from(response.data), 'binary');
+      const base64Pdf = Buffer.from(response.data).toString('base64');
+      res.json({ success: true, base64: base64Pdf });
     } catch (e: any) {
       console.error('[Admin] Erro ao baixar PDF da nota fiscal:', e.message);
       res.status(500).json({ error: 'Erro ao baixar o PDF', details: e.message });
