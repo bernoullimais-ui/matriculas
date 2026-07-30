@@ -9058,21 +9058,34 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
       const apiUrl = process.env.FOCUS_NFE_API_URL || 'https://api.focusnfe.com.br/v2';
       const token = process.env.FOCUS_NFE_API_TOKEN || process.env.FOCUS_API_TOKEN || '';
       
-      const pdfUrl = `${apiUrl}/nfse/${ref}.pdf`;
+      const jsonUrl = `${apiUrl}/nfse/${ref}`;
       const tokenAuth = Buffer.from(`${token}:`).toString('base64');
       
-      const response = await axios.get(pdfUrl, {
-        responseType: 'arraybuffer',
+      const response = await axios.get(jsonUrl, {
         headers: {
           'Authorization': `Basic ${tokenAuth}`
         }
       });
       
-      const base64Pdf = Buffer.from(response.data).toString('base64');
-      res.json({ success: true, base64: base64Pdf });
+      const noteData = response.data;
+      let pdfUrl = '';
+
+      if (noteData.url) {
+        pdfUrl = noteData.url;
+      } else if (noteData.url_danfse) {
+        pdfUrl = noteData.url_danfse;
+      } else if (noteData.caminho_danfe) {
+        pdfUrl = `https://api.focusnfe.com.br${noteData.caminho_danfe}`;
+      } else if (noteData.caminho_xml_nota_fiscal) {
+        pdfUrl = `https://api.focusnfe.com.br${noteData.caminho_xml_nota_fiscal.replace('.xml', '.pdf')}`;
+      } else {
+        return res.status(404).json({ error: 'URL do PDF não encontrada na nota', details: JSON.stringify(noteData) });
+      }
+
+      res.json({ success: true, url: pdfUrl });
     } catch (e: any) {
-      console.error('[Admin] Erro ao baixar PDF da nota fiscal:', e.message);
-      res.status(500).json({ error: 'Erro ao baixar o PDF', details: e.message });
+      console.error('[Admin] Erro ao buscar URL do PDF da nota fiscal:', e.message);
+      res.status(500).json({ error: 'Erro ao conectar com Focus NFe', details: e.response?.data ? JSON.stringify(e.response.data) : e.message });
     }
   });
 
