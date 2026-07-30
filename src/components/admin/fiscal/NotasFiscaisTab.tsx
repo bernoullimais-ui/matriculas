@@ -64,6 +64,33 @@ export default function NotasFiscaisTab() {
     }
   };
 
+  const handleDownloadPdf = async (referencia: string | undefined, url_fallback: string | undefined) => {
+    if (!referencia) {
+      if (url_fallback) window.open(url_fallback, '_blank');
+      return;
+    }
+
+    try {
+      const toastId = toast.loading('Gerando PDF da nota...');
+      const response = await fetch(`/api/admin/notas/pdf/${referencia}`, {
+        headers: {
+          'Authorization': `Bearer ${sessionStorage.getItem('admin_token') || ''}`
+        }
+      });
+      
+      if (!response.ok) throw new Error('Falha ao baixar o PDF');
+      
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      toast.dismiss(toastId);
+    } catch (err) {
+      console.error(err);
+      toast.error('O PDF direto falhou. Redirecionando...');
+      if (url_fallback) window.open(url_fallback, '_blank');
+    }
+  };
+
   const filteredNotas = notas.filter(nota => {
     const term = search.toLowerCase();
     const pagId = nota.pagamento_id?.toLowerCase() || '';
@@ -177,10 +204,14 @@ export default function NotasFiscaisTab() {
                              <Send size={18} className={processingId === nota.id ? 'animate-pulse' : ''} />
                            </button>
                         )}
-                        {nota.nfe_url_pdf && (
-                          <a href={nota.nfe_url_pdf} target="_blank" rel="noreferrer" className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" title="Baixar PDF">
+                        {(nota.nfe_url_pdf || nota.referencia) && (
+                          <button 
+                            onClick={() => handleDownloadPdf(nota.referencia, nota.nfe_url_pdf)}
+                            className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" 
+                            title="Baixar PDF"
+                          >
                             <FileText size={18} />
-                          </a>
+                          </button>
                         )}
                         {nota.nfe_url_xml && (
                           <a href={nota.nfe_url_xml} target="_blank" rel="noreferrer" className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Baixar XML">

@@ -9050,6 +9050,33 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
     }
   });
 
+  // ─── GET /api/admin/notas/pdf/:ref ──────────────────────────────────────────
+  // Endpoint to download PDF directly from Focus NFe bypassing city hall instabilities
+  app.get('/api/admin/notas/pdf/:ref', requireAdminAuth, async (req, res) => {
+    try {
+      const { ref } = req.params;
+      const apiUrl = process.env.FOCUS_NFE_API_URL || 'https://api.focusnfe.com.br/v2';
+      const token = process.env.FOCUS_NFE_API_TOKEN || process.env.FOCUS_API_TOKEN || '';
+      
+      const pdfUrl = `${apiUrl}/nfse/${ref}.pdf`;
+      const tokenAuth = Buffer.from(`${token}:`).toString('base64');
+      
+      const response = await axios.get(pdfUrl, {
+        responseType: 'stream',
+        headers: {
+          'Authorization': `Basic ${tokenAuth}`
+        }
+      });
+      
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${ref}.pdf"`);
+      response.data.pipe(res);
+    } catch (e: any) {
+      console.error('[Admin] Erro ao baixar PDF da nota fiscal:', e.message);
+      res.status(500).json({ error: 'Erro ao baixar o PDF', details: e.message });
+    }
+  });
+
   // Pagar.me Webhook
   app.all('/api/cron/processar-notas', async (req, res) => {
     try {
