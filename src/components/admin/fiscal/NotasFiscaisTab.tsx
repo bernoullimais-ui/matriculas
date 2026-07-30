@@ -213,7 +213,7 @@ export default function NotasFiscaisTab() {
                         )}
                         {(nota.nfe_url_pdf || nota.id) && (
                           <button 
-                            onClick={() => handleDownloadPdf(`NF_${nota.id}`, nota.nfe_url_pdf)}
+                            onClick={() => handleDownloadPdf(`NF_${nota.id.replace(/-/g, '')}`, nota.nfe_url_pdf)}
                             className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" 
                             title="Baixar PDF"
                           >
