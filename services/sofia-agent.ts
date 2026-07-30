@@ -180,13 +180,14 @@ function gerarSystemPrompt(
   nomeAgente: string, 
   alunosContext?: string, 
   baseConhecimento?: string,
-  unidadesContext?: string
+  unidadesContext?: string,
+  equipeContext?: string
 ): string {
   const agora = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const { active: horarioComercial, textoExibicao } = obterHorarioComercial(baseConhecimento);
 
   let prompt = `Você é ${nomeAgente}, assistente virtual da Sport for Kids.
-Seu papel é atender responsáveis de alunos com empatia, clareza e agilidade pelo WhatsApp.
+Seu papel é atender responsáveis de alunos com empatia, clareza e agilidade pelo WhatsApp, e auxiliar com presteza os membros da equipe interna quando solicitada.
 
 DATA E HORA ATUAL: ${agora}
 HORÁRIO DE ATENDIMENTO DA EQUIPE HUMANA (${textoExibicao}): ${horarioComercial ? 'SIM (equipe disponível)' : 'NÃO (fora do horário de atendimento)'}
@@ -275,6 +276,29 @@ IDENTIDADE:
   }
 
   let hasVinc = false;
+
+  if (equipeContext) {
+    try {
+      const parsedEq = JSON.parse(equipeContext);
+      if (parsedEq.encontrado) {
+        hasVinc = true;
+        prompt += `
+[MEMBRO DA EQUIPE INTERNA IDENTIFICADO]
+O número de WhatsApp que enviou a mensagem pertence a um INTEGRANTE DA EQUIPE / OPERADOR DO SISTEMA:
+- Nome do Usuário: **${parsedEq.nome}**
+- Cargo / Nível de Acesso: **${parsedEq.nivel}**
+- Unidade(s) Vinculada(s): **${parsedEq.unidade}**
+
+REGRA CRÍTICA DE RECONHECIMENTO E ATENDIMENTO À EQUIPE INTERNA:
+- O contato É UM MEMBRO DA EQUIPE DA SPORT FOR KIDS (Professor, Gestor Master, Gestor de Unidade, Staff ou Regente).
+- Você DEVE cumprimentá-lo reconhecendo sua função e nome (ex: "Olá, Professor ${parsedEq.nome}!", "Olá, ${parsedEq.nome}! Como posso ajudar você hoje?").
+- NUNCA pergunte quem ele é, se é responsável por algum aluno ou se deseja agendar aula experimental como visitante/lead.
+- Atenda-o com cortesia, linguagem colegial profissional e prontidão para consultar dados de turmas, alunos, frequências, relatórios ou informações internas da unidade.
+`;
+      }
+    } catch (e) {}
+  }
+
   if (alunosContext) {
     prompt += `\nINFORMAÇÃO OBTIDA AUTOMATICAMENTE DO BANCO DE DADOS PELO TELEFONE DO USUÁRIO:\n${alunosContext}\n`;
     try {
@@ -285,7 +309,7 @@ IDENTIDADE:
         const responsavelNome = parsed.responsavel_nome_detectado || first.responsavel1 || first.responsavel2 || 'Responsável';
         const nomesAlunos = parsed.alunos.map((a: any) => a.nome.split(' ')[0]).join(', ');
         prompt += `
-[VÍNCULO CADASTRAL ENCONTRADO]
+[VÍNCULO CADASTRAL DE ALUNOS ENCONTRADO]
 O telefone pertence ao responsável: **${responsavelNome}**
 Filhos/dependentes cadastrados: **${nomesAlunos}**
 
@@ -302,7 +326,7 @@ REGRA CRÍTICA DE SAUDAÇÃO E IDENTIFICAÇÃO:
   if (!hasVinc) {
     prompt += `
 [VÍNCULO CADASTRAL NÃO ENCONTRADO]
-- Nenhum aluno foi encontrado no banco de dados para este número de WhatsApp.
+- Nenhum aluno ou membro da equipe foi encontrado no banco de dados para este número de WhatsApp.
 - Trate o contato com cortesia como um novo visitante (Lead).
 - Apresente-se (como ${nomeAgente}) e pergunte de forma simpática o nome dele e se ele é responsável por algum aluno ou se deseja conhecer as turmas.
 `;
@@ -420,6 +444,38 @@ async function resolverEstudantesEResponsavelParaTelefone(
       .limit(10);
 
     if (error || !alunos || alunos.length === 0) {
+      // Tenta resolver se o telefone pertence a um membro da equipe (usuarios)
+      try {
+        const { data: usuariosDb } = await supabase
+          .from('usuarios')
+          .select('nome, login, whatsapp, unidade, nivel')
+          .not('whatsapp', 'is', null);
+
+        if (usuariosDb && usuariosDb.length > 0) {
+          const matchEquipe = usuariosDb.find(u => {
+            if (!u.whatsapp) return false;
+            const cleanDb = u.whatsapp.replace(/\D/g, '');
+            const cleanDbSem55 = cleanDb.startsWith('55') ? cleanDb.substring(2) : cleanDb;
+            const cleanDbSem9 = (cleanDbSem55.length === 11 && cleanDbSem55[2] === '9')
+              ? cleanDbSem55.substring(0, 2) + cleanDbSem55.substring(3)
+              : cleanDbSem55;
+            return cleanDbSem55 === telSem55 || cleanDbSem9 === telSem9;
+          });
+
+          if (matchEquipe) {
+            const nomeEq = matchEquipe.nome || matchEquipe.login;
+            const cargoEq = matchEquipe.nivel || 'Equipe';
+            const uniEq = matchEquipe.unidade || 'todas';
+            return {
+              responsavel_nome: `[Equipe] ${nomeEq} (${cargoEq} - ${uniEq})`,
+              aluno_ids: []
+            };
+          }
+        }
+      } catch (e) {
+        console.error('[Sofia] Erro ao resolver equipe para telefone:', e);
+      }
+
       return { responsavel_nome: null, aluno_ids: [] };
     }
 
@@ -785,6 +841,44 @@ export async function processarMensagem(
     console.error('[Sofia] Erro ao buscar alunos para o prompt:', e);
   }
 
+  // 6.2 Busca se o número de WhatsApp pertence a um membro da equipe em usuarios
+  let equipeContextStr: string | undefined;
+  try {
+    const { data: usuariosDb } = await supabase
+      .from('usuarios')
+      .select('nome, login, whatsapp, unidade, nivel')
+      .not('whatsapp', 'is', null);
+
+    if (usuariosDb && usuariosDb.length > 0) {
+      const telSem55 = telNorm.startsWith('55') ? telNorm.substring(2) : telNorm;
+      const telSem9 = (telSem55.length === 11 && telSem55[2] === '9')
+        ? telSem55.substring(0, 2) + telSem55.substring(3)
+        : telSem55;
+
+      const matchEquipe = usuariosDb.find(u => {
+        if (!u.whatsapp) return false;
+        const cleanDb = u.whatsapp.replace(/\D/g, '');
+        const cleanDbSem55 = cleanDb.startsWith('55') ? cleanDb.substring(2) : cleanDb;
+        const cleanDbSem9 = (cleanDbSem55.length === 11 && cleanDbSem55[2] === '9')
+          ? cleanDbSem55.substring(0, 2) + cleanDbSem55.substring(3)
+          : cleanDbSem55;
+        return cleanDbSem55 === telSem55 || cleanDbSem9 === telSem9;
+      });
+
+      if (matchEquipe) {
+        equipeContextStr = JSON.stringify({
+          encontrado: true,
+          nome: matchEquipe.nome || matchEquipe.login,
+          login: matchEquipe.login,
+          nivel: matchEquipe.nivel || 'Equipe SFK',
+          unidade: matchEquipe.unidade || 'todas'
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[Sofia] Erro ao buscar usuario da equipe para o prompt:', e);
+  }
+
   // 6.5. Busca informações de acesso das unidades (público externo vs restrito)
   let unidadesContextStr: string | undefined;
   try {
@@ -848,7 +942,7 @@ export async function processarMensagem(
           parts: sanitizarParts(m.parts)
         })),
         config: {
-          systemInstruction: gerarSystemPrompt(config.nomeAgente, alunosContextStr, config.baseConhecimento, unidadesContextStr),
+          systemInstruction: gerarSystemPrompt(config.nomeAgente, alunosContextStr, config.baseConhecimento, unidadesContextStr, equipeContextStr),
           temperature: 0.4,
           tools: [{
             functionDeclarations: SOFIA_TOOL_DECLARATIONS
