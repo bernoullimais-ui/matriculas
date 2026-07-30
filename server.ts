@@ -9062,7 +9062,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
       const tokenAuth = Buffer.from(`${token}:`).toString('base64');
       
       const response = await axios.get(pdfUrl, {
-        responseType: 'stream',
+        responseType: 'arraybuffer',
         headers: {
           'Authorization': `Basic ${tokenAuth}`
         }
@@ -9070,7 +9070,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
       
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `inline; filename="${ref}.pdf"`);
-      response.data.pipe(res);
+      res.send(Buffer.from(response.data));
     } catch (e: any) {
       console.error('[Admin] Erro ao baixar PDF da nota fiscal:', e.message);
       res.status(500).json({ error: 'Erro ao baixar o PDF', details: e.message });
