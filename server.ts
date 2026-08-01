@@ -6905,7 +6905,17 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
               }
             }
             
-            const msg = `Olá *${guardianData.nome_completo}*! Confirmamos o cancelamento da matrícula de *${studentData.nome_completo}* da turma *${enrollmentData.turma}* ${identidade}. Os débitos mensais referentes a esta matrícula foram cessados. Agradecemos o tempo que estiveram conosco! Caso possamos ajudar em qualquer necessidade, nos sinalize.`;
+            let msg = `Olá *${guardianData.nome_completo}*! Confirmamos o cancelamento da matrícula de *${studentData.nome_completo}* da turma *${enrollmentData.turma}* ${identidade}.`;
+            const dataCancel = new Date(finalCancellationDate);
+            const today = new Date();
+            // Subtrai um dia da data de vencimento/cancelamento para indicar o último dia útil do aluno
+            const lastDay = new Date(dataCancel.getTime() - 24 * 60 * 60 * 1000);
+            if (lastDay > today) {
+              msg += ` O(A) aluno(a) poderá frequentar as aulas normalmente até o dia *${lastDay.toLocaleDateString('pt-BR')}*, quando o ciclo atual se encerra. Após esta data, os débitos mensais referentes a esta matrícula estarão cessados.`;
+            } else {
+              msg += ` Os débitos mensais referentes a esta matrícula foram cessados.`;
+            }
+            msg += ` Agradecemos o tempo que estiveram conosco! Caso possamos ajudar em qualquer necessidade, nos sinalize.`;
             await sendWhatsAppMessage(guardianData.telefone, guardianData.nome_completo, msg, enrollmentData.unidade)
               .catch(e => console.error("Erro ao enviar WhatsApp de cancelamento:", e));
           }
@@ -9082,6 +9092,11 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
         return res.status(404).json({ error: 'URL do PDF não encontrada na nota', details: JSON.stringify(noteData) });
       }
 
+      // Hotfix para URL de Salvador que às vezes retorna o domínio antigo/quebrado
+      if (pdfUrl.includes('nota.salvador.ba.gov.br')) {
+        pdfUrl = pdfUrl.replace('nota.salvador.ba.gov.br', 'nfse.salvador.ba.gov.br');
+      }
+
       res.json({ success: true, url: pdfUrl });
     } catch (e: any) {
       console.error('[Admin] Erro ao buscar URL do PDF da nota fiscal:', e.message);
@@ -10389,6 +10404,13 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
             if (subscriptionId && subscriptionId.startsWith('sub_')) {
               console.log(`[Webhook Pagar.me] Assinatura ${subscriptionId} cancelada/estornada. Atualizando matrícula...`);
               
+              let webhookCancelDate = new Date().toISOString();
+              if (data.current_period_end) {
+                webhookCancelDate = data.current_period_end;
+              } else if (data.subscription && data.subscription.current_period_end) {
+                webhookCancelDate = data.subscription.current_period_end;
+              }
+              
               // Find the enrollment to get its ID for payment cancellation
               const { data: mData } = await supabase
                 .from('matriculas')
@@ -10400,7 +10422,7 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
                 .from('matriculas')
                 .update({ 
                   status: 'cancelado',
-                  data_cancelamento: new Date().toISOString()
+                  data_cancelamento: webhookCancelDate
                 })
                 .eq('pagarme_subscription_id', subscriptionId);
 
