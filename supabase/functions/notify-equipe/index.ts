@@ -16,12 +16,22 @@ interface NotifyParams {
   turma?: string;
   turmaNova?: string;
   turmaAnterior?: string;
+  horarioTurma?: string;
+  horarioTurmaNova?: string;
+  horarioTurmaAnterior?: string;
   professorTurma?: string;
   data: string;
   horario?: string;
   responsavel?: string;
   whatsappResponsavel?: string;
   plano?: string;
+}
+
+function formatTurmaComHorario(nomeTurma?: string, horario?: string): string {
+  if (!nomeTurma) return '—';
+  if (!horario || !horario.trim()) return nomeTurma;
+  if (nomeTurma.includes('(') && nomeTurma.includes(')')) return nomeTurma;
+  return `${nomeTurma} (${horario.trim()})`;
 }
 
 function buildMessage(params: NotifyParams): string {
@@ -43,7 +53,7 @@ function buildMessage(params: NotifyParams): string {
       return header +
         `Aluno: ${params.alunoNome}\n` +
         `Unidade: ${params.unidade}\n` +
-        `Turma: ${params.turma || '—'}\n` +
+        `Turma: ${formatTurmaComHorario(params.turma, params.horarioTurma)}\n` +
         `Data: ${params.data}${params.horario ? ` às ${params.horario}` : ''}\n` +
         `Responsável: ${params.responsavel || '—'} | ${params.whatsappResponsavel || '—'}`;
 
@@ -51,7 +61,7 @@ function buildMessage(params: NotifyParams): string {
       return header +
         `Aluno: ${params.alunoNome}\n` +
         `Unidade: ${params.unidade}\n` +
-        `Turma: ${params.turma || '—'}\n` +
+        `Turma: ${formatTurmaComHorario(params.turma, params.horarioTurma)}\n` +
         `Data: ${params.data}\n` +
         `Plano: ${params.plano || '—'}\n` +
         `Responsável: ${params.responsavel || '—'}`;
@@ -60,16 +70,16 @@ function buildMessage(params: NotifyParams): string {
       return header +
         `Aluno: ${params.alunoNome}\n` +
         `Unidade: ${params.unidade}\n` +
-        `De: ${params.turmaAnterior || '—'}\n` +
-        `Para: ${params.turmaNova || '—'}\n` +
+        `De: ${formatTurmaComHorario(params.turmaAnterior, params.horarioTurmaAnterior)}\n` +
+        `Para: ${formatTurmaComHorario(params.turmaNova, params.horarioTurmaNova)}\n` +
         `Data: ${params.data}`;
 
     case 'cancelamento':
       return header +
         `Aluno: ${params.alunoNome}\n` +
         `Unidade: ${params.unidade}\n` +
-        `Turma: ${params.turma || '—'}\n` +
-        `Data cancelamento: ${params.data}`;
+        `Turma: ${formatTurmaComHorario(params.turma, params.horarioTurma)}\n` +
+        `Data Efetiva de Cancelamento (frequenta até): ${params.data}`;
   }
 }
 
@@ -169,12 +179,27 @@ serve(async (req) => {
       return new Response(JSON.stringify({ message: "No relevant change detected, ignoring." }), { headers: corsHeaders });
     }
 
-    // Determine professor
-    const turmaNome = notifyParams.turmaNova || notifyParams.turma;
+    // Determine turmas schedules and professor
+    const turmasBuscadas = [notifyParams.turma, notifyParams.turmaNova, notifyParams.turmaAnterior].filter(Boolean) as string[];
     let professorTurma = '';
-    if (turmaNome) {
-      const { data: turmaData } = await supabaseClient.from('turmas').select('professor').ilike('nome', turmaNome.trim()).maybeSingle();
-      if (turmaData) professorTurma = turmaData.professor || '';
+    if (turmasBuscadas.length > 0) {
+      const { data: turmasData } = await supabaseClient.from('turmas').select('nome, professor, dias_horarios').in('nome', turmasBuscadas);
+      if (turmasData && turmasData.length > 0) {
+        if (notifyParams.turma) {
+          const t = turmasData.find(x => x.nome?.toLowerCase().trim() === notifyParams.turma?.toLowerCase().trim());
+          if (t?.dias_horarios) notifyParams.horarioTurma = t.dias_horarios;
+          if (t?.professor) professorTurma = t.professor;
+        }
+        if (notifyParams.turmaNova) {
+          const t = turmasData.find(x => x.nome?.toLowerCase().trim() === notifyParams.turmaNova?.toLowerCase().trim());
+          if (t?.dias_horarios) notifyParams.horarioTurmaNova = t.dias_horarios;
+          if (t?.professor && !professorTurma) professorTurma = t.professor;
+        }
+        if (notifyParams.turmaAnterior) {
+          const t = turmasData.find(x => x.nome?.toLowerCase().trim() === notifyParams.turmaAnterior?.toLowerCase().trim());
+          if (t?.dias_horarios) notifyParams.horarioTurmaAnterior = t.dias_horarios;
+        }
+      }
     }
 
     // Get units identity
