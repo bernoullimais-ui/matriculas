@@ -27,6 +27,33 @@ interface NotifyParams {
   plano?: string;
 }
 
+function formatDateBR(dateStr?: string): string {
+  if (!dateStr || !dateStr.trim()) return '—';
+
+  const clean = dateStr.trim();
+  if (/^\d{2}[-/]\d{2}[-/]\d{4}$/.test(clean)) {
+    return clean.replace(/\//g, '-');
+  }
+
+  const matchIso = clean.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+  if (matchIso) {
+    const [, yyyy, mm, dd] = matchIso;
+    return `${dd}-${mm}-${yyyy}`;
+  }
+
+  try {
+    const d = new Date(clean);
+    if (!isNaN(d.getTime())) {
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const yyyy = d.getUTCFullYear();
+      return `${dd}-${mm}-${yyyy}`;
+    }
+  } catch (e) {}
+
+  return clean;
+}
+
 function formatTurmaComHorario(nomeTurma?: string, horario?: string): string {
   if (!nomeTurma) return '—';
   if (!horario || !horario.trim()) return nomeTurma;
@@ -54,7 +81,7 @@ function buildMessage(params: NotifyParams): string {
         `Aluno: ${params.alunoNome}\n` +
         `Unidade: ${params.unidade}\n` +
         `Turma: ${formatTurmaComHorario(params.turma, params.horarioTurma)}\n` +
-        `Data: ${params.data}${params.horario ? ` às ${params.horario}` : ''}\n` +
+        `Data: ${formatDateBR(params.data)}${params.horario ? ` às ${params.horario}` : ''}\n` +
         `Responsável: ${params.responsavel || '—'} | ${params.whatsappResponsavel || '—'}`;
 
     case 'matricula':
@@ -62,7 +89,7 @@ function buildMessage(params: NotifyParams): string {
         `Aluno: ${params.alunoNome}\n` +
         `Unidade: ${params.unidade}\n` +
         `Turma: ${formatTurmaComHorario(params.turma, params.horarioTurma)}\n` +
-        `Data: ${params.data}\n` +
+        `Data: ${formatDateBR(params.data)}\n` +
         `Plano: ${params.plano || '—'}\n` +
         `Responsável: ${params.responsavel || '—'}`;
 
@@ -72,14 +99,14 @@ function buildMessage(params: NotifyParams): string {
         `Unidade: ${params.unidade}\n` +
         `De: ${formatTurmaComHorario(params.turmaAnterior, params.horarioTurmaAnterior)}\n` +
         `Para: ${formatTurmaComHorario(params.turmaNova, params.horarioTurmaNova)}\n` +
-        `Data: ${params.data}`;
+        `Data: ${formatDateBR(params.data)}`;
 
     case 'cancelamento':
       return header +
         `Aluno: ${params.alunoNome}\n` +
         `Unidade: ${params.unidade}\n` +
         `Turma: ${formatTurmaComHorario(params.turma, params.horarioTurma)}\n` +
-        `Data Efetiva de Cancelamento (frequenta até): ${params.data}`;
+        `Data Efetiva de Cancelamento (frequenta até): ${formatDateBR(params.data)}`;
   }
 }
 
