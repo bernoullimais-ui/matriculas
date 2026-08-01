@@ -10177,10 +10177,24 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
                   .single();
 
                 if (guardian) {
+                  const guardianName = (guardian.nome_completo || '').trim();
+                  let studentName = student?.nome_completo || (matricula as any)?.aluno_nome || (matricula as any)?.nome_aluno || (paymentData as any)?.aluno_nome || '';
+
+                  if (!studentName) {
+                    const { data: fallbackAlunos } = await supabase
+                      .from('alunos')
+                      .select('nome_completo')
+                      .eq('responsavel_id', paymentData.responsavel_id)
+                      .limit(1);
+                    if (fallbackAlunos && fallbackAlunos.length > 0 && fallbackAlunos[0].nome_completo) {
+                      studentName = fallbackAlunos[0].nome_completo;
+                    }
+                  }
+
+                  if (!studentName) studentName = 'seu(sua) filho(a)';
+
                   // Send WhatsApp
                   if (guardian.telefone) {
-                    const guardianName = (guardian.nome_completo || '').trim();
-                    const studentName = student?.nome_completo || 'seu filho(a)';
                     let identidade = `*Sport for Kids* (${matricula.unidade})`;
                     if (matricula.unidade) {
                       const { data: mappingData } = await supabase
@@ -10298,7 +10312,7 @@ Se tiver qualquer dúvida sobre as aulas, horários ou o que levar, é só respo
                         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
                           <h1 style="color: #2563eb;">Confirmação de Matrícula</h1>
                           <p>Olá <strong>${guardian.nome_completo}</strong>,</p>
-                          <p>Recebemos a confirmação do seu pagamento e a matrícula de <strong>${student?.nome_completo || 'seu filho(a)'}</strong> foi <strong>ativada com sucesso</strong>!</p>
+                          <p>Recebemos a confirmação do seu pagamento e a matrícula de <strong>${studentName}</strong> foi <strong>ativada com sucesso</strong>!</p>
                           <p>Em anexo, enviamos o contrato de prestação de serviços para seus registros.</p>
                           <br/>
                           <p>Seja muito bem-vindo à Sport for Kids!</p>
