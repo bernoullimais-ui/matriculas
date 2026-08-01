@@ -87,7 +87,7 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
             console.log(`[Focus NFe] Cancelando fila para faturas_pix ${pagamentoId} (status = ${fatura.status})`);
             return;
           }
-          const { data: mat } = await supabase.from('matriculas').select('responsaveis(nome_completo, cpf, email), alunos(nome_completo), turmas(nome), unidades(nome)').eq('id', fatura.matricula_id).maybeSingle();
+          const { data: mat } = await supabase.from('matriculas').select('responsaveis(nome_completo, cpf, email), alunos(nome_completo), turma, unidade').eq('id', fatura.matricula_id).maybeSingle();
           const resp = mat?.responsaveis;
           if (resp) {
             dadosEmissao.nome = Array.isArray(resp) ? resp[0]?.nome_completo : resp.nome_completo;
@@ -96,8 +96,8 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
           }
           if (mat) {
              dadosEmissao.nome_aluno = mat.alunos?.nome_completo || (Array.isArray(mat.alunos) ? mat.alunos[0]?.nome_completo : undefined);
-             dadosEmissao.turma = mat.turmas?.nome || (Array.isArray(mat.turmas) ? mat.turmas[0]?.nome : undefined);
-             dadosEmissao.unidade = mat.unidades?.nome || (Array.isArray(mat.unidades) ? mat.unidades[0]?.nome : undefined);
+             dadosEmissao.turma = mat.turma;
+             dadosEmissao.unidade = mat.unidade;
           }
           if (!dadosEmissao.valor) dadosEmissao.valor = fatura.valor;
         } else {
@@ -105,7 +105,7 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
           return;
         }
       } else if (dadosEmissao.origin === 'excecao_pix' || dadosEmissao.origin === 'geral') {
-        let query = supabase.from('pagamentos').select('valor, responsavel_id, status, matriculas(alunos(nome_completo), turmas(nome), unidades(nome))');
+        let query = supabase.from('pagamentos').select('valor, responsavel_id, status, matriculas(alunos(nome_completo), turma, unidade)');
         if (pagamentoId.includes('-')) {
            query = query.eq('id', pagamentoId);
         } else {
@@ -130,8 +130,8 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
              if (Array.isArray(mat)) mat = mat[0];
              if (mat) {
                 dadosEmissao.nome_aluno = mat.alunos?.nome_completo || (Array.isArray(mat.alunos) ? mat.alunos[0]?.nome_completo : undefined);
-                dadosEmissao.turma = mat.turmas?.nome || (Array.isArray(mat.turmas) ? mat.turmas[0]?.nome : undefined);
-                dadosEmissao.unidade = mat.unidades?.nome || (Array.isArray(mat.unidades) ? mat.unidades[0]?.nome : undefined);
+                dadosEmissao.turma = mat.turma;
+                dadosEmissao.unidade = mat.unidade;
              }
           }
           if (!dadosEmissao.valor) dadosEmissao.valor = pag.valor;
@@ -216,11 +216,11 @@ export async function processarNotaUnica(notaId: string) {
           // Tenta faturas_pix
           const { data: fatura } = await supabase.from('faturas_pix').select('matricula_id').eq('id', nota.pagamento_id).maybeSingle();
           if (fatura?.matricula_id) {
-             const { data: mat } = await supabase.from('matriculas').select('alunos(nome_completo), turmas(nome), unidades(nome)').eq('id', fatura.matricula_id).maybeSingle();
+             const { data: mat } = await supabase.from('matriculas').select('alunos(nome_completo), turma, unidade').eq('id', fatura.matricula_id).maybeSingle();
              if (mat) {
                 nota.dados_emissao.nome_aluno = mat.alunos?.nome_completo || (Array.isArray(mat.alunos) ? mat.alunos[0]?.nome_completo : undefined);
-                nota.dados_emissao.turma = mat.turmas?.nome || (Array.isArray(mat.turmas) ? mat.turmas[0]?.nome : undefined);
-                nota.dados_emissao.unidade = mat.unidades?.nome || (Array.isArray(mat.unidades) ? mat.unidades[0]?.nome : undefined);
+                nota.dados_emissao.turma = mat.turma;
+                nota.dados_emissao.unidade = mat.unidade;
                 healedExtra = true;
              }
           }
@@ -228,7 +228,7 @@ export async function processarNotaUnica(notaId: string) {
        
        if (!healedExtra) {
           // Tenta pagamentos (mensalidades normais)
-          let query = supabase.from('pagamentos').select('matriculas(alunos(nome_completo), turmas(nome), unidades(nome))');
+          let query = supabase.from('pagamentos').select('matriculas(alunos(nome_completo), turma, unidade)');
           if (nota.pagamento_id.includes('-')) {
              query = query.eq('id', nota.pagamento_id);
           } else {
@@ -240,8 +240,8 @@ export async function processarNotaUnica(notaId: string) {
              if (Array.isArray(mat)) mat = mat[0];
              if (mat) {
                 nota.dados_emissao.nome_aluno = mat.alunos?.nome_completo || (Array.isArray(mat.alunos) ? mat.alunos[0]?.nome_completo : undefined);
-                nota.dados_emissao.turma = mat.turmas?.nome || (Array.isArray(mat.turmas) ? mat.turmas[0]?.nome : undefined);
-                nota.dados_emissao.unidade = mat.unidades?.nome || (Array.isArray(mat.unidades) ? mat.unidades[0]?.nome : undefined);
+                nota.dados_emissao.turma = mat.turma;
+                nota.dados_emissao.unidade = mat.unidade;
                 healedExtra = true;
              }
           }
