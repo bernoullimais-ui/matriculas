@@ -4405,9 +4405,46 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
       doc.fontSize(10).text(termsText, { align: 'justify', lineGap: 2 });
       doc.moveDown();
       doc.fontSize(12).text(`DATA DA MATRÍCULA: ${new Date(mat.created_at).toLocaleDateString('pt-BR')}`);
-      doc.moveDown(4);
-      doc.text('________________________________________________', { align: 'center' });
-      doc.text('Assinatura do Responsável (Digital)', { align: 'center' });
+      doc.moveDown(2);
+
+      // Bloco de aceite digital — medimos a altura primeiro, depois desenhamos a moldura
+      const aceiteDataFormatada = mat.aceite_data
+        ? new Date(mat.aceite_data).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'full', timeStyle: 'long' })
+        : new Date(mat.created_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'full', timeStyle: 'long' });
+
+      const boxPadding = 10;
+      const boxX = 50;
+      const boxWidth = doc.page.width - 100;
+      const textX = boxX + boxPadding;
+      const textWidth = boxWidth - boxPadding * 2;
+
+      const boxStartY = doc.y;
+
+      // Renderiza o conteúdo dentro do box
+      doc.y = boxStartY + boxPadding;
+      doc.fontSize(9).fillColor('#333333');
+      doc.font('Helvetica-Bold').text('ACEITE DIGITAL', textX, doc.y, { width: textWidth, underline: true });
+      doc.moveDown(0.4);
+      doc.font('Helvetica').text(
+        'Este contrato foi aceito eletronicamente pelo responsável ao concluir o processo de matrícula online, nos termos do Art. 10 da MP 2.200-2/2001 e do Art. 26 da LGPD (Lei 13.709/2018), dispensando assinatura manuscrita.',
+        textX, doc.y, { width: textWidth, lineGap: 1.5 }
+      );
+      doc.moveDown(0.5);
+      doc.text(`Identificador da Matrícula (UUID): ${mat.id}`, textX, doc.y, { width: textWidth });
+      doc.moveDown(0.4);
+      doc.text(`Data e hora do aceite: ${aceiteDataFormatada}`, textX, doc.y, { width: textWidth });
+      if (mat.aceite_ip) {
+        doc.moveDown(0.4);
+        doc.text(`Endereço IP da conexão: ${mat.aceite_ip}`, textX, doc.y, { width: textWidth });
+      }
+
+      const boxEndY = doc.y + boxPadding;
+      doc.fillColor('black');
+
+      // Agora desenha a moldura em volta do conteúdo já renderizado
+      doc.rect(boxX, boxStartY, boxWidth, boxEndY - boxStartY).stroke('#aaaaaa');
+
+      doc.y = boxEndY + 6;
 
       doc.end();
     } catch (error: any) {
@@ -4528,6 +4565,79 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
     } catch (error: any) {
       console.error("Error generating receipt:", error);
       res.status(500).send("Erro ao gerar recibo.");
+    }
+  });
+
+  app.get("/api/portal/documents/nfse/:paymentId", async (req, res) => {
+    const { paymentId } = req.params;
+    try {
+      // 0. Fetch payment to get pagarme ID (since nota can be queued using either UUID or pagarme ID)
+      const { data: payment } = await supabase
+        .from('pagamentos')
+        .select('id, pagarme')
+        .eq('id', paymentId)
+        .maybeSingle();
+
+      const searchIds = [paymentId];
+      if (payment && payment.pagarme) {
+        searchIds.push(payment.pagarme);
+      }
+
+      // 1. Fetch nota fila
+      const { data: nota, error: pError } = await supabase
+        .from('notas_fiscais_fila')
+        .select('id, status')
+        .in('pagamento_id', searchIds)
+        .limit(1)
+        .maybeSingle();
+
+      if (pError || !nota) {
+        return res.status(404).send("Nota fiscal não encontrada ou ainda não processada para este pagamento.");
+      }
+
+      if (nota.status !== 'processando_sefaz' && nota.status !== 'autorizado' && nota.status !== 'concluido') {
+         return res.status(400).send("A nota fiscal ainda está em fila de processamento.");
+      }
+
+      const refId = `NF_${nota.id.replace(/-/g, '')}`;
+      
+      const apiUrl = process.env.FOCUS_NFE_API_URL || 'https://api.focusnfe.com.br/v2';
+      const token = process.env.FOCUS_NFE_API_TOKEN || process.env.FOCUS_API_TOKEN || '';
+      
+      const jsonUrl = `${apiUrl}/nfse/${refId}`;
+      const tokenAuth = Buffer.from(`${token}:`).toString('base64');
+      
+      const response = await axios.get(jsonUrl, {
+        headers: {
+          'Authorization': `Basic ${tokenAuth}`
+        }
+      });
+      
+      const noteData = response.data;
+      let pdfUrl = '';
+
+      if (noteData.url) {
+        pdfUrl = noteData.url;
+      } else if (noteData.url_danfse) {
+        pdfUrl = noteData.url_danfse;
+      } else if (noteData.caminho_danfe) {
+        pdfUrl = `https://api.focusnfe.com.br${noteData.caminho_danfe}`;
+      } else if (noteData.caminho_xml_nota_fiscal) {
+        pdfUrl = `https://api.focusnfe.com.br${noteData.caminho_xml_nota_fiscal.replace('.xml', '.pdf')}`;
+      } else {
+        return res.status(404).send('URL do PDF não encontrada na nota.');
+      }
+
+      // Hotfix para URL de Salvador
+      if (pdfUrl.includes('nota.salvador.ba.gov.br')) {
+        pdfUrl = pdfUrl.replace('nota.salvador.ba.gov.br', 'nfse.salvador.ba.gov.br');
+      }
+
+      // Redirect the user directly to the PDF
+      res.redirect(pdfUrl);
+    } catch (error: any) {
+      console.error("Error fetching nfse for portal:", error.response?.data || error.message);
+      res.status(500).send("Erro ao buscar a nota fiscal. Ela pode ainda estar sendo processada pela prefeitura.");
     }
   });
 
@@ -4764,6 +4874,8 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
       }
 
       // 3. Insert Enrollment
+      const aceiteData = new Date().toISOString();
+      const aceiteUserAgent = req.headers['user-agent'] || 'Não identificado';
       const { data: newMatricula, error: mError } = await supabase
         .from('matriculas')
         .insert([{
@@ -4772,7 +4884,10 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
           turma: student.turmaComplementar,
           turma_id: turmaId,
           status: 'pendente',
-          plano: (couponData && couponData.plano_registro) ? couponData.plano_registro : 'Mensal'
+          plano: (couponData && couponData.plano_registro) ? couponData.plano_registro : 'Mensal',
+          aceite_ip: clientIp,
+          aceite_user_agent: aceiteUserAgent,
+          aceite_data: aceiteData
         }])
         .select()
         .single();
@@ -9156,7 +9271,7 @@ Agradecemos pela parceria de sempre! Em caso de dúvidas, estamos à disposiçã
              if (match && match[1]) {
                const codigo = match[1];
                const apiUrl = process.env.FOCUS_NFE_API_URL || process.env.FOCUS_API_URL || '';
-               const prefeitura = apiUrl.includes('homologacao') ? 'notahml' : 'nota';
+               const prefeitura = apiUrl.includes('homologacao') ? 'notahml' : 'nfse';
                updateData.nfe_url_pdf = `https://${prefeitura}.salvador.ba.gov.br/site/contribuinte/nota/notaprint.aspx?nf=${payload.numero}&inscricao=0012734900199&verificacao=${codigo}`;
              } else {
                updateData.nfe_url_pdf = `https://api.focusnfe.com.br${payload.caminho_xml_nota_fiscal.replace('.xml', '.pdf')}`;
