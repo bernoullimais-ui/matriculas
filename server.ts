@@ -17043,12 +17043,30 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
 
       if (!card?.telefone) return res.status(400).json({ error: 'Card sem telefone' });
 
-      // Reutiliza a rota de resposta Sofia para enviar a mensagem via UTalk
-      const { data: config } = await supabase
-        .from('app_configuracoes')
-        .select('utalk_token, utalk_from_phone')
-        .eq('nome', card.identidade_nome)
+      let identidadeNome = card.identidade_nome;
+      if (!identidadeNome && card.conversa_id) {
+        const { data: conv } = await supabase
+          .from('conversas_whatsapp')
+          .select('identidade_nome')
+          .eq('id', card.conversa_id)
+          .maybeSingle();
+        if (conv?.identidade_nome) identidadeNome = conv.identidade_nome;
+      }
+
+      let { data: config } = await supabase
+        .from('identidades')
+        .select('utalk_token, utalk_from_phone, utalk_organization_id, nome')
+        .eq('nome', identidadeNome || 'Sport for Kids')
         .maybeSingle();
+
+      if (!config?.utalk_token) {
+        const { data: fallbackConfig } = await supabase
+          .from('identidades')
+          .select('utalk_token, utalk_from_phone, utalk_organization_id, nome')
+          .eq('nome', 'Sport for Kids')
+          .single();
+        config = fallbackConfig;
+      }
 
       if (!config?.utalk_token) {
         return res.status(400).json({ error: 'Configuração UTalk não encontrada para esta identidade' });
@@ -17067,16 +17085,48 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         body: JSON.stringify({
           toPhone: telNorm.startsWith('55') ? telNorm : `55${telNorm}`,
           fromPhone: config.utalk_from_phone?.replace(/\D/g, ''),
+          organizationId: config.utalk_organization_id,
           message: texto
         })
       });
 
       if (!utalkRes.ok) {
         const errText = await utalkRes.text().catch(() => '');
+        console.error(`[CRM Drawer Mensagem] Erro no UTalk. Status: ${utalkRes.status}, Body: ${errText}`);
         return res.status(502).json({ error: `UTalk: ${utalkRes.status} — ${errText}` });
       }
 
-      // Atualiza updated_at do card para refletir atividade
+      // Atualiza o histórico da conversa no Supabase em tempo real
+      try {
+        const telSearch = telNorm.slice(-8);
+        const { data: conv } = await supabase
+          .from('conversas_whatsapp')
+          .select('id, historico')
+          .ilike('telefone', `%${telSearch}%`)
+          .order('ultima_mensagem_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (conv) {
+          const historicoAtual = Array.isArray(conv.historico) ? conv.historico : [];
+          const novaMsg = {
+            role: 'model',
+            parts: [{ text: texto }],
+            timestamp: new Date().toISOString()
+          };
+          await supabase
+            .from('conversas_whatsapp')
+            .update({
+              historico: [...historicoAtual, novaMsg],
+              ultima_mensagem_at: new Date().toISOString(),
+              total_mensagens: (historicoAtual.length || 0) + 1
+            })
+            .eq('id', conv.id);
+        }
+      } catch (histErr) {
+        console.error('[CRM Drawer Mensagem] Erro ao atualizar histórico:', histErr);
+      }
+
       await supabase.from('crm_cards').update({ nao_lidas: 0 }).eq('id', req.params.id);
 
       return res.json({ ok: true });
