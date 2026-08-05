@@ -17302,15 +17302,53 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
             .eq('id', existente.id);
         }
       } else {
-        // Cria novo card como Lead
+        // Verifica se o responsável já possui aluno matriculado ativo
+        let pipelineAlvo = etapaLead.pipeline_id;
+        let etapaAlvo = etapaLead.id;
+        let unidadeResolved = identidadeNome;
+        let alunoIdResolved = null;
+
+        try {
+          const telClean = telefone.replace(/\D/g, '').slice(-8);
+          if (telClean.length >= 8) {
+            const { data: alunoMatriculado } = await supabase
+              .from('alunos')
+              .select('id, unidade, matriculas!inner(status)')
+              .or(`whatsapp_1.ilike.%${telClean}%,whatsapp_2.ilike.%${telClean}%`)
+              .eq('matriculas.status', 'Ativo')
+              .limit(1)
+              .maybeSingle();
+
+            if (alunoMatriculado) {
+              const { data: etapaAtivo } = await supabase
+                .from('crm_etapas')
+                .select('id, pipeline_id')
+                .eq('pipeline_id', '22222222-2222-2222-2222-222222222222')
+                .eq('nome', 'Ativo')
+                .single();
+
+              if (etapaAtivo) {
+                pipelineAlvo = etapaAtivo.pipeline_id;
+                etapaAlvo = etapaAtivo.id;
+                unidadeResolved = alunoMatriculado.unidade || identidadeNome;
+                alunoIdResolved = alunoMatriculado.id;
+              }
+            }
+          }
+        } catch (checkErr) {
+          console.warn('[CRM Hook] Erro ao verificar matrícula ativa do responsável:', checkErr);
+        }
+
+        // Cria card no funil correspondente (Vendas para prospect, Retenção para aluno ativo)
         await supabase.from('crm_cards').insert({
-          pipeline_id: etapaLead.pipeline_id,
-          etapa_id: etapaLead.id,
+          pipeline_id: pipelineAlvo,
+          etapa_id: etapaAlvo,
           telefone,
           nome_contato: nome,
           identidade_nome: identidadeNome,
-          unidade: identidadeNome,
+          unidade: unidadeResolved,
           conversa_id: conversaId,
+          aluno_id: alunoIdResolved,
           movido_por: 'automacao',
           nao_lidas: 1,
           criado_por: 'sistema'
