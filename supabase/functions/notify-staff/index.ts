@@ -32,30 +32,44 @@ serve(async (req) => {
       .eq('id', record.aluno_id)
       .maybeSingle();
 
-    // 2. Buscar professor da turma
+    // 2. Buscar professor da turma (campo texto livre para comparação de fallback)
     const { data: turma } = await supabase
       .from('turmas')
       .select('professor')
       .eq('nome', record.turma)
       .maybeSingle();
 
-    const professorTurma = turma?.professor;
+    const professorTurma = turma?.professor || null;
 
-    // 3. Buscar destinatários com notificacoes_ativas = true
+    // 3. Buscar destinatários com notificacoes_ativas = true e whatsapp preenchido
     const { data: destinatarios } = await supabase
       .from('usuarios')
       .select('nome, login, whatsapp, unidade, nivel, notificacoes_ativas')
       .eq('notificacoes_ativas', true)
       .not('whatsapp', 'is', null);
 
-    // 4. Filtrar: vinculados à unidade OU professor da turma
+    // 4. Filtrar destinatários:
+    //    a) Gestores Master/Global (acesso irrestrito)
+    //    b) Professor da turma: nome do usuário bate com o campo turmas.professor (case-insensitive)
     const alvos = (destinatarios || []).filter((u: any) => {
       if (!u.whatsapp) return false;
-      const unidades = (u.unidade || '').split(',').map((x: string) => x.trim());
-      const vinculado = u.unidade === 'todas' || unidades.includes(record.unidade);
-      const ehProf = professorTurma &&
+
+      const unidadesUsuario = (u.unidade || '').split(',').map((x: string) => x.trim());
+      const nivelLower = (u.nivel || '').toLowerCase();
+
+      // Verificar se o usuário é master/global (acesso irrestrito)
+      const isMaster = nivelLower.includes('master') ||
+                       nivelLower.includes('start') ||
+                       u.unidade === 'todas' ||
+                       unidadesUsuario.includes('todas');
+
+      if (isMaster) return true;
+
+      // Professor da turma: comparar nome do usuário com campo turmas.professor (case-insensitive + trim)
+      const ehProfessorDaTurma = professorTurma &&
         u.nome?.toLowerCase().trim() === professorTurma.toLowerCase().trim();
-      return vinculado || ehProf;
+
+      return ehProfessorDaTurma;
     });
 
     // 5. Buscar identidade "Sport for Kids" (ou fallback para a primeira)
@@ -72,7 +86,15 @@ serve(async (req) => {
       return new Response(JSON.stringify({ notified: 0, reason: 'no identity' }), { status: 200, headers: corsHeaders });
     }
 
-    const mensagem = `✅ *Nova Matrícula*\nAluno: ${aluno?.nome_completo || '\u2014'}\nUnidade: ${record.unidade}\nTurma: ${record.turma || '\u2014'}\nPlano: ${record.plano || '\u2014'}\nRespensável: ${aluno?.responsavel1 || '\u2014'}`;
+    const mensagem =
+      `[ALERTA Gestão Sport for Kids]\n\n` +
+      `✅ *Nova Matrícula*\n` +
+      `Aluno: ${aluno?.nome_completo || record.aluno_nome || '—'}\n` +
+      `Unidade: ${record.unidade || '—'}\n` +
+      `Turma: ${record.turma || '—'}\n` +
+      `Data: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}\n` +
+      `Plano: ${record.plano || '—'}\n` +
+      `Responsável: ${aluno?.responsavel1 || '—'}`;
 
     let notified = 0;
     // 6. Enviar e logar para cada destinatário

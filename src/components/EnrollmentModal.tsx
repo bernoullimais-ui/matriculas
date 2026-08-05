@@ -1140,8 +1140,8 @@ export default function EnrollmentModal({
     window.open(`/api/portal/documents/contract/${enrollmentId}`, '_blank');
   };
 
-  const handleDownloadReceipt = (paymentId: string) => {
-    window.open(`/api/portal/documents/receipt/${paymentId}`, '_blank');
+  const handleDownloadInvoice = (paymentId: string) => {
+    window.open(`/api/portal/documents/nfse/${paymentId}`, '_blank');
   };
 
   const handleCancelEnrollment = (id: string) => {
@@ -5611,9 +5611,9 @@ export default function EnrollmentModal({
                         <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
                           <DollarSign size={24} />
                         </div>
-                        <h4 className="font-bold text-slate-900">Recibos de Pagamento</h4>
+                        <h4 className="font-bold text-slate-900">Notas Fiscais</h4>
                       </div>
-                      <p className="text-sm text-slate-500">Acesse os recibos de todas as mensalidades quitadas até o momento.</p>
+                      <p className="text-sm text-slate-500">Acesse as notas fiscais de todas as mensalidades quitadas até o momento.</p>
                       <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
                         {payments.filter(p => p.status === 'pago').length === 0 ? (
                           <p className="text-xs text-slate-400 italic">Nenhum pagamento quitado encontrado.</p>
@@ -5625,11 +5625,11 @@ export default function EnrollmentModal({
                                 <p className="text-[10px] text-slate-500 uppercase">{new Date(p.created_at).toLocaleDateString()} • {p.turma || 'Matrícula'}</p>
                               </div>
                               <button 
-                                onClick={() => handleDownloadReceipt(p.id)}
+                                onClick={() => handleDownloadInvoice(p.id)}
                                 className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-50 transition-all flex items-center gap-2"
                               >
                                 <Download size={14} />
-                                Recibo
+                                Nota Fiscal
                               </button>
                             </div>
                           ))

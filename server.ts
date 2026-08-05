@@ -13668,11 +13668,22 @@ app.post('/api/webhooks/wix', async (req, res) => {
         console.error("Falha ao tentar enviar WhatsApp de confirmação:", waError);
       }
 
+      // ── CRM Hook: aula experimental agendada → move card para Agendado ──
+      try {
+        const crmHookExp = (global as any).crmHookAulaExperimental;
+        if (typeof crmHookExp === 'function') {
+          await crmHookExp(guardianData.telefone, guardianData.nome_completo, bookingData.unidade);
+        }
+      } catch (crmErr) {
+        console.error('[CRM Hook Experimental] Erro:', crmErr);
+      }
+
       // Fetch updated list of students and flatten for frontend compatibility
       const { data: students, error: sError } = await supabase
         .from('alunos')
         .select('*, matriculas(*)')
         .eq('responsavel_id', guardianId);
+
 
       if (sError) {
         console.warn("Error fetching students on trial booking:", sError);
@@ -15642,12 +15653,34 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         }
       }
 
+      // ── CRM Hook: nova conversa/mensagem → cria ou reativa card no Kanban ──
+      try {
+        const crmHook = (global as any).crmHookNovaConversa;
+        if (typeof crmHook === 'function') {
+          // Busca o ID da conversa criada/atualizada por processarMensagem
+          const { data: sessaoAtual } = await supabase
+            .from('conversas_whatsapp')
+            .select('id, responsavel_nome')
+            .ilike('telefone', `%${telNorm.slice(-8)}%`)
+            .eq('identidade_nome', config.nome || identidadeNome)
+            .order('ultima_mensagem_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (sessaoAtual) {
+            await crmHook(telNorm, sessaoAtual.responsavel_nome, config.nome || identidadeNome, sessaoAtual.id);
+          }
+        }
+      } catch (crmErr) {
+        console.error('[CRM Hook WhatsApp] Erro:', crmErr);
+      }
+
       return res.status(200).json({ ok: true, processed: true });
     } catch (e: any) {
       console.error('[Sofia Webhook] Erro:', e);
       return res.status(500).json({ error: 'Erro ao processar' });
     }
   });
+
 
   // Helper to get allowed units for logged-in admin user. Returns null if Master/Global (no restriction).
   async function getAdminAllowedUnits(user: any): Promise<string[] | null> {
@@ -16674,6 +16707,664 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   app.post('/api/admin/sofia/config/:identidade/base-conhecimento/upload', async (req: any, res) => {
     res.status(501).json({ error: 'Upload de arquivos temporariamente desativado' });
   });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CRM KANBAN — Rotas
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Helper: resolve usuário e unidades permitidas (reutiliza padrão Sofia)
+  async function getCrmUser(req: any) {
+    const { data: dbUser } = await supabase
+      .from('usuarios')
+      .select('id, nivel, unidade, nome, login')
+      .eq('auth_id', (req as any).user?.id)
+      .maybeSingle();
+    if (!dbUser) return null;
+    const nivelLower = (dbUser.nivel || '').toLowerCase();
+    const unidadeLower = (dbUser.unidade || '').toLowerCase();
+    const isMaster = nivelLower.includes('master') || nivelLower.includes('start') ||
+                     unidadeLower.includes('todas') || unidadeLower.includes('gestao global');
+    const allowedUnits: string[] | null = isMaster
+      ? null
+      : (dbUser.unidade || '').split(',').map((u: string) => u.trim()).filter(Boolean);
+    return { ...dbUser, isMaster, allowedUnits };
+  }
+
+  // ─── GET /api/crm/pipelines ──────────────────────────────────────────────
+  app.get('/api/crm/pipelines', async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from('crm_pipelines')
+        .select('*')
+        .eq('ativo', true)
+        .order('ordem');
+      if (error) throw error;
+      return res.json({ pipelines: data });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── GET /api/crm/pipelines/:id/etapas ──────────────────────────────────
+  app.get('/api/crm/pipelines/:id/etapas', async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from('crm_etapas')
+        .select('*')
+        .eq('pipeline_id', req.params.id)
+        .order('ordem');
+      if (error) throw error;
+      return res.json({ etapas: data });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── GET /api/crm/pipelines/:id/cards ───────────────────────────────────
+  app.get('/api/crm/pipelines/:id/cards', async (req, res) => {
+    try {
+      const crmUser = await getCrmUser(req);
+      if (!crmUser) return res.status(401).json({ error: 'Não autenticado' });
+
+      let query = supabase
+        .from('crm_cards')
+        .select('*')
+        .eq('pipeline_id', req.params.id)
+        .order('ordem_coluna', { ascending: true });
+
+      // Filtro por unidade (não-master)
+      if (crmUser.allowedUnits && crmUser.allowedUnits.length > 0) {
+        query = query.in('unidade', crmUser.allowedUnits);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return res.json({ cards: data });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── POST /api/crm/cards — Cria novo card manualmente ───────────────────
+  app.post('/api/crm/cards', async (req, res) => {
+    try {
+      const crmUser = await getCrmUser(req);
+      if (!crmUser) return res.status(401).json({ error: 'Não autenticado' });
+
+      const { pipeline_id, etapa_id, telefone, nome_contato, identidade_nome,
+              unidade, turma_interesse, prioridade = 'media', notas, data_followup,
+              conversa_id, aluno_id, avatar_url } = req.body;
+
+      if (!pipeline_id || !etapa_id) {
+        return res.status(400).json({ error: 'pipeline_id e etapa_id são obrigatórios' });
+      }
+
+      // Se tem telefone, verifica se já existe card ativo com esse número neste pipeline
+      if (telefone) {
+        const telNorm = telefone.replace(/\D/g, '');
+        const { data: existing } = await supabase
+          .from('crm_cards')
+          .select('id, etapa_id')
+          .eq('pipeline_id', pipeline_id)
+          .ilike('telefone', `%${telNorm.slice(-8)}%`)
+          .maybeSingle();
+        if (existing) {
+          return res.status(409).json({ error: 'Já existe um card para este telefone neste pipeline', card_id: existing.id });
+        }
+      }
+
+      const { data, error } = await supabase
+        .from('crm_cards')
+        .insert({
+          pipeline_id, etapa_id, telefone, nome_contato, identidade_nome,
+          unidade, turma_interesse, prioridade, notas, data_followup,
+          conversa_id, aluno_id, avatar_url,
+          criado_por: crmUser.login || crmUser.nome,
+          movido_por: 'manual'
+        })
+        .select()
+        .single();
+      if (error) throw error;
+
+      // Registra movimentação inicial
+      await supabase.from('crm_movimentacoes').insert({
+        card_id: data.id,
+        etapa_destino: etapa_id,
+        tipo: 'criacao',
+        movido_por: crmUser.login || crmUser.nome
+      });
+
+      return res.status(201).json({ card: data });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── PUT /api/crm/cards/:id — Atualiza dados do card ────────────────────
+  app.put('/api/crm/cards/:id', async (req, res) => {
+    try {
+      const { notas, data_followup, turma_interesse, prioridade, etiquetas } = req.body;
+      const updates: any = {};
+      if (notas !== undefined) updates.notas = notas;
+      if (data_followup !== undefined) updates.data_followup = data_followup;
+      if (turma_interesse !== undefined) updates.turma_interesse = turma_interesse;
+      if (prioridade !== undefined) updates.prioridade = prioridade;
+      if (etiquetas !== undefined) updates.etiquetas = etiquetas;
+
+      const { data, error } = await supabase
+        .from('crm_cards')
+        .update(updates)
+        .eq('id', req.params.id)
+        .select()
+        .single();
+      if (error) throw error;
+      return res.json({ card: data });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── POST /api/crm/cards/:id/mover — Move card entre etapas ─────────────
+  app.post('/api/crm/cards/:id/mover', async (req, res) => {
+    try {
+      const crmUser = await getCrmUser(req);
+      const { etapa_destino_id, motivo, movido_por } = req.body;
+
+      if (!etapa_destino_id) return res.status(400).json({ error: 'etapa_destino_id é obrigatório' });
+
+      // Busca card atual para registrar origem
+      const { data: cardAtual } = await supabase
+        .from('crm_cards')
+        .select('etapa_id, pipeline_id')
+        .eq('id', req.params.id)
+        .single();
+
+      const etapaOrigem = cardAtual?.etapa_id || null;
+
+      // Atualiza card
+      const { data, error } = await supabase
+        .from('crm_cards')
+        .update({
+          etapa_id: etapa_destino_id,
+          motivo_perda: motivo || null,
+          movido_por: movido_por || crmUser?.login || 'manual'
+        })
+        .eq('id', req.params.id)
+        .select()
+        .single();
+      if (error) throw error;
+
+      // Registra movimentação
+      await supabase.from('crm_movimentacoes').insert({
+        card_id: req.params.id,
+        etapa_origem: etapaOrigem,
+        etapa_destino: etapa_destino_id,
+        motivo: motivo || null,
+        tipo: 'manual',
+        movido_por: movido_por || crmUser?.login || null
+      });
+
+      // ── Automação: ao mover para "Matriculado" no Funil de Vendas,
+      //    cria card em "Onboarding" no Funil de Retenção ──────────────────
+      const { data: etapaDestino } = await supabase
+        .from('crm_etapas')
+        .select('tipo, pipeline_id')
+        .eq('id', etapa_destino_id)
+        .single();
+
+      if (etapaDestino?.tipo === 'matriculado') {
+        const { data: onboarding } = await supabase
+          .from('crm_etapas')
+          .select('id, pipeline_id')
+          .eq('tipo', 'onboarding')
+          .single();
+
+        if (onboarding) {
+          // Verifica se já existe card de retenção para este contato
+          const { data: existingRet } = await supabase
+            .from('crm_cards')
+            .select('id')
+            .eq('pipeline_id', onboarding.pipeline_id)
+            .eq('telefone', data.telefone)
+            .maybeSingle();
+
+          if (!existingRet) {
+            await supabase.from('crm_cards').insert({
+              pipeline_id: onboarding.pipeline_id,
+              etapa_id: onboarding.id,
+              telefone: data.telefone,
+              nome_contato: data.nome_contato,
+              identidade_nome: data.identidade_nome,
+              unidade: data.unidade,
+              turma_interesse: data.turma_interesse,
+              avatar_url: data.avatar_url,
+              conversa_id: data.conversa_id,
+              aluno_id: data.aluno_id,
+              movido_por: 'automacao',
+              criado_por: 'sistema'
+            });
+          }
+        }
+      }
+
+      return res.json({ card: data });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── GET /api/crm/cards/:id/conversa — Histórico WhatsApp do card ────────
+  app.get('/api/crm/cards/:id/conversa', async (req, res) => {
+    try {
+      const { data: card } = await supabase
+        .from('crm_cards')
+        .select('telefone, conversa_id')
+        .eq('id', req.params.id)
+        .single();
+
+      if (!card) return res.status(404).json({ error: 'Card não encontrado' });
+
+      // Busca por conversa_id direto ou por telefone
+      let conversa: any = null;
+      if (card.conversa_id) {
+        const { data } = await supabase
+          .from('conversas_whatsapp')
+          .select('id, historico, status, responsavel_nome, ultima_mensagem_at')
+          .eq('id', card.conversa_id)
+          .single();
+        conversa = data;
+      } else if (card.telefone) {
+        const telNorm = card.telefone.replace(/\D/g, '');
+        const { data } = await supabase
+          .from('conversas_whatsapp')
+          .select('id, historico, status, responsavel_nome, ultima_mensagem_at')
+          .ilike('telefone', `%${telNorm.slice(-8)}%`)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        conversa = data;
+        // Vincula conversa ao card para consultas futuras
+        if (conversa) {
+          await supabase.from('crm_cards').update({ conversa_id: conversa.id }).eq('id', req.params.id);
+        }
+      }
+
+      if (!conversa) return res.json({ historico: [], conversa: null });
+
+      const historico = conversa.historico || [];
+      return res.json({ historico, conversa: { id: conversa.id, status: conversa.status, ultima_mensagem_at: conversa.ultima_mensagem_at } });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── GET /api/crm/cards/:id/movimentacoes ────────────────────────────────
+  app.get('/api/crm/cards/:id/movimentacoes', async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from('crm_movimentacoes')
+        .select(`
+          id, motivo, tipo, movido_por, created_at,
+          etapa_origem_info:etapa_origem(nome),
+          etapa_destino_info:etapa_destino(nome)
+        `)
+        .eq('card_id', req.params.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const movimentacoes = (data || []).map((m: any) => ({
+        id: m.id,
+        etapa_origem_nome: m.etapa_origem_info?.nome || null,
+        etapa_destino_nome: m.etapa_destino_info?.nome || null,
+        motivo: m.motivo,
+        tipo: m.tipo,
+        movido_por: m.movido_por,
+        created_at: m.created_at
+      }));
+
+      return res.json({ movimentacoes });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── POST /api/crm/cards/:id/mensagem — Envia WhatsApp do drawer ────────
+  app.post('/api/crm/cards/:id/mensagem', async (req, res) => {
+    try {
+      const { texto, usuario } = req.body;
+      if (!texto?.trim()) return res.status(400).json({ error: 'Texto obrigatório' });
+
+      const { data: card } = await supabase
+        .from('crm_cards')
+        .select('telefone, conversa_id, identidade_nome')
+        .eq('id', req.params.id)
+        .single();
+
+      if (!card?.telefone) return res.status(400).json({ error: 'Card sem telefone' });
+
+      // Reutiliza a rota de resposta Sofia para enviar a mensagem via UTalk
+      const { data: config } = await supabase
+        .from('app_configuracoes')
+        .select('utalk_token, utalk_from_phone')
+        .eq('nome', card.identidade_nome)
+        .maybeSingle();
+
+      if (!config?.utalk_token) {
+        return res.status(400).json({ error: 'Configuração UTalk não encontrada para esta identidade' });
+      }
+
+      const UTALK_URL = process.env.UTALK_URL || 'https://app-utalk.umbler.com/api/v1/messages/simplified/';
+      const telNorm = card.telefone.replace(/\D/g, '');
+
+      const utalkRes = await fetch(UTALK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.utalk_token}`,
+          'token': config.utalk_token
+        },
+        body: JSON.stringify({
+          toPhone: telNorm.startsWith('55') ? telNorm : `55${telNorm}`,
+          fromPhone: config.utalk_from_phone?.replace(/\D/g, ''),
+          message: texto
+        })
+      });
+
+      if (!utalkRes.ok) {
+        const errText = await utalkRes.text().catch(() => '');
+        return res.status(502).json({ error: `UTalk: ${utalkRes.status} — ${errText}` });
+      }
+
+      // Atualiza updated_at do card para refletir atividade
+      await supabase.from('crm_cards').update({ nao_lidas: 0 }).eq('id', req.params.id);
+
+      return res.json({ ok: true });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── POST /api/crm/automacao/faltas — Verifica 4 faltas consecutivas ─────
+  // Chamado pelo cron job ou manualmente
+  app.post('/api/crm/automacao/faltas', async (req, res) => {
+    try {
+      // Busca alunos com 4+ faltas consecutivas
+      const { data: alunos } = await supabase
+        .from('alunos')
+        .select('id, nome, telefone_responsavel, unidade')
+        .not('telefone_responsavel', 'is', null);
+
+      if (!alunos || alunos.length === 0) return res.json({ processados: 0 });
+
+      const etapaEmRisco = await supabase
+        .from('crm_etapas')
+        .select('id, pipeline_id')
+        .eq('tipo', 'customizado')
+        .eq('nome', 'Em Risco')
+        .maybeSingle()
+        .then(r => r.data);
+
+      if (!etapaEmRisco) return res.json({ processados: 0, motivo: 'Etapa Em Risco não encontrada' });
+
+      let processados = 0;
+
+      for (const aluno of alunos) {
+        // Busca últimas 4 presenças
+        const { data: presencas } = await supabase
+          .from('presencas')
+          .select('presente')
+          .eq('aluno_id', aluno.id)
+          .order('data_aula', { ascending: false })
+          .limit(4);
+
+        if (!presencas || presencas.length < 4) continue;
+
+        const todasFaltas = presencas.every((p: any) => !p.presente);
+        if (!todasFaltas) continue;
+
+        // Verifica se já existe card no pipeline de retenção
+        const telNorm = (aluno.telefone_responsavel || '').replace(/\D/g, '');
+        const { data: cardExistente } = await supabase
+          .from('crm_cards')
+          .select('id, etapa_id')
+          .eq('pipeline_id', etapaEmRisco.pipeline_id)
+          .ilike('telefone', `%${telNorm.slice(-8)}%`)
+          .maybeSingle();
+
+        if (cardExistente) {
+          // Move para Em Risco se ainda não está lá
+          if (cardExistente.etapa_id !== etapaEmRisco.id) {
+            await supabase.from('crm_cards')
+              .update({ etapa_id: etapaEmRisco.id, movido_por: 'automacao' })
+              .eq('id', cardExistente.id);
+
+            await supabase.from('crm_movimentacoes').insert({
+              card_id: cardExistente.id,
+              etapa_origem: cardExistente.etapa_id,
+              etapa_destino: etapaEmRisco.id,
+              tipo: 'automacao',
+              motivo: '4 faltas consecutivas detectadas',
+              movido_por: 'sistema'
+            });
+            processados++;
+          }
+        } else {
+          // Cria novo card diretamente em Em Risco
+          const { data: newCard } = await supabase.from('crm_cards').insert({
+            pipeline_id: etapaEmRisco.pipeline_id,
+            etapa_id: etapaEmRisco.id,
+            telefone: aluno.telefone_responsavel,
+            nome_contato: aluno.nome,
+            unidade: aluno.unidade,
+            aluno_id: aluno.id,
+            movido_por: 'automacao',
+            criado_por: 'sistema'
+          }).select().single().then(r => r.data);
+
+          if (newCard) {
+            await supabase.from('crm_movimentacoes').insert({
+              card_id: newCard.id,
+              etapa_destino: etapaEmRisco.id,
+              tipo: 'automacao',
+              motivo: '4 faltas consecutivas detectadas',
+              movido_por: 'sistema'
+            });
+            processados++;
+          }
+        }
+      }
+
+      return res.json({ ok: true, processados });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Webhook interno: nova conversa WhatsApp → cria/reativa card ─────────
+  // Chamado internamente após inserção em conversas_whatsapp
+  async function crmHookNovaConversa(telefone: string, nome: string | null, identidadeNome: string | null, conversaId: string) {
+    try {
+      const etapaLead = await supabase
+        .from('crm_etapas')
+        .select('id, pipeline_id')
+        .eq('tipo', 'lead')
+        .single()
+        .then(r => r.data);
+
+      if (!etapaLead) return;
+
+      const telNorm = telefone.replace(/\D/g, '');
+
+      // Verifica card existente no Funil de Vendas
+      const { data: existente } = await supabase
+        .from('crm_cards')
+        .select('id, etapa_id')
+        .eq('pipeline_id', etapaLead.pipeline_id)
+        .ilike('telefone', `%${telNorm.slice(-8)}%`)
+        .maybeSingle();
+
+      if (existente) {
+        // Verifica se está em etapa encerrada — reativa para Follow-up
+        const { data: etapaAtual } = await supabase
+          .from('crm_etapas')
+          .select('tipo')
+          .eq('id', existente.etapa_id)
+          .single();
+
+        const etapaEncerrada = ['desistente', 'cancelamento'].includes(etapaAtual?.tipo || '');
+
+        if (etapaEncerrada) {
+          const { data: followup } = await supabase
+            .from('crm_etapas')
+            .select('id')
+            .eq('pipeline_id', etapaLead.pipeline_id)
+            .eq('tipo', 'follow_up')
+            .single();
+
+          if (followup) {
+            await supabase.from('crm_cards')
+              .update({ etapa_id: followup.id, conversa_id: conversaId, movido_por: 'automacao', nao_lidas: 1 })
+              .eq('id', existente.id);
+
+            await supabase.from('crm_movimentacoes').insert({
+              card_id: existente.id,
+              etapa_origem: existente.etapa_id,
+              etapa_destino: followup.id,
+              tipo: 'automacao',
+              motivo: 'Nova mensagem WhatsApp recebida',
+              movido_por: 'sistema'
+            });
+          }
+        } else {
+          // Só incrementa não lidas
+          await supabase.from('crm_cards')
+            .update({ conversa_id: conversaId, nao_lidas: (existente as any).nao_lidas + 1 })
+            .eq('id', existente.id);
+        }
+      } else {
+        // Cria novo card como Lead
+        await supabase.from('crm_cards').insert({
+          pipeline_id: etapaLead.pipeline_id,
+          etapa_id: etapaLead.id,
+          telefone,
+          nome_contato: nome,
+          identidade_nome: identidadeNome,
+          unidade: identidadeNome,
+          conversa_id: conversaId,
+          movido_por: 'automacao',
+          nao_lidas: 1,
+          criado_por: 'sistema'
+        });
+      }
+    } catch (e) {
+      console.error('[CRM Hook] Erro ao processar nova conversa:', e);
+    }
+  }
+
+  // ─── Webhook interno: aula experimental agendada → Lead → Agendado ────────
+  async function crmHookAulaExperimental(telefone: string, nome: string | null, identidadeNome: string | null) {
+    try {
+      const etapaAgendado = await supabase
+        .from('crm_etapas')
+        .select('id, pipeline_id')
+        .eq('tipo', 'agendado')
+        .single()
+        .then(r => r.data);
+
+      if (!etapaAgendado) return;
+
+      const telNorm = (telefone || '').replace(/\D/g, '');
+
+      const { data: existente } = await supabase
+        .from('crm_cards')
+        .select('id, etapa_id')
+        .eq('pipeline_id', etapaAgendado.pipeline_id)
+        .ilike('telefone', `%${telNorm.slice(-8)}%`)
+        .maybeSingle();
+
+      if (existente && existente.etapa_id !== etapaAgendado.id) {
+        await supabase.from('crm_cards')
+          .update({ etapa_id: etapaAgendado.id, movido_por: 'automacao' })
+          .eq('id', existente.id);
+
+        await supabase.from('crm_movimentacoes').insert({
+          card_id: existente.id,
+          etapa_origem: existente.etapa_id,
+          etapa_destino: etapaAgendado.id,
+          tipo: 'automacao',
+          motivo: 'Aula experimental agendada',
+          movido_por: 'sistema'
+        });
+      } else if (!existente) {
+        await supabase.from('crm_cards').insert({
+          pipeline_id: etapaAgendado.pipeline_id,
+          etapa_id: etapaAgendado.id,
+          telefone,
+          nome_contato: nome,
+          identidade_nome: identidadeNome,
+          unidade: identidadeNome,
+          movido_por: 'automacao',
+          criado_por: 'sistema'
+        });
+      }
+    } catch (e) {
+      console.error('[CRM Hook] Erro ao processar aula experimental:', e);
+    }
+  }
+
+  // ─── Webhook interno: cancelamento → move para Cancelado ─────────────────
+  async function crmHookCancelamento(telefone: string | null, alunoId: string | null) {
+    try {
+      if (!telefone && !alunoId) return;
+
+      const etapaCancelado = await supabase
+        .from('crm_etapas')
+        .select('id, pipeline_id')
+        .eq('tipo', 'cancelamento')
+        .single()
+        .then(r => r.data);
+
+      if (!etapaCancelado) return;
+
+      let query = supabase.from('crm_cards').select('id, etapa_id').eq('pipeline_id', etapaCancelado.pipeline_id);
+
+      if (alunoId) {
+        query = query.eq('aluno_id', alunoId);
+      } else if (telefone) {
+        const telNorm = telefone.replace(/\D/g, '');
+        query = query.ilike('telefone', `%${telNorm.slice(-8)}%`);
+      }
+
+      const { data: card } = await query.maybeSingle();
+
+      if (card && card.etapa_id !== etapaCancelado.id) {
+        await supabase.from('crm_cards')
+          .update({ etapa_id: etapaCancelado.id, movido_por: 'automacao' })
+          .eq('id', card.id);
+
+        await supabase.from('crm_movimentacoes').insert({
+          card_id: card.id,
+          etapa_origem: card.etapa_id,
+          etapa_destino: etapaCancelado.id,
+          tipo: 'automacao',
+          motivo: 'Cancelamento de matrícula',
+          movido_por: 'sistema'
+        });
+      }
+    } catch (e) {
+      console.error('[CRM Hook] Erro ao processar cancelamento:', e);
+    }
+  }
+
+  // Expõe os hooks para uso interno nas rotas existentes
+  (global as any).crmHookNovaConversa = crmHookNovaConversa;
+  (global as any).crmHookAulaExperimental = crmHookAulaExperimental;
+  (global as any).crmHookCancelamento = crmHookCancelamento;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIM CRM KANBAN
+  // ═══════════════════════════════════════════════════════════════════════════
 
   // Vite middleware for development
   async function startServer() {
