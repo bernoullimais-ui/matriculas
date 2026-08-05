@@ -15662,12 +15662,12 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
             .from('conversas_whatsapp')
             .select('id, responsavel_nome')
             .ilike('telefone', `%${telNorm.slice(-8)}%`)
-            .eq('identidade_nome', config.nome || identidadeNome)
+            .eq('identidade_nome', config.identidadeNome || identidadeNome)
             .order('ultima_mensagem_at', { ascending: false })
             .limit(1)
             .maybeSingle();
           if (sessaoAtual) {
-            await crmHook(telNorm, sessaoAtual.responsavel_nome, config.nome || identidadeNome, sessaoAtual.id);
+            await crmHook(telNorm, sessaoAtual.responsavel_nome, config.identidadeNome || identidadeNome, sessaoAtual.id);
           }
         }
       } catch (crmErr) {
