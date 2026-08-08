@@ -6545,7 +6545,255 @@ ${condition ? `- Condição Especial/Desconto: ${condition}` : ''}`;
     }
   });
 
+  // ─── MÓDULO DE GRADUAÇÃO (FAIXAS) ────────────────────────────────────────
+
+  // GET /api/graduacao/requisitos?modalidade=Judô — lista requisitos por modalidade
+  app.get('/api/graduacao/requisitos', async (req, res) => {
+    try {
+      const { modalidade } = req.query;
+      let query = supabase.from('graduacao_requisitos').select('*').order('ordem');
+      if (modalidade) query = query.eq('modalidade', String(modalidade));
+      const { data, error } = await query;
+      if (error) throw error;
+      res.json(data || []);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/alunos/:id/graduacao — faixa atual do aluno
+  app.get('/api/alunos/:id/graduacao', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { data, error } = await supabase
+        .from('aluno_graduacao')
+        .select('*')
+        .eq('aluno_id', id)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      res.json(data || []);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/alunos/:id/graduacao — registrar ou atualizar faixa do aluno
+  app.post('/api/alunos/:id/graduacao', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { modalidade, faixa_atual, data_graduacao, professor_login, observacoes } = req.body;
+      if (!modalidade || !faixa_atual || !data_graduacao) {
+        return res.status(400).json({ error: 'modalidade, faixa_atual e data_graduacao são obrigatórios' });
+      }
+      // Upsert: uma faixa ativa por aluno por modalidade
+      const { data, error } = await supabase
+        .from('aluno_graduacao')
+        .upsert({
+          aluno_id: id,
+          modalidade,
+          faixa_atual,
+          data_graduacao,
+          checklist_ok: false, // reseta checklist ao mudar de faixa
+          professor_login: professor_login || null,
+          observacoes: observacoes || null,
+        }, { onConflict: 'aluno_id,modalidade' })
+        .select()
+        .single();
+      if (error) throw error;
+      res.json({ success: true, graduacao: data });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // PATCH /api/alunos/:id/graduacao/checklist — marcar/desmarcar aprovação de conhecimentos
+  app.patch('/api/alunos/:id/graduacao/checklist', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { modalidade, checklist_ok } = req.body;
+      if (!modalidade || checklist_ok === undefined) {
+        return res.status(400).json({ error: 'modalidade e checklist_ok são obrigatórios' });
+      }
+      const { data, error } = await supabase
+        .from('aluno_graduacao')
+        .update({ checklist_ok: Boolean(checklist_ok) })
+        .eq('aluno_id', id)
+        .eq('modalidade', modalidade)
+        .select()
+        .single();
+      if (error) throw error;
+      res.json({ success: true, graduacao: data });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/turmas/:id/elegibilidade?modalidade=Judô
+  // Retorna lista de alunos da turma com status de elegibilidade para próximo exame
+  app.get('/api/turmas/:id/elegibilidade', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const modalidade = String(req.query.modalidade || 'Judô');
+
+      // 1. Buscar matrículas ativas da turma
+      const { data: matriculas, error: mErr } = await supabase
+        .from('matriculas')
+        .select('aluno_id, unidade')
+        .eq('turma_id', id)
+        .in('status', ['ativo', 'Ativo']);
+      if (mErr) throw mErr;
+      if (!matriculas || matriculas.length === 0) return res.json([]);
+
+      const alunoIds = matriculas.map((m: any) => m.aluno_id);
+
+      // 2. Buscar dados dos alunos
+      const { data: alunos, error: aErr } = await supabase
+        .from('alunos')
+        .select('id, nome_completo, data_nascimento, responsavel_1, whatsapp_1, whatsapp_2')
+        .in('id', alunoIds);
+      if (aErr) throw aErr;
+
+      // 3. Buscar graduações dos alunos nessa modalidade
+      const { data: graduacoes, error: gErr } = await supabase
+        .from('aluno_graduacao')
+        .select('*')
+        .in('aluno_id', alunoIds)
+        .eq('modalidade', modalidade);
+      if (gErr) throw gErr;
+
+      // 4. Buscar todos os requisitos da modalidade
+      const { data: requisitos, error: rErr } = await supabase
+        .from('graduacao_requisitos')
+        .select('*')
+        .eq('modalidade', modalidade)
+        .eq('ativo', true)
+        .order('ordem');
+      if (rErr) throw rErr;
+
+      // 5. Buscar presenças dos alunos (desde a última graduação de cada um)
+      const { data: presencas, error: pErr } = await supabase
+        .from('presencas')
+        .select('aluno_id, data, status')
+        .in('aluno_id', alunoIds);
+      if (pErr) throw pErr;
+
+      const hoje = new Date();
+
+      // 6. Calcular elegibilidade para cada aluno
+      const resultado = (alunos || []).map((aluno: any) => {
+        const grad = (graduacoes || []).find((g: any) => g.aluno_id === aluno.id);
+        const faixaAtual = grad?.faixa_atual || 'Branca';
+        const dataGraduacao = grad?.data_graduacao ? new Date(grad.data_graduacao) : null;
+        const checklistOk = grad?.checklist_ok || false;
+
+        // Requisito para a PRÓXIMA faixa (onde faixa_anterior === faixaAtual)
+        const req = (requisitos || []).find((r: any) => r.faixa_anterior === faixaAtual);
+
+        if (!req) {
+          return {
+            aluno_id: aluno.id,
+            nome: aluno.nome_completo,
+            faixa_atual: faixaAtual,
+            proxima_faixa: null,
+            kyu: null,
+            cor_hex: '#FFFFFF',
+            status: 'sem_requisito',
+            criterios: {},
+            checklist_ok: checklistOk,
+            data_graduacao: grad?.data_graduacao || null,
+          };
+        }
+
+        // Critério 1: Idade (idade < idade_maxima_anos)
+        let idadeAnos = 0;
+        let criterioIdade = false;
+        if (aluno.data_nascimento) {
+          const nasc = new Date(aluno.data_nascimento);
+          idadeAnos = hoje.getFullYear() - nasc.getFullYear();
+          const m = hoje.getMonth() - nasc.getMonth();
+          if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idadeAnos--;
+          criterioIdade = req.idade_maxima_anos == null || idadeAnos < req.idade_maxima_anos;
+        } else {
+          criterioIdade = true; // sem data de nascimento, não bloqueia
+        }
+
+        // Critério 2: Tempo na faixa atual (em meses)
+        let mesesNaFaixa = 0;
+        let criterioTempo = false;
+        if (dataGraduacao) {
+          const diffMs = hoje.getTime() - dataGraduacao.getTime();
+          mesesNaFaixa = Math.floor(diffMs / (1000 * 60 * 60 * 24 * 30.44));
+          criterioTempo = mesesNaFaixa >= req.carencia_minima_meses;
+        }
+
+        // Critério 3: Frequência desde a última graduação
+        const presencasAluno = (presencas || []).filter((p: any) => {
+          if (p.aluno_id !== aluno.id) return false;
+          if (!dataGraduacao) return true;
+          return new Date(p.data) >= dataGraduacao;
+        });
+        const totalAulas = presencasAluno.filter((p: any) => p.status !== 'Feriado/Recesso').length;
+        const presentes = presencasAluno.filter((p: any) => p.status === 'Presente').length;
+        const frequenciaPct = totalAulas > 0 ? Math.round((presentes / totalAulas) * 100) : 0;
+        const criterioFrequencia = totalAulas === 0 || frequenciaPct >= Number(req.frequencia_minima_pct || 75);
+
+        // Critério 4: Checklist técnico
+        const criterioChecklist = checklistOk;
+
+        // Status de elegibilidade
+        const criteriosOk = [criterioIdade, criterioTempo, criterioFrequencia, criterioChecklist];
+        const totalOk = criteriosOk.filter(Boolean).length;
+
+        let status: string;
+        if (totalOk === 4) status = 'pronto';
+        else if (!criterioChecklist && totalOk === 3) status = 'checklist_pendente';
+        else if (totalOk === 3) status = 'quase_pronto';
+        else status = 'nao_elegivel';
+
+        return {
+          aluno_id: aluno.id,
+          nome: aluno.nome_completo,
+          data_nascimento: aluno.data_nascimento,
+          idade_anos: idadeAnos,
+          responsavel_1: aluno.responsavel_1,
+          whatsapp_1: aluno.whatsapp_1,
+          whatsapp_2: aluno.whatsapp_2,
+          faixa_atual: faixaAtual,
+          proxima_faixa: req.faixa_conquistada,
+          kyu: req.kyu,
+          cor_hex: req.cor_hex,
+          data_graduacao: grad?.data_graduacao || null,
+          meses_na_faixa: mesesNaFaixa,
+          carencia_minima_meses: req.carencia_minima_meses,
+          frequencia_pct: frequenciaPct,
+          frequencia_minima_pct: Number(req.frequencia_minima_pct || 75),
+          total_aulas: totalAulas,
+          checklist_ok: checklistOk,
+          status,
+          criterios: {
+            idade: criterioIdade,
+            tempo: criterioTempo,
+            frequencia: criterioFrequencia,
+            checklist: criterioChecklist,
+          },
+        };
+      });
+
+      // Ordenar: prontos primeiro, depois quase_pronto, checklist_pendente, nao_elegivel
+      const ordem: Record<string, number> = { pronto: 0, checklist_pendente: 1, quase_pronto: 2, nao_elegivel: 3, sem_requisito: 4 };
+      resultado.sort((a: any, b: any) => (ordem[a.status] ?? 5) - (ordem[b.status] ?? 5));
+
+      res.json(resultado);
+    } catch (error: any) {
+      console.error('[Elegibilidade] Erro:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   // CRUD - Professores
+
   app.get("/api/professores", async (req, res) => {
     try {
       const { data, error } = await supabase
