@@ -1,4 +1,6 @@
 import React, { useState, useMemo } from 'react';
+import { matchGradeOrSeries } from '../utils/formatters';
+
 import { motion, AnimatePresence } from 'framer-motion';
 import { CalendarDays } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -127,11 +129,12 @@ export default function TrialModal({
       
       const seriesData = t.series_permitidas || t.series;
       const hasSeriesDefined = (Array.isArray(seriesData) && seriesData.length > 0) || (typeof seriesData === 'string' && seriesData.length > 0);
-      const safeGrade = (grade || '').trim().toLowerCase();
+      const safeGrade = (grade || '').trim();
       
       const matchesGrade = !hasSeriesDefined || !safeGrade ||
-        (Array.isArray(seriesData) && seriesData.some(s => String(s).trim().toLowerCase() === safeGrade)) ||
-        (typeof seriesData === 'string' && seriesData.split(',').some(s => s.trim().toLowerCase() === safeGrade));
+        (Array.isArray(seriesData) && seriesData.some(s => matchGradeOrSeries(String(s), safeGrade))) ||
+        (typeof seriesData === 'string' && seriesData.split(',').some(s => matchGradeOrSeries(s, safeGrade)));
+
         
       if (!matchesGrade) return false;
       

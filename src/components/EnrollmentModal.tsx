@@ -1,4 +1,5 @@
 import toast from 'react-hot-toast';
+import { matchGradeOrSeries } from '../utils/formatters';
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -2711,10 +2712,10 @@ export default function EnrollmentModal({
     
     const seriesData = t.series_permitidas || t.series;
     const hasSeriesDefined = (Array.isArray(seriesData) && seriesData.length > 0) || (typeof seriesData === 'string' && seriesData.length > 0);
-    const safeGrade = (formData.student.grade || '').trim().toLowerCase();
+    const safeGrade = (formData.student.grade || '').trim();
     const matchesGrade = !hasSeriesDefined || !safeGrade ||
-      (Array.isArray(seriesData) && seriesData.some(s => String(s).trim().toLowerCase() === safeGrade)) ||
-      (typeof seriesData === 'string' && seriesData.split(',').some(s => s.trim().toLowerCase() === safeGrade));
+      (Array.isArray(seriesData) && seriesData.some(s => matchGradeOrSeries(String(s), safeGrade))) ||
+      (typeof seriesData === 'string' && seriesData.split(',').some(s => matchGradeOrSeries(s, safeGrade)));
     
     let matchesAge = true;
     if (formData.student.birthDate && t.idade_minima != null && t.idade_maxima != null) {
