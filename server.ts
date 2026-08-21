@@ -14951,7 +14951,35 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       if (matricula.valor_desconto) {
         valorCobrado -= Number(matricula.valor_desconto);
       }
-      if (matricula.tem_fidelidade) {
+
+      // Verificação de Desconto Fidelidade (10% se houver mais de 1 matrícula ativa para o mesmo responsável)
+      let isFidelidade = matricula.tem_fidelidade || false;
+      const respId = aluno?.responsavel_id || matricula.responsavel_id;
+
+      if (!isFidelidade && respId) {
+        const { data: guardianStudents } = await supabase
+          .from('alunos')
+          .select('id')
+          .eq('responsavel_id', respId);
+
+        if (guardianStudents && guardianStudents.length > 0) {
+          const studentIds = guardianStudents.map(s => s.id);
+          const { data: guardianMatriculas } = await supabase
+            .from('matriculas')
+            .select('id, created_at')
+            .in('aluno_id', studentIds)
+            .in('status', ['ativo', 'Ativo'])
+            .order('created_at', { ascending: true });
+
+          if (guardianMatriculas && guardianMatriculas.length > 1) {
+            if (matricula.id !== guardianMatriculas[0].id) {
+              isFidelidade = true;
+            }
+          }
+        }
+      }
+
+      if (isFidelidade) {
         valorCobrado = valorCobrado * 0.9;
       }
       if (valorCobrado < 0) valorCobrado = 0;
@@ -15002,6 +15030,7 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
         pagarme_subscription_id: subscription.id,
         plano: matricula.plano || 'Mensal',
         status: 'ativo',
+        tem_fidelidade: isFidelidade,
         data_matricula: matricula.data_matricula || new Date().toISOString()
       }).eq('id', matriculaId);
 
@@ -15053,12 +15082,40 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
       if (matricula.valor_desconto) {
         valorCobrado -= Number(matricula.valor_desconto);
       }
-      if (matricula.tem_fidelidade) {
+
+      let isFidelidade = matricula.tem_fidelidade || false;
+      const alunoObj = Array.isArray(matricula.alunos) ? matricula.alunos[0] : matricula.alunos;
+      const respId = alunoObj?.responsavel_id || matricula.responsavel_id;
+
+      if (!isFidelidade && respId) {
+        const { data: guardianStudents } = await supabase
+          .from('alunos')
+          .select('id')
+          .eq('responsavel_id', respId);
+
+        if (guardianStudents && guardianStudents.length > 0) {
+          const studentIds = guardianStudents.map(s => s.id);
+          const { data: guardianMatriculas } = await supabase
+            .from('matriculas')
+            .select('id, created_at')
+            .in('aluno_id', studentIds)
+            .in('status', ['ativo', 'Ativo'])
+            .order('created_at', { ascending: true });
+
+          if (guardianMatriculas && guardianMatriculas.length > 1) {
+            if (matricula.id !== guardianMatriculas[0].id) {
+              isFidelidade = true;
+            }
+          }
+        }
+      }
+
+      if (isFidelidade) {
         valorCobrado = valorCobrado * 0.9;
       }
       if (valorCobrado < 0) valorCobrado = 0;
 
-      res.json({ matricula, valor: valorCobrado, valorBase: classData?.precos_unidade?.[matricula.unidade] ?? (classData?.valor_mensalidade || 0) });
+      res.json({ matricula: { ...matricula, tem_fidelidade: isFidelidade }, valor: valorCobrado, valorBase: classData?.precos_unidade?.[matricula.unidade] ?? (classData?.valor_mensalidade || 0) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
