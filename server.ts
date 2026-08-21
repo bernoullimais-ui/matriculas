@@ -11439,7 +11439,9 @@ app.get('/api/cron/mensalidades-pix', async (req, res) => {
 
           const amount = Math.round(Number(mat.valor_mensal || turma.valor_mensalidade || 0) * 100);
           if (amount > 0) {
-            const codeId = `mens_pix_${mat.id}_${faturaMesRef}`;
+            const matIdClean = (mat.id || '').replace(/-/g, '');
+            const mesClean = faturaMesRef.replace('-', '');
+            const codeId = `pix_${matIdClean}_${mesClean}`;
             try {
               log.push(`Gerando fatura Pagar.me para ${student.nome_completo}, valor: ${amount}, code: ${codeId}`);
               const order = await createPagarmeOrder({
