@@ -11437,13 +11437,43 @@ app.get('/api/cron/mensalidades-pix', async (req, res) => {
             continue;
           }
 
-          const amount = Math.round(Number(mat.valor_mensal || turma.valor_mensalidade || 0) * 100);
+          // Verificação de Desconto Fidelidade (10% a partir da 2ª matrícula do mesmo responsável)
+          let isFidelidade = mat.tem_fidelidade || false;
+          if (!isFidelidade && student.responsavel_id) {
+            const { data: guardianStudents } = await supabase
+              .from('alunos')
+              .select('id')
+              .eq('responsavel_id', student.responsavel_id);
+
+            if (guardianStudents && guardianStudents.length > 0) {
+              const studentIds = guardianStudents.map(s => s.id);
+              const { data: guardianMatriculas } = await supabase
+                .from('matriculas')
+                .select('id, created_at')
+                .in('aluno_id', studentIds)
+                .in('status', ['ativo', 'Ativo'])
+                .order('created_at', { ascending: true });
+
+              if (guardianMatriculas && guardianMatriculas.length > 1) {
+                if (mat.id !== guardianMatriculas[0].id) {
+                  isFidelidade = true;
+                }
+              }
+            }
+          }
+
+          let valorBase = turma.precos_unidade?.[mat.unidade] ?? Number(turma.valor_mensalidade || 0);
+          if (mat.valor_desconto) valorBase -= Number(mat.valor_desconto);
+          if (isFidelidade) valorBase = valorBase * 0.9;
+          if (valorBase < 0) valorBase = 0;
+
+          const amount = Math.round(valorBase * 100);
           if (amount > 0) {
             const matIdClean = (mat.id || '').replace(/-/g, '');
             const mesClean = faturaMesRef.replace('-', '');
             const codeId = `pix_${matIdClean}_${mesClean}`;
             try {
-              log.push(`Gerando fatura Pagar.me para ${student.nome_completo}, valor: ${amount}, code: ${codeId}`);
+              log.push(`Gerando fatura Pagar.me para ${student.nome_completo}, valor: ${amount} (Fidelidade: ${isFidelidade}), code: ${codeId}`);
               const order = await createPagarmeOrder({
                 customer: {
                   name: guardian.nome_completo,
@@ -11458,19 +11488,26 @@ app.get('/api/cron/mensalidades-pix', async (req, res) => {
                 franquia: mat.unidade || turma.unidade_nome
               });
 
-              await supabase.from('faturas_pix').insert([{
+              const { data: insertedFatura } = await supabase.from('faturas_pix').insert([{
                 matricula_id: mat.id,
                 mes_referencia: faturaMesRef,
                 pagarme_order_id: order.id,
                 status: 'pendente'
-              }]);
+              }]).select().single();
 
               const firstCharge = order.charges?.[0];
               if (firstCharge?.last_transaction?.transaction_type === 'pix') {
                 const qrCodeUrl = firstCharge.last_transaction.qr_code_url;
                 const qrCode = firstCharge.last_transaction.qr_code;
+                const valorFormatted = (amount / 100).toFixed(2).replace('.', ',');
+                const pixPageUrl = `https://www.sportforkids.com.br/pix/${insertedFatura?.id || mat.id}`;
                 
-                const msg = `Olá ${guardian.nome_completo}! A mensalidade de ${student.nome_completo} com vencimento para ${nextDueDate.toLocaleDateString('pt-BR')} já está disponível para pagamento via PIX.\n\nValor: R$ ${(amount/100).toFixed(2)}\n\n*PIX Copia e Cola:*\n${qrCode}\n\nSe preferir, pague pelo link do QR Code: ${qrCodeUrl}\n\nObrigado!`;
+                const msg = `Olá, *${guardian.nome_completo}*! 🎉\n\nA mensalidade de *${student.nome_completo}* (${turma.nome}) com vencimento para *${nextDueDate.toLocaleDateString('pt-BR')}* já está disponível para pagamento via PIX.\n\n` +
+                  (isFidelidade ? `✨ *Valor (com 10% Desconto Fidelidade):* R$ ${valorFormatted}\n\n` : `💰 *Valor:* R$ ${valorFormatted}\n\n`) +
+                  `*PIX Copia e Cola:*\n${qrCode}\n\n` +
+                  `🔗 *Acesse os detalhes e pague via PIX pelo link:*\n${pixPageUrl}\n\n` +
+                  `Obrigado!`;
+                
                 await sendWhatsAppMessage(guardian.telefone || '11999999999', guardian.nome_completo, msg, mat.unidade || turma.unidade_nome).catch(e => console.error("Erro whats cron", e));
                 log.push(`Fatura e WhatsApp enviados com sucesso para ${guardian.nome_completo} (${student.nome_completo})`);
               }
@@ -15302,13 +15339,65 @@ app.get('/portal/:unidadeSlug/turma/:turmaId', async (req, res, next) => {
   app.get("/api/public/pix/:id", async (req, res) => {
     try {
       const paymentId = req.params.id;
-      const { data: payment } = await supabase
+      let { data: payment } = await supabase
         .from('pagamentos')
         .select('*, matriculas(*, alunos(*))')
         .eq('id', paymentId)
-        .single();
+        .maybeSingle();
         
-      if (!payment) return res.status(404).json({ error: "Pagamento não encontrado" });
+      if (!payment) {
+        // Fallback: Check faturas_pix table
+        const { data: fatura } = await supabase
+          .from('faturas_pix')
+          .select('*')
+          .eq('id', paymentId)
+          .maybeSingle();
+
+        if (fatura) {
+          const { data: mat } = await supabase
+            .from('matriculas')
+            .select('*, alunos(*)')
+            .eq('id', fatura.matricula_id)
+            .maybeSingle();
+
+          let qr_code = '';
+          let qr_code_url = '';
+          let status = fatura.status;
+          let valor = 0;
+
+          if (fatura.pagarme_order_id) {
+            try {
+              const secretKey = getPagarmeSecretKey();
+              const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
+              const resOrder = await axios.get(`https://api.pagar.me/core/v5/orders/${fatura.pagarme_order_id}`, {
+                headers: { 'Authorization': `Basic ${authHeader}` }
+              });
+              const orderData = resOrder.data;
+              valor = (orderData.amount || 0) / 100;
+              status = orderData.status === 'paid' ? 'pago' : fatura.status;
+
+              const firstCharge = orderData.charges?.[0];
+              if (firstCharge?.last_transaction?.transaction_type === 'pix') {
+                qr_code = firstCharge.last_transaction.qr_code;
+                qr_code_url = firstCharge.last_transaction.qr_code_url;
+              }
+            } catch (pErr) {
+              console.error("[Public PIX] Erro ao buscar order Pagar.me:", pErr);
+            }
+          }
+
+          return res.json({
+            id: fatura.id,
+            valor: valor,
+            status: status,
+            qr_code: qr_code,
+            qr_code_url: qr_code_url,
+            matricula: mat
+          });
+        }
+
+        return res.status(404).json({ error: "Pagamento não encontrado" });
+      }
 
       res.json({
         id: payment.id,
