@@ -11361,10 +11361,12 @@ async function dispararAvisoFalhaWix(celular: string, nome: string) {
 // --- INÍCIO MOTOR DE ASSINATURA PIX ---
 app.get('/api/cron/mensalidades-pix', async (req, res) => {
   try {
-    const { data: matriculas } = await supabase.from('matriculas')
-      .select('*, alunos(*), responsaveis(*), turmas(*)')
+    const { data: matriculas, error: mErr } = await supabase.from('matriculas')
+      .select('*')
       .eq('pagarme_subscription_id', 'internal_pix')
       .in('status', ['ativo', 'Ativo']);
+
+    if (mErr) throw mErr;
 
     const today = new Date();
     today.setHours(0,0,0,0);
@@ -11373,12 +11375,24 @@ app.get('/api/cron/mensalidades-pix', async (req, res) => {
     let geradas = 0;
     let canceladas = 0;
 
-    if (matriculas) {
+    if (matriculas && matriculas.length > 0) {
       for (const mat of matriculas) {
-        const student = mat.alunos;
-        const guardian = mat.responsaveis;
-        const turma = mat.turmas;
-        if (!student || !guardian || !turma) continue;
+        const { data: student } = await supabase.from('alunos').select('*').eq('id', mat.aluno_id).maybeSingle();
+        if (!student) continue;
+
+        let guardian = null;
+        if (student.responsavel_id) {
+          const { data: g } = await supabase.from('responsaveis').select('*').eq('id', student.responsavel_id).maybeSingle();
+          guardian = g;
+        }
+
+        let turma = null;
+        if (mat.turma_id) {
+          const { data: t } = await supabase.from('turmas').select('*').eq('id', mat.turma_id).maybeSingle();
+          turma = t;
+        }
+
+        if (!guardian || !turma) continue;
 
         let baseDay = mat.dia_vencimento;
         if (!baseDay) {
@@ -11394,13 +11408,13 @@ app.get('/api/cron/mensalidades-pix', async (req, res) => {
         const diffTime = nextDueDate.getTime() - today.getTime();
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-        if (diffDays <= 3 && diffDays >= 0) {
+        if (diffDays <= 5 && diffDays >= -15) {
           const faturaMesRef = nextDueDate.toISOString().slice(0, 7);
           const { data: existing } = await supabase.from('faturas_pix')
             .select('id')
             .eq('matricula_id', mat.id)
             .eq('mes_referencia', faturaMesRef)
-            .single();
+            .maybeSingle();
 
           if (!existing) {
             const amount = Math.round(Number(mat.valor_mensal || turma.valor_mensalidade || 0) * 100);
@@ -11446,17 +11460,24 @@ app.get('/api/cron/mensalidades-pix', async (req, res) => {
     }
 
     const { data: faturasPendentes } = await supabase.from('faturas_pix')
-      .select('*, matriculas(*, alunos(*), responsaveis(*), turmas(*))')
+      .select('*')
       .eq('status', 'pendente');
 
-    if (faturasPendentes) {
+    if (faturasPendentes && faturasPendentes.length > 0) {
       let secretKey = getPagarmeSecretKey();
       const authHeader = Buffer.from(`${secretKey}:`).toString('base64');
 
       for (const fatura of faturasPendentes) {
-        const mat = fatura.matriculas;
+        const { data: mat } = await supabase.from('matriculas').select('*').eq('id', fatura.matricula_id).maybeSingle();
         if (!mat || mat.status !== 'ativo') continue;
-        
+
+        const { data: student } = await supabase.from('alunos').select('*').eq('id', mat.aluno_id).maybeSingle();
+        let guardian = null;
+        if (student && student.responsavel_id) {
+          const { data: g } = await supabase.from('responsaveis').select('*').eq('id', student.responsavel_id).maybeSingle();
+          guardian = g;
+        }
+
         try {
           const resOrder = await axios.get(`https://api.pagar.me/core/v5/orders/${fatura.pagarme_order_id}`, {
             headers: { 'Authorization': `Basic ${authHeader}` }
@@ -11472,8 +11493,6 @@ app.get('/api/cron/mensalidades-pix', async (req, res) => {
           const daysSinceCreation = Math.floor((today.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
           
           if (daysSinceCreation >= 8 && orderData.status !== 'paid') {
-            const guardian = mat.responsaveis;
-            const student = mat.alunos;
             if (guardian && student) {
                const msgAtraso = `Olá ${guardian.nome_completo}. Identificamos que o pagamento da mensalidade PIX de ${student.nome_completo} não foi confirmado. Caso não seja regularizado nas próximas 48h, a matrícula será cancelada automaticamente. Por favor, regularize ou entre em contato conosco!`;
                await sendWhatsAppMessage(guardian.telefone || '11999999999', guardian.nome_completo, msgAtraso, mat.unidade).catch(e => console.error("Erro whats atraso", e));
