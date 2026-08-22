@@ -105,7 +105,7 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
           return;
         }
       } else if (dadosEmissao.origin === 'excecao_pix' || dadosEmissao.origin === 'geral') {
-        let query = supabase.from('pagamentos').select('valor, responsavel_id, status, matriculas(alunos(nome_completo), turma, unidade)');
+        let query = supabase.from('pagamentos').select('valor, responsavel_id, matricula_id, aluno_id, status');
         if (pagamentoId.includes('-')) {
            query = query.eq('id', pagamentoId);
         } else {
@@ -125,14 +125,20 @@ export async function queueNotaFiscal(pagamentoId: string, tipoNota: 'NFSe' | 'N
               dadosEmissao.email = resp.email;
             }
           }
-          if (pag.matriculas) {
-             let mat = pag.matriculas;
-             if (Array.isArray(mat)) mat = mat[0];
-             if (mat) {
-                dadosEmissao.nome_aluno = mat.alunos?.nome_completo || (Array.isArray(mat.alunos) ? mat.alunos[0]?.nome_completo : undefined);
-                dadosEmissao.turma = mat.turma;
-                dadosEmissao.unidade = mat.unidade;
-             }
+          if (pag.matricula_id) {
+            const { data: mat } = await supabase.from('matriculas').select('turma, unidade, aluno_id').eq('id', pag.matricula_id).maybeSingle();
+            if (mat) {
+              dadosEmissao.turma = mat.turma;
+              dadosEmissao.unidade = mat.unidade;
+              const targetAlunoId = mat.aluno_id || pag.aluno_id;
+              if (targetAlunoId) {
+                const { data: alu } = await supabase.from('alunos').select('nome_completo').eq('id', targetAlunoId).maybeSingle();
+                if (alu) dadosEmissao.nome_aluno = alu.nome_completo;
+              }
+            }
+          } else if (pag.aluno_id) {
+            const { data: alu } = await supabase.from('alunos').select('nome_completo').eq('id', pag.aluno_id).maybeSingle();
+            if (alu) dadosEmissao.nome_aluno = alu.nome_completo;
           }
           if (!dadosEmissao.valor) dadosEmissao.valor = pag.valor;
         } else {
